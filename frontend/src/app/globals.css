@@ -1,0 +1,88 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #fbfaf8;
+  --panel: #ffffff;
+  --sidebar: #f4f2ee;
+  --border: #e6e2db;
+  --muted: #6f6a62;
+  --fg: #1f1d1a;
+  --accent: #4f46e5;
+  --accent-soft: #eef0ff;
+  --ins: #dcfce7;
+  --ins-fg: #166534;
+  --del: #fee2e2;
+  --del-fg: #991b1b;
+  --warn: #fef3c7;
+  --warn-fg: #92400e;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #1b1a18;
+    --panel: #232220;
+    --sidebar: #171614;
+    --border: #36332f;
+    --muted: #a39d93;
+    --fg: #ece9e4;
+    --accent: #8b87ff;
+    --accent-soft: #2a2846;
+    --ins: #14361f;
+    --ins-fg: #86efac;
+    --del: #3f1717;
+    --del-fg: #fca5a5;
+    --warn: #3a2e10;
+    --warn-fg: #fcd34d;
+  }
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-panel: var(--panel);
+  --color-sidebar: var(--sidebar);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-fg: var(--fg);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-ins: var(--ins);
+  --color-ins-fg: var(--ins-fg);
+  --color-del: var(--del);
+  --color-del-fg: var(--del-fg);
+  --color-warn: var(--warn);
+  --color-warn-fg: var(--warn-fg);
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  background: var(--bg);
+  color: var(--fg);
+}
+
+/* Rendered markdown */
+.prose-doc {
+  line-height: 1.65;
+  font-size: 0.95rem;
+}
+.prose-doc h1 { font-size: 1.5rem; font-weight: 650; margin: 0.4em 0; }
+.prose-doc h2 { font-size: 1.25rem; font-weight: 650; margin: 0.4em 0; }
+.prose-doc h3, .prose-doc h4, .prose-doc h5, .prose-doc h6 { font-size: 1.05rem; font-weight: 650; margin: 0.4em 0; }
+.prose-doc p { margin: 0.25em 0; }
+.prose-doc ul { list-style: disc; padding-left: 1.4em; }
+.prose-doc ol { list-style: decimal; padding-left: 1.4em; }
+.prose-doc table { border-collapse: collapse; margin: 0.4em 0; font-size: 0.9em; }
+.prose-doc th, .prose-doc td { border: 1px solid var(--border); padding: 0.25em 0.5em; text-align: left; }
+.prose-doc th { background: var(--sidebar); }
+.prose-doc code { font-family: var(--font-mono); font-size: 0.85em; background: var(--sidebar); padding: 0.1em 0.3em; border-radius: 4px; }
+.prose-doc pre { background: var(--sidebar); padding: 0.75em; border-radius: 8px; overflow-x: auto; }
+.prose-doc pre code { background: none; padding: 0; }
+.prose-doc a { color: var(--accent); text-decoration: underline; }
+.prose-doc blockquote { border-left: 3px solid var(--border); padding-left: 0.8em; color: var(--muted); }
+
+.scroll-thin { scrollbar-width: thin; }

@@ -1,0 +1,203 @@
+<?xml version='1.0' encoding='UTF-8'?>
+<xliff xmlns="urn:oasis:names:tc:xliff:document:2.0" xmlns:at="urn:agentic-translator:xliff" version="2.0" srcLang="de" trgLang="en">
+  <file id="f1" original="pruefbericht.docx">
+    <unit id="p1.1" at:kind="footer">
+      <notes>
+        <note category="location">Location: Footer</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Seite <ph id="1"/>1<ph id="2"/></source>
+        <target>Page <ph id="1"/>1<ph id="2"/></target>
+      </segment>
+    </unit>
+    <unit id="p1.2" at:kind="header">
+      <notes>
+        <note category="location">Location: Header</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Umspannwerk Nord · Projekt UW-2291 · Vertraulich</source>
+        <target>Substation Nord · Project UW-2291 · Confidential</target>
+      </segment>
+    </unit>
+    <unit id="p1.3" at:kind="heading">
+      <notes>
+        <note category="location">Location: Body</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Prüfbericht Erdungsanlage</source>
+        <target>Earthing System Test Report</target>
+      </segment>
+    </unit>
+    <unit id="p1.4" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Body</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Am 12.05.2026 wurde die <pc id="1">Erdungsanlage</pc> im Kellergeschoss geprüft. Der Übergangswiderstand der <pc id="2">Kabelpritsche</pc> liegt mit 0,08 Ω <pc id="3">unter</pc> dem Grenzwert von 0,1 Ω.</source>
+        <target>On 12.05.2026 the <pc id="1">earthing system</pc> in the basement was tested. The contact resistance of the <pc id="2">cable bridge</pc> is 0.08 Ω, <pc id="3">below</pc> the limit of 0.1 Ω.</target>
+      </segment>
+    </unit>
+    <unit id="p1.5" at:kind="heading">
+      <notes>
+        <note category="location">Location: Body</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Messergebnisse</source>
+        <target>Measurement results</target>
+      </segment>
+    </unit>
+    <unit id="p1.6" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Messpunkt</source>
+        <target>Measuring point</target>
+      </segment>
+    </unit>
+    <unit id="p1.7" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Wert</source>
+        <target>Value</target>
+      </segment>
+    </unit>
+    <unit id="p1.8" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Bewertung</source>
+        <target>Assessment</target>
+      </segment>
+    </unit>
+    <unit id="p1.9" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Kabelpritsche KG</source>
+        <target>Cable tray, basement</target>
+      </segment>
+    </unit>
+    <unit id="p1.10" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>0,08 Ω</source>
+        <target>0.08 Ω</target>
+      </segment>
+    </unit>
+    <unit id="p1.11" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>in Ordnung</source>
+        <target>OK</target>
+      </segment>
+    </unit>
+    <unit id="p1.12" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Schaltschrank 1</source>
+        <target>Switchgear cabinet 1</target>
+      </segment>
+    </unit>
+    <unit id="p1.13" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>0,05 Ω</source>
+        <target>0.05 Ω</target>
+      </segment>
+    </unit>
+    <unit id="p1.14" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>in Ordnung</source>
+        <target>satisfactory</target>
+      </segment>
+    </unit>
+    <unit id="p1.15" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>USV-Anlage</source>
+        <target>UPS system</target>
+      </segment>
+    </unit>
+    <unit id="p1.16" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>0,12 Ω</source>
+        <target>0.12 Ω</target>
+      </segment>
+    </unit>
+    <unit id="p1.17" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Table 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Nachbesserung erforderlich</source>
+        <target>Rework required</target>
+      </segment>
+    </unit>
+    <unit id="p1.18" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Body</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Die Prüfung erfolgte nach den Vorgaben des <pc id="1">Netzbetreibers</pc> und der DIN VDE 0100-540.<ph id="2"/></source>
+        <target>The test was carried out in accordance with the requirements of the <pc id="1">network operator</pc> and DIN VDE 0100-540.</target>
+      </segment>
+    </unit>
+    <unit id="p1.19" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Body</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Die Anlage ist uneingeschränkt betriebsbereit.</source>
+        <target>Die Anlage ist uneingeschränkt betriebsbereit.</target>
+      </segment>
+    </unit>
+    <unit id="p1.20" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Body</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Die Nachbesserung an der USV-Anlage ist bis zum 31.05.2026 durchzuführen.</source>
+        <target>The rework on the UPS system must be completed by 31.03.2026.</target>
+      </segment>
+    </unit>
+    <unit id="p1.21" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Body</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source>Für den Prüfer: K. Albrecht</source>
+        <target>For the inspector: K. Albrecht</target>
+      </segment>
+    </unit>
+    <unit id="p2.1" at:kind="paragraph">
+      <notes>
+        <note category="location">Location: Footnote 1</note>
+      </notes>
+      <segment state="translated" subState="at:draft">
+        <source><ph id="1"/> Errichten von Niederspannungsanlagen – Erdungsanlagen und Schutzleiter.</source>
+        <target><ph id="1"/> Low-voltage electrical installations – Earthing arrangements and protective conductors.</target>
+      </segment>
+    </unit>
+  </file>
+</xliff>

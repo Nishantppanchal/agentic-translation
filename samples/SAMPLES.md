@@ -5,10 +5,13 @@ should show. All samples belong to one fictional project: the renovation of the 
 **Umspannwerk Nord / 北区变电站** (North District Substation), project **UW-2291**. Client: Acme Energie Netz
 GmbH (甲方); Contractor: Albrecht Elektrotechnik GmbH (乙方, site manager K. Albrecht).
 
-- **English references** for every Chinese sample and the German contract are in `reference/<sample>.en.md`.
+- **English references** for every Chinese sample, the German contract and the two source-check scans are in `reference/<sample>.en.md`.
   Each ends with translator's notes on the planted terms.
 - **Generators.** `backend/scripts/make_samples.py` regenerates every file marked *new* below, byte for byte:
-  `cd backend && uv run python scripts/make_samples.py`. It does not write this file. The older samples were
+  `cd backend && uv run python scripts/make_samples.py` (it does not write this file).
+  `backend/scripts/make_language_samples.py` writes `languages/` (the acceptance report in 21 more languages, see
+  [Other languages](#other-languages)); `backend/scripts/make_review_samples.py` writes `review/` (the
+  [source-check scans](#source-check)) and their English references. The older samples were
   made by one-off scripts outside the repo; `demo/pruefbericht.vendor.en.xlf` comes from
   `backend/scripts/make_vendor_xliff.py`.
 - **How the numbers below were computed.** Segment ids and counts come from `translator.filters.office.extract`.
@@ -44,7 +47,10 @@ GmbH (甲方); Contractor: Albrecht Elektrotechnik GmbH (乙方, site manager K.
 | `demo/pruefbericht.vendor.en.xlf` | de→en | XLIFF 2.0 | 21 units | Vendor file with planted errors | existing |
 | `demo/zh/termbase.csv`, `demo/zh/memory.tmx` | zh→en | CSV, TMX | 15 + 9 | Chinese project termbase and TM | **new** |
 | `demo/zh/jiance-baogao.vendor.en.xlf` | zh→en | XLIFF 2.0 | 50 units | Chinese vendor file with planted errors | **new** |
-| `reference/*.en.md` | en | Markdown | 6 files | English references | **new** |
+| `reference/*.en.md` | en | Markdown | 9 files | English references (`acceptance-report.en.md` fits every file in `languages/`) | **new** |
+| `languages/acceptance-<code>.pdf` (+ `-scanned.pdf`) | 21 languages | PDF, text layer / scan | 1 p. | The same acceptance report in every other source language: OCR per script, right-to-left, captions, local legal terms and abbreviations | **new** |
+| `review/pruefvermerk-zweispaltig-scanned.pdf` | de | PDF, scan | 1 p. | Source check: two columns, a paragraph across the column break, a stamp over the text | **new** |
+| `review/jianli-tongzhi-shuanglan-scanned.pdf` | zh | PDF, scan | 1 p. | Source check: two columns, a paragraph across the column break, a seal over the text | **new** |
 
 ### Trap matrix (new samples)
 
@@ -72,6 +78,120 @@ uv run python scripts/seed_demo.py --only zh --upload # just the Chinese one, an
 ```
 
 ---
+
+## Other languages
+
+`languages/acceptance-<code>.pdf` (+ `-scanned.pdf`): the same one-page acceptance report in every other source
+language the app offers. Each page has a running header, a title and date line, three numbered headings, a
+paragraph, a 3-row defects table, a diagram whose labels are in the language, a caption, a conclusion and a page
+footer. They all say what `reference/acceptance-report.en.md` says, so any of them can be checked without reading
+the language. Regenerate with `cd backend && uv run python scripts/make_language_samples.py`.
+
+- **Scan only** for Arabic, Hindi, Bengali and Thai: PyMuPDF typesets those scripts correctly but its text layer
+  doesn't map the shaped glyphs back to the right characters, and a sample with a wrong text layer would test the
+  wrong thing (`tests/test_language_samples.py` checks every text layer against the source).
+- **Right to left:** Arabic and Hebrew are laid out right to left (table columns too).
+- **Traps:** each conclusion uses the language's legal term for a conditional acceptance (réception avec réserves,
+  collaudo con riserva, 条件付き受入, 조건부 인수…), and the UPS has its local abbreviation (SAI, ASI, ИБП, ДБЖ, KGK,
+  אל-פסק, यूपीएस, 不斷電… → the analysis should ask about these or render them consistently). Dates follow local
+  formats (14/03/2026, 14.03.2026, 14-03-2026, 2026-03-14, 2026年3月14日, 2026년 3월 14일).
+
+### OCR: measured
+
+Each scan was read the way the app reads it, and the reading compared with the text the page was typeset from
+(the share of characters that match, after removing markdown and spacing). The reader is the **vision LLM**
+(`qwen/qwen3-vl-8b-instruct` through OpenRouter, the same model as the vLLM default, with pictures outlined by
+PP-DocLayoutV3). Raw readings, before the OCR check.
+
+| Code | Language | Script | Files | Vision LLM |
+|---|---|---|---|---|
+| es | Spanish | Latin | text + scan | 100.0% |
+| fr | French | Latin | text + scan | 99.7% |
+| it | Italian | Latin | text + scan | 99.7% |
+| pt | Portuguese | Latin | text + scan | 99.7% |
+| nl | Dutch | Latin | text + scan | 99.6% |
+| pl | Polish | Latin | text + scan | 99.8% |
+| sv | Swedish | Latin | text + scan | 99.7% |
+| tr | Turkish | Latin | text + scan | 99.7% |
+| ru | Russian | Cyrillic | text + scan | 99.7% |
+| uk | Ukrainian | Cyrillic | text + scan | 99.4% |
+| el | Greek | Greek | text + scan | 99.7% |
+| ar | Arabic | Arabic (RTL) | scan only | 99.5% |
+| he | Hebrew | Hebrew (RTL) | text + scan | 87.4% |
+| hi | Hindi | Devanagari | scan only | 99.3% |
+| bn | Bengali | Bengali | scan only | 97.3% |
+| id | Indonesian | Latin | text + scan | 100.0% |
+| vi | Vietnamese | Latin | text + scan | 99.5% |
+| th | Thai | Thai | scan only | 94.3% |
+| ja | Japanese | Japanese | text + scan | 100.0% |
+| ko | Korean | Korean | text + scan | 100.0% |
+| zh-Hant | Chinese (Traditional) | Traditional Chinese | text + scan | 100.0% |
+| de | German | Latin | `abnahmeprotokoll-scanned.pdf` p. 1 | 100.0% |
+| zh | Chinese (Simplified) | Simplified Chinese | `fucha-baogao-scanned.pdf` p. 1 | 96.6% |
+
+**PaddleOCR-VL 1.5** (`PaddleOCR-VL-1.5-0.9B` + PP-DocLayoutV3, 2026-10-12) was evaluated on the same pages and
+dropped: the vision LLM read 15 of the 23 languages better, PaddleOCR-VL could not read Hebrew and invented a
+paragraph on Arabic, and its advantage elsewhere was a character or two.
+
+What the numbers don't show:
+- **The vision LLM can swap in a plausible word.** On Thai it read "สถานีไฟฟ้าย่อยเหนือ" (North substation) as
+  "…อยุธยา" (Ayutthaya, a well-known place name) — the failure an OCR-specialised model avoids; Hebrew had letter
+  substitutions throughout (87.4%). The OCR check lists such doubts rather than applying them.
+- **Structure:** these pages have one column. On two columns, or with a stamp or seal over the text, the vision LLM
+  can split a paragraph, drop text or miss headings: see [Source check](#source-check).
+- These are clean, typeset scans: they weren't tested on blurred, skewed or handwritten pages.
+
+## Source check
+
+`review/*-scanned.pdf`: two one-page scans whose structure a vision model tends to get wrong, for the source check
+(fixing the OCR in the chat before translating; the test script is section 3 of
+[docs/TESTING.md](../docs/TESTING.md)). Each has:
+- two columns with a narrow gutter, so reading straight across is tempting;
+- a paragraph running from the bottom of the left column to the top of the right one, mid-sentence;
+- a red stamp or seal printed over the text.
+
+Regenerate with `cd backend && uv run python scripts/make_review_samples.py` (it also writes the English
+references). What each one got wrong was measured in a live run (Qwen3-VL-8B via OpenRouter, 2026-10-12).
+
+### `review/pruefvermerk-zweispaltig-scanned.pdf`: German, 1 page
+
+**Summary.** Prüfvermerk – Erdung der Kabelpritsche (inspection note: earthing of the cable tray), in two columns.
+Section 3 (Messwerte, measured values) runs from the bottom of the left column to the top of the right one, and
+breaks the word “Fehlerstrom-Schutzeinrichtung” (residual-current device) across the columns. A red, rotated
+rubber stamp “GEPRÜFT · 14.03.2026 · Bauleitung UW-2291” is printed over section 4. Reference:
+`reference/pruefvermerk-zweispaltig.en.md`.
+
+**What the live run read wrong.**
+- Section 3 came back as two segments, split at the column break (“…Fehlerstrom-” / “Schutzeinrichtung wurde…”).
+- The running header appeared twice (once as a paragraph).
+- The stamp's text was dropped entirely.
+
+**The fix that worked.** “Section 3 (Messwerte) got split in two at the column break: it ends with "Fehlerstrom-"
+and goes on with "Schutzeinrichtung wurde…" — it is one paragraph. The running header also appears twice at the
+top; keep only the header line. And the red stamp over section 4 is missing: it says "GEPRÜFT 14.03.2026 ·
+Bauleitung UW-2291" — add it as its own line after section 4.”
+- One page fix; its word changes listed the duplicate header removed and the stamp's words added.
+- Accept → 19 segments. Continue → translated; the stamp became “CHECKED 14.03.2026 · Site management UW-2291”.
+- Check the word changes before accepting: they caught the editor joining “Fehlerstrom-Schutzeinrichtung” without
+  its hyphen (the editor is now told to keep a word's own hyphen).
+
+### `review/jianli-tongzhi-shuanglan-scanned.pdf`: Chinese, 1 page
+
+**Summary.** 监理通知单——地下室电缆桥架接地 (supervision notice: earthing of the basement cable tray), in two
+columns. Section 五 (安全措施, safety measures) runs across the column break mid-sentence. A red round seal
+(北区变电站改造工程监理部 / 监理专用章) is printed over the attachments line (八、附件) and the signature.
+Reference: `reference/jianli-tongzhi-shuanglan.en.md`.
+
+**What the live run read wrong.**
+- No heading was marked as a heading: the title and 一、二、… came back as paragraphs.
+- The running header wasn't marked as a header.
+- PP-DocLayoutV3 took the seal as a picture.
+- Under the seal, attachment 1 “现场照片8张” (8 site photos) was misread as “图纸1张” (1 drawing).
+
+**The fix that worked.** “Under the red seal, the attachments line (八、附件) looks misread — please read page 1
+again and keep the seal out of the text. Keep the title and section headings as headings, and the running header
+as the header.” The page was read again (`reread_page`): attachment 1 came back as “现场照片8张”, and the headings
+and the header were marked.
 
 ## New samples
 
@@ -455,8 +575,7 @@ other documents.
 - the switching authorisation under BA-17 and the Netzleitstelle;
 - signatures.
 
-**Exercises.** Text-layer and scan OCR, a table, and layout-preserving PDF output from the scan (needs the
-layout server).
+**Exercises.** Text-layer and scan OCR, a table, and layout-preserving PDF output from the text-layer PDF.
 
 **Traps.**
 - Termbase hits: Umspannwerk Nord, Kabelpritsche, Zwischenkreis, Abnahme, Gewährleistungsfrist,

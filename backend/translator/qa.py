@@ -353,7 +353,11 @@ def _markup(seg: dict, ctx: Context):
 
 
 _END_STRIP = re.compile(r"[\s*_`\"'’”»)\]）」』|]+$")
-_EQUIV = {"。": ".", "．": ".", "！": "!", "？": "?", "：": ":", "；": ";", "…": "."}
+_EQUIV = {"。": ".", "．": ".", "！": "!", "？": "?", "：": ":", "；": ";", "…": ".",
+          "।": ".", "॥": ".", "۔": ".", "။": ".", "։": ".",  # Devanagari/Bengali danda, Urdu, Myanmar, Armenian
+          "؟": "?", "؛": ";", "\u037e": "?"}  # Arabic question mark and semicolon; Greek question mark (;)
+# Thai, Lao and Khmer end sentences with a space, not a mark: no final punctuation to compare.
+_NO_FINAL_MARK = re.compile(r"[\u0e00-\u0eff\u1780-\u17ff]")
 
 
 # A full stop that belongs to an abbreviation ("No.", "approx.", "e.g.") isn't sentence punctuation.
@@ -375,6 +379,8 @@ def _punctuation(seg: dict, ctx: Context):
     if seg.get("kind") in ("table", "figure") or not seg.get("target"):
         return
     s, t = _final(seg["source"]), _final(seg["target"])
+    if not s and _NO_FINAL_MARK.search(_END_STRIP.sub("", seg["source"])[-1:]):
+        return
     if s != t:
         yield "warning", f"Ends with “{t or 'no punctuation'}” but the source ends with “{s or 'no punctuation'}”.", f"{s}{t}"
 

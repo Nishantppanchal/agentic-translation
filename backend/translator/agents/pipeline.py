@@ -48,18 +48,16 @@ from google.adk.workflow import START, node
 from google.genai import types
 from rapidfuzz import fuzz
 
-from .. import layout, projects, prompts, qa, structured
+from .. import dictionary, layout, ocr_guard, projects, prompts, qa, source_review, structured
 from .. import state as st
 from ..config import Role, get_settings
 from ..documents import (
     Figure,
     Page,
-    box_from_percent,
     crop_png,
-    image_size,
     load_pages,
-    batch_segments,
     mark_figures,
+    batch_segments,
     page_batches,
     place_figure_marker,
     segments_from_pages,
@@ -67,7 +65,6 @@ from ..documents import (
 from ..formats import (
     clean,
     is_none_reply,
-    parse_figure_boxes,
     parse_issues,
     parse_keeps,
     parse_ocr_check,
@@ -77,7 +74,7 @@ from ..formats import (
     tag_body,
 )
 from ..languages import lang_code
-from ..llm import build_model
+from ..llm import build_model, error_text
 from ..filters import inline, office, xliff
 from ..text import with_markup_of
 
@@ -88,7 +85,8 @@ PIPELINE_NAME = "ingest"
 UI = "ui"  # custom_metadata key telling the API how to show a message event
 CLARIFY_INTERRUPT = "clarify"
 ASK_INTERRUPT = "ask"
-OCR_CACHE_VERSION = 1
+SOURCE_INTERRUPT = "source_check"
+OCR_CACHE_VERSION = 3  # 3: vision LLM + PP-DocLayoutV3 figures, guarded check
 
 
 # --------------------------------------------------------------------------- #
@@ -107,9 +105,9 @@ def _worker(name: str, role: Role, instruction: str, structured_output: bool = F
     )
 
 
-ocr_extractor = _worker("ocr_extractor", "ocr", prompts.OCR_EXTRACT)
+# A vision LLM reads each page; a second look (the OCR check) compares the reading with the image.
+ocr_reader = _worker("ocr_reader", "ocr", prompts.VISION_OCR)
 ocr_checker = _worker("ocr_checker", "ocr_check", "You verify OCR transcriptions against page images.")
-figure_detector = _worker("figure_detector", "ocr", prompts.FIGURE_DETECT)
 analyst = _worker("analyst", "translate", "You are a lead translator preparing a document for translation.", structured_output=True)
 translator = _worker("translator", "translate", "You are a meticulous professional translator.", structured_output=True)
 reviewer = _worker("reviewer", "review", "You are a strict senior translation reviewer.", structured_output=True)
@@ -197,19 +195,6 @@ async def _save_version(ctx: Context, note: str, changed: list[str], snap: dict[
 # --------------------------------------------------------------------------- #
 
 
-async def _detect_figures(ctx: Context, page: Page) -> list[Figure]:
-    """Scanned page: ask the vision model where the figures are (boxes in % of the page)."""
-    image = types.Part.from_bytes(data=page.image, mime_type=page.image_mime)
-    out = _text(await ctx.run_node(figure_detector, node_input=_user(image, "Locate the figures."), run_id=f"figures-p{page.number}"))
-    width, height = image_size(page.image)
-    figures = []
-    for values, _desc in parse_figure_boxes(out):
-        box = box_from_percent(values, width, height, pad=0.025)
-        if box and not any(_overlap(box, f.box) > 0.5 for f in figures):
-            figures.append(Figure(box=box, png=crop_png(page.image, box)))
-    return sorted(figures, key=lambda f: (round(f.box[1]), f.box[0]))
-
-
 def _overlap(a: tuple, b: tuple) -> float:
     """Intersection over the smaller box."""
     w = min(a[2], b[2]) - max(a[0], b[0])
@@ -218,46 +203,6 @@ def _overlap(a: tuple, b: tuple) -> float:
         return 0.0
     smaller = min((a[2] - a[0]) * (a[3] - a[1]), (b[2] - b[0]) * (b[3] - b[1]))
     return w * h / smaller
-
-
-async def _find_figures(ctx: Context, page: Page) -> tuple[list[Figure], str]:
-    """Figures on a page → (figures in reading order, which detectors contributed).
-
-    Exact PDF image boxes first; PP-DocLayout (MCP tool) adds what they miss — vector charts,
-    figures on scans; vision-LLM boxes are the fallback for scans when no layout server is available.
-    """
-    mode = get_settings().figure_detection
-    if mode == "off":
-        return [], ""
-    figures = list(page.figures)
-    sources = ["pdf"] if figures else []
-
-    def add(boxes: list[tuple[float, float, float, float]]) -> bool:
-        added = False
-        for box in boxes:
-            if not any(_overlap(box, f.box) > 0.5 for f in figures):
-                figures.append(Figure(box=box, png=crop_png(page.image, box), anchor=page.anchor_below(box)))
-                added = True
-        return added
-
-    layout_done = False
-    if mode in ("auto", "layout") and layout.available():
-        boxes = await layout.figure_boxes(page.image, ctx)
-        if boxes is not None:
-            layout_done = True
-            if add(boxes):
-                sources.append("layout")
-    if not layout_done and page.is_scan and mode in ("auto", "vision"):
-        if add([f.box for f in await _detect_figures(ctx, page)]):
-            sources.append("vision")
-    figures.sort(key=lambda f: (round(f.box[1]), f.box[0]))
-    return figures, "+".join(sources)
-
-
-async def _figure_text(ctx: Context, page: Page, n: int, figure: Figure) -> str:
-    crop = types.Part.from_bytes(data=figure.png, mime_type="image/png")
-    out = _text(await ctx.run_node(ocr_extractor, node_input=_user(crop, prompts.FIGURE_TEXT), run_id=f"figtext-p{page.number}-{n}"))
-    return "" if is_none_reply(out) else clean(out)
 
 
 # Markdown syntax (not content): figure/header markers, heading hashes, bullets, table rules and pipes,
@@ -283,11 +228,13 @@ def layer_agreement(markdown: str, text_layer: str) -> float:
 
 
 def _ocr_signature(page: Page) -> str:
-    """What a cached page result depends on: the page itself and the OCR settings."""
+    """What a cached page result depends on: the page itself, the OCR settings and prompts."""
     s = get_settings()
     h = hashlib.sha1(page.image or b"")
-    for part in (page.text_layer, s.role_model("ocr")[0], s.role_model("ocr_check")[0], s.ocr_check_enabled, s.ocr_check,
-                 s.figure_detection, s.figure_text, OCR_CACHE_VERSION):
+    for part in (page.text_layer, s.endpoint("ocr").model, s.layout_model, s.endpoint("ocr_check").model,
+                 s.ocr_check_enabled, s.ocr_check, s.figure_detection, s.figure_text, OCR_CACHE_VERSION,
+                 prompts.VISION_OCR, prompts.VISION_OCR_TEXT_LAYER, prompts.VISION_OCR_FIGURES, prompts.OCR_CHECK,
+                 prompts.FIGURE_TEXT):  # a better prompt reads the page again
         h.update(str(part).encode())
     return h.hexdigest()
 
@@ -307,7 +254,7 @@ async def _cached_ocr(ctx: Context, page: Page, sig: str) -> tuple[str, dict, di
 
 
 async def _ocr_page(ctx: Context, page: Page) -> tuple[str, dict, dict[tuple[int, int], dict]]:
-    """Figures + vision OCR + verification for one page → (markdown, report, figure metadata).
+    """Vision OCR + verification for one page → (markdown, report, figure metadata).
     Cached per page (an artifact), so retrying an interrupted document doesn't read pages again."""
     if page.image is None:  # plain text input: nothing to OCR
         report = {"page": page.number, "ok": True, "issues": [], "used_text_layer": False, "figures": 0}
@@ -321,51 +268,91 @@ async def _ocr_page(ctx: Context, page: Page) -> tuple[str, dict, dict[tuple[int
     return markdown, report, meta
 
 
+async def _vision_figures(page: Page) -> tuple[list[Figure], str]:
+    """Pictures for the vision engine: the PDF's embedded images, plus what PP-DocLayoutV3 finds (the layout
+    server, if it is running): figures on scans, vector charts, seals."""
+    if get_settings().figure_detection == "off":
+        return [], ""
+    figures = list(page.figures)
+    sources = ["pdf"] if figures else []
+    if layout.available() and (boxes := await layout.figure_boxes(page.image)):
+        added = [box for box in boxes if not any(_overlap(box, f.box) > 0.5 for f in figures)]
+        figures += [Figure(box=box, png=crop_png(page.image, box), anchor=page.anchor_below(box)) for box in added]
+        if added:
+            sources.append("layout")
+    figures.sort(key=lambda f: (round(f.box[1]), f.box[0]))
+    return figures, "+".join(sources)
+
+
 async def _read_page(ctx: Context, page: Page) -> tuple[str, dict, dict[tuple[int, int], dict]]:
+    """A vision LLM transcribes the whole page (any script), with the pictures outlined and numbered so it writes
+    `[[FIGURE n]]` in their place; then the OCR check, whose corrections are applied only where safe."""
     settings = get_settings()
-    report = {"page": page.number, "ok": True, "issues": [], "used_text_layer": page.has_text_layer, "figures": 0}
-
-    figures, figure_source = await _find_figures(ctx, page)
+    report = _new_report(page)
+    figures, figure_source = await _vision_figures(page)
     report.update(figures=len(figures), figure_source=figure_source)
-
-    # Set-of-marks: outline + number the figures so OCR can place [[FIGURE n]] in reading order.
     page_png = mark_figures(page.image, [f.box for f in figures]) if figures else page.image
     image = types.Part.from_bytes(data=page_png, mime_type="image/png" if figures else page.image_mime)
-    hint = prompts.OCR_EXTRACT_TEXT_LAYER.format(text_layer=page.text_layer.strip()) if page.has_text_layer else ""
-    fig_hint = prompts.OCR_FIGURES.format(n=len(figures)) if figures else ""
-    out = await ctx.run_node(
-        ocr_extractor,
-        node_input=_user(image, f"Transcribe page {page.number}.{fig_hint}{hint}"),
-        run_id=f"ocr-p{page.number}",
-    )
+    hint = prompts.VISION_OCR_TEXT_LAYER.format(text_layer=page.text_layer.strip()) if page.has_text_layer else ""
+    fig_hint = prompts.VISION_OCR_FIGURES.format(n=len(figures)) if figures else ""
+    out = await ctx.run_node(ocr_reader, node_input=_user(image, f"Transcribe page {page.number}.{fig_hint}{hint}"),
+                             run_id=f"ocr-p{page.number}")
     markdown = clean(_text(out))
-
-    # Two independent readings that agree need no third look: the transcription and a clean text layer
-    # on a page without pictures. Anything else (scans, figures, a messy layer) is checked as before.
-    agreement = layer_agreement(markdown, page.text_layer) if page.has_text_layer and not figures and not page.full_page_image else 0
-    if settings.ocr_check == "auto" and agreement >= settings.ocr_check_agreement:
-        report.update(checked="text layer", agreement=round(agreement, 1))
-    elif settings.ocr_check_enabled and markdown:
-        check_prompt = prompts.OCR_CHECK.format(
-            transcription=markdown,
-            text_layer_hint=" (and the PDF's embedded text layer)" if page.has_text_layer else "",
-            text_layer_block=f"\n\n<text_layer>\n{page.text_layer.strip()}\n</text_layer>" if page.has_text_layer else "",
-            figure_note=prompts.OCR_CHECK_FIGURES if figures else "",
-        )
-        verdict = await ctx.run_node(ocr_checker, node_input=_user(image, check_prompt), run_id=f"ocrcheck-p{page.number}")
-        ok, issues, corrected = parse_ocr_check(_text(verdict))
-        if corrected:
-            markdown = corrected
-            report.update(ok=False, issues=issues or ["Transcription corrected"])
-
-    meta: dict[tuple[int, int], dict] = {}
+    markdown = await _check_page(ctx, page, markdown, image, prompts.OCR_CHECK_MARKED_FIGURES if figures else "",
+                                 bool(figures), report)
+    legends = []
     for n, figure in enumerate(figures, start=1):
         markdown = place_figure_marker(markdown, n, figure.anchor)
+        text = ""
+        if settings.figure_text:
+            crop = types.Part.from_bytes(data=figure.png, mime_type="image/png")
+            reply = _text(await ctx.run_node(ocr_reader, node_input=_user(crop, prompts.FIGURE_TEXT),
+                                             run_id=f"figtext-p{page.number}-{n}"))
+            text = "" if is_none_reply(reply) else clean(reply)
+        legends.append(text)
+    return markdown, report, await _save_figures(ctx, page, figures, legends)
+
+
+def _new_report(page: Page) -> dict:
+    return {"page": page.number, "ok": True, "issues": [], "used_text_layer": page.has_text_layer, "figures": 0}
+
+
+async def _check_page(ctx: Context, page: Page, markdown: str, image: types.Part, figure_note: str, has_figures: bool,
+                      report: dict) -> str:
+    """The OCR check: skipped when the reading and a clean text layer agree (two independent readings, a page
+    without pictures); otherwise a vision LLM compares the reading with the image, and its corrections are
+    applied only where safe (`ocr_guard`) — the rest are listed as possible misreadings."""
+    settings = get_settings()
+    agreement = layer_agreement(markdown, page.text_layer) if page.has_text_layer and not has_figures and not page.full_page_image else 0
+    if settings.ocr_check == "auto" and agreement >= settings.ocr_check_agreement:
+        report.update(checked="text layer", agreement=round(agreement, 1))
+        return markdown
+    if not settings.ocr_check_enabled or not markdown:
+        return markdown
+    check_prompt = prompts.OCR_CHECK.format(
+        transcription=markdown,
+        text_layer_hint=" (and the PDF's embedded text layer)" if page.has_text_layer else "",
+        text_layer_block=f"\n\n<text_layer>\n{page.text_layer.strip()}\n</text_layer>" if page.has_text_layer else "",
+        figure_note=figure_note,
+    )
+    verdict = await ctx.run_node(ocr_checker, node_input=_user(image, check_prompt), run_id=f"ocrcheck-p{page.number}")
+    _ok, _issues, corrected = parse_ocr_check(_text(verdict))
+    if corrected:
+        markdown, applied, held = ocr_guard.guard(markdown, corrected, page.text_layer if page.has_text_layer else "")
+        if applied:
+            report.update(ok=False, issues=report["issues"] + applied)
+        if held:
+            report["suggestions"] = held
+    return markdown
+
+
+async def _save_figures(ctx: Context, page: Page, figures: list[Figure], legends: list[str]) -> dict[tuple[int, int], dict]:
+    meta: dict[tuple[int, int], dict] = {}
+    for n, (figure, legend) in enumerate(zip(figures, legends), start=1):
         name = f"figure-p{page.number}-{n}.png"
         await ctx.save_artifact(name, types.Part.from_bytes(data=figure.png, mime_type="image/png"))
-        text = await _figure_text(ctx, page, n, figure) if settings.figure_text else ""
-        meta[(page.number, n)] = {"image": name, "text": text}
-    return markdown, report, meta
+        meta[(page.number, n)] = {"image": name, "text": legend}
+    return meta
 
 
 @node(rerun_on_resume=True)
@@ -381,7 +368,7 @@ async def ocr(ctx: Context, node_input: Any):
 
     yield _say(
         f"Reading {total} page{'s' if total != 1 else ''} with vision OCR"
-        + (" + OCR verification" if settings.ocr_check_enabled else "") if needs_ocr else "Reading text document",
+        + (" + OCR check" if settings.ocr_check_enabled else "") if needs_ocr else "Reading text document",
         state={**_progress("ocr", 0, total, "Running OCR…", "ocr"), "doc:pages": total},
     )
 
@@ -396,6 +383,9 @@ async def ocr(ctx: Context, node_input: Any):
             note = "matches the PDF's text layer (no second check needed)"
         else:
             note = "verified" if report["ok"] else f"checker fixed {len(report['issues'])} issue(s)"
+        if report.get("suggestions"):
+            n = len(report["suggestions"])
+            note += f"; {n} possible misreading{'s' if n != 1 else ''} to check (not changed)"
         if report["figures"]:
             note += f"; {report['figures']} figure{'s' if report['figures'] != 1 else ''} kept ({report['figure_source']})"
         yield _say(f"OCR page {pages[i].number}: {note}", state=_progress("ocr", len(results), total, f"OCR page {len(results)}/{total}"))
@@ -484,6 +474,30 @@ async def extract(ctx: Context, node_input: Any):
     yield Event(output={"segments": len(segments)})
 
 
+@node(rerun_on_resume=True)
+async def check_source(ctx: Context, node_input: Any):
+    """PDFs and images stop after reading, so the person can check the source against the page images and have
+    the chat fix it (page fixes they accept or reject; `source_review`), then continue to translation."""
+    if not source_review.needs_check(ctx.state) or ctx.state.get(source_review.CHECKED):
+        yield Event(output={"checked": False})
+        return
+    if (ctx.resume_inputs or {}).get(SOURCE_INTERRUPT) is None:
+        pages = len(source_review.pages(ctx.state))
+        text = (f"I've read {pages} page{'s' if pages != 1 else ''}. Before I translate, check the source text next to the "
+                "page images (**Source & notes → Page images & OCR**). If something is wrong — two columns read across, "
+                "a paragraph split in two, a stamp's text inside a sentence, a broken table — tell me here and I'll "
+                "propose a fix for that page. Press **Continue to translation** when it's right.")
+        yield _say(text, kind="assistant",
+                   state=_progress("check", 0, 0, "Waiting for you to check the source", "awaiting_source_check"))
+        yield RequestInput(interrupt_id=SOURCE_INTERRUPT, message="Check the source", payload={})
+        return
+    dropped = len(ctx.state.get(source_review.FIXES) or {})
+    text = "Thanks — translating now" + (f" ({dropped} page fix{'es' if dropped != 1 else ''} not accepted, left out)" if dropped else "")
+    yield _say(text, state={source_review.CHECKED: True, source_review.FIXES: {},
+                            **_progress("analyse", 0, 0, "Reading the whole document…", "translating")})
+    yield Event(output={"checked": True})
+
+
 def _parse_analysis(text: str) -> tuple[str | None, str | None, list[dict]]:
     """An analyst reply → (source language, brief, key terms). JSON first, tags as fallback."""
     obj = structured.parse_json(text)
@@ -531,8 +545,14 @@ async def analyse(ctx: Context, node_input: Any):
         )
         try:
             out = _text(await ctx.run_node(analyst, node_input=_user(prompt), run_id=f"analyse-{i}"))
-        except Exception as exc:  # the analysis only helps; never block the translation on it
-            log.warning("analysis of part %d failed: %s", i + 1, exc)
+        except Exception as exc:  # the analysis only helps; never block the translation on it — but say so
+            error = error_text(exc)
+            log.warning("analysis of part %d failed: %s", i + 1, error)
+            part = f" (part {i + 1} of {len(chunks)})" if len(chunks) > 1 else ""
+            hint = (" Lower `ANALYSIS_CHUNK_CHARS` in backend/.env to send it in smaller parts."
+                    if re.search(r"context length|context window|ContextWindowExceeded", error, re.I) else "")
+            yield _say(f"**Note:** I couldn't read the whole document first{part}, so I'll translate without fixing its "
+                       f"key terms or asking you about them.{hint} Error: {error}", kind="assistant")
             continue
         lang, new_brief, terms = _parse_analysis(out)
         detected, brief = detected or lang, (new_brief or brief)[:1500]
@@ -544,12 +564,19 @@ async def analyse(ctx: Context, node_input: Any):
             found[key] = term
         yield Event(state=_progress("analyse", i + 1, len(chunks), f"Read part {i + 1} of {len(chunks)}"))
 
+    if found and dictionary.enabled():  # sourced meanings for the key terms, shown with the questions
+        hits = await dictionary.lookup([t["term"] for t in found.values()], detected or source_lang)
+        for term in found.values():
+            if entries := hits.get(term["term"]):
+                term["dictionary"] = entries
+                _add_dictionary_options(term)
     asks = [t for t in found.values() if t.get("ambiguous")][: settings.max_questions]
     asked = {t["term"].casefold() for t in asks}
     clear = {t["term"]: t["guess"] for t in found.values() if t["term"].casefold() not in asked and t["guess"]}
     delta: dict[str, Any] = {
         "doc:key_terms": [
-            {"term": t["term"], "target": t["guess"], "meaning": t.get("meaning", ""), "asked": t["term"].casefold() in asked}
+            {"term": t["term"], "target": t["guess"], "meaning": t.get("meaning", ""), "asked": t["term"].casefold() in asked,
+             "dictionary": t.get("dictionary", [])}
             for t in found.values()
         ],
         "doc:termbase": st.merge_termbase(ctx.state, dict(ctx.state.get("doc:termbase") or {}), clear),
@@ -565,6 +592,17 @@ async def analyse(ctx: Context, node_input: Any):
         msg += f"; {len(asks)} need{'s' if len(asks) == 1 else ''} your decision before I translate"
     yield _say(msg, state=delta)
     yield Event(output={"terms": len(found), "questions": len(asks)})
+
+
+def _add_dictionary_options(term: dict, limit: int = 4) -> None:
+    """A dictionary translation the analysis didn't offer becomes one more option, credited to its source."""
+    options = term.setdefault("options", [{"target": term["guess"], "note": ""}] if term.get("guess") else [])
+    have = {o["target"].casefold() for o in options}
+    for entry in term.get("dictionary", []):
+        target = entry.get("translation", "")
+        if target and target.casefold() not in have and len(options) < limit:
+            options.append({"target": target, "note": f"{entry.get('source', 'Dictionary')}: {entry.get('definition', '')}".strip(": ")})
+            have.add(target.casefold())
 
 
 def _record_answers(state, open_qs: list[dict], answers: dict) -> tuple[list[dict], dict, int, dict[str, str]]:
@@ -1210,8 +1248,10 @@ async def polish(ctx: Context, node_input: Any):
 
     try:
         fixes, counts = await consistency_fixes(ctx)
-    except Exception as exc:  # polishing is a bonus; never lose the reviewed translation over it
-        log.warning("polish failed: %s", exc)
+    except Exception as exc:  # polishing is a bonus; never lose the reviewed translation over it — but say so
+        log.warning("polish failed: %s", error_text(exc))
+        yield _say("**Note:** the final consistency pass failed, so repeated sentences and termbase rules weren't "
+                   f"checked one last time (**Apply termbase** runs it again). Error: {error_text(exc)}", kind="assistant")
         fixes, counts = {}, {}
     current = {s["id"]: s for s in st.get_segments(ctx.state)}
     delta: dict[str, Any] = {}
@@ -1276,7 +1316,7 @@ ingest_workflow = Workflow(
     edges=[
         (START, route_source),
         (route_source, {"ocr": ocr, "extract": extract}),
-        (ocr, analyse, ask, translate, clarify, review),
+        (ocr, check_source, analyse, ask, translate, clarify, review),
         (extract, analyse),
         (review, {"refine": refine, "done": polish}),
         (refine, review),

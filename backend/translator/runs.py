@@ -12,6 +12,8 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from .llm import error_text
+
 log = logging.getLogger(__name__)
 
 Emit = Callable[[dict[str, Any]], None]
@@ -69,7 +71,7 @@ class RunManager:
                 raise
             except Exception as exc:  # surface agent/model failures to the UI
                 log.exception("run failed for session %s", session_id)
-                emit({"type": "error", "message": f"{type(exc).__name__}: {exc}"})
+                emit({"type": "error", "message": error_text(exc)})
             finally:
                 run.finished = True
                 emit({"type": "done"})

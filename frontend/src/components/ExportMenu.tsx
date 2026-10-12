@@ -90,7 +90,7 @@ export function ExportMenu({
                       title={
                         f.id === "original"
                           ? "Only for Word, PowerPoint, Excel and XLIFF documents"
-                          : "Needs a PDF or a page image; scans also need the layout server (PP-OCRv5) to find the text lines"
+                          : "Needs a PDF with a text layer (not a scan or a page image)"
                       }
                     >
                       {f.label}

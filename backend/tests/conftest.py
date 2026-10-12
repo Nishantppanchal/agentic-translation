@@ -2,17 +2,21 @@ import os
 
 import pytest
 
-from translator import layout, projects, structured
-from translator.agents import pipeline
-from translator.agents.editor import editor_agent
-from translator.agents.lqa import lqa_reviewer
-from translator.agents.ops import consistency_fixer, rewriter
+# Before anything imports the settings: tests use the defaults, never a developer's .env (its endpoints,
+# keys and headers stay out of every test). LiteLLM would otherwise load .env itself on import.
+os.environ["TRANSLATOR_ENV_FILE"] = ""
+os.environ["LITELLM_MODE"] = "PRODUCTION"
+
+from translator import layout, projects, structured  # noqa: E402
+from translator.agents import pipeline  # noqa: E402
+from translator.agents.editor import editor_agent  # noqa: E402
+from translator.agents.lqa import lqa_reviewer  # noqa: E402
+from translator.agents.ops import consistency_fixer, rewriter  # noqa: E402
 
 WORKERS = [
     pipeline.analyst,
-    pipeline.ocr_extractor,
+    pipeline.ocr_reader,
     pipeline.ocr_checker,
-    pipeline.figure_detector,
     pipeline.translator,
     pipeline.reviewer,
     pipeline.refiner,
@@ -25,10 +29,10 @@ WORKERS = [
 
 @pytest.fixture(autouse=True)
 def no_real_models(monkeypatch):
-    """Every agent fails loudly unless the test fakes it, and provider keys are removed,
+    """Every agent fails loudly unless the test fakes it, and provider keys and endpoint headers are removed,
     so a test can never make a real (billed) model call."""
     for key in list(os.environ):
-        if key.endswith("_API_KEY"):
+        if key.endswith(("_API_KEY", "_HEADERS")):
             monkeypatch.delenv(key)
 
     def unexpected(name):
@@ -39,6 +43,15 @@ def no_real_models(monkeypatch):
 
     for agent in WORKERS:
         monkeypatch.setattr(agent, "before_model_callback", unexpected(agent.name))
+
+
+@pytest.fixture(autouse=True)
+def source_check_off_by_default(request, monkeypatch):
+    """PDFs and images pause for the source check after reading: tests opt in with the `source_check` marker."""
+    from translator import source_review
+
+    if "source_check" not in request.keywords:
+        monkeypatch.setattr(source_review, "needs_check", lambda state: False)
 
 
 @pytest.fixture(autouse=True)
@@ -75,6 +88,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "layout: needs the real PP-DocLayout MCP server (set RUN_LAYOUT_TESTS=1)")
     config.addinivalue_line("markers", "structured: run with JSON-schema output enabled")
     config.addinivalue_line("markers", "analysis: run the whole-document analysis (fake the analyst)")
+    config.addinivalue_line("markers", "source_check: pause after reading PDFs and images for the source check")
 
 
 def pytest_collection_modifyitems(config, items):

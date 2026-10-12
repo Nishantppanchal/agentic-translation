@@ -5,7 +5,8 @@ reply is a JSON object constrained by a schema built *for that call* — segment
 exactly the ids in the prompt — so the model can't invent, rename or drop-and-replace ids, and
 terms / terminology / brief are typed fields instead of tags parsed out of free text.
 
-Models without structured outputs (e.g. some local Ollama models) keep the tag format; parsing
+Models without structured outputs keep the tag format (STRUCTURED_OUTPUT=off, or a hosted model LiteLLM
+says has none); parsing
 always tries JSON first and falls back to tags, so either reply works.
 """
 
@@ -19,14 +20,13 @@ from typing import Any
 
 import litellm
 
-from . import openrouter
 from .config import Role, get_settings
 from .formats import clean, term_from
 
 log = logging.getLogger(__name__)
 
 JSON_SENTINEL = "Respond with JSON matching the provided schema"
-_SEG_ID = re.compile(r'<(?:seg|pair) id="([^"]+)">')
+_SEG_ID = re.compile(r'<(?:seg|pair) id="([^"]+)"')
 # MQM core dimensions (fluency = linguistic conventions, locale = locale conventions, markup = design and markup).
 CATEGORIES = ["accuracy", "fluency", "terminology", "style", "locale", "markup"]
 SEVERITIES = ["minor", "major", "critical"]
@@ -166,14 +166,12 @@ def enabled(role: Role) -> bool:
     mode = get_settings().structured_output
     if mode != "auto":
         return mode == "on"
-    model = get_settings().role_model(role)[0]
-    if model.startswith("openrouter/"):
-        info = openrouter.info(model)
-        if info is not None:
-            return "structured_outputs" in info["params"] or "response_format" in info["params"]
+    ep = get_settings().endpoint(role)
+    if ep.api_base:  # vLLM constrains the reply to the schema (guided decoding), as do SGLang, Ollama, LM Studio
+        return True
     try:
-        return bool(litellm.supports_response_schema(model=model))
-    except Exception:  # unknown model (e.g. a local endpoint): stay with tags
+        return bool(litellm.supports_response_schema(model=ep.model))
+    except Exception:  # unknown model: stay with tags
         return False
 
 

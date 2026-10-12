@@ -9,3 +9,5 @@ __pycache__/
 frontend/node_modules/
 frontend/.next/
 frontend/.env*.local
+# local Claude Code state
+.claude/

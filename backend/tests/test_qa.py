@@ -90,6 +90,10 @@ def test_markup(source, target, kind, expected):
     ("Abb. 3", "Fig.", "English", []),
     ("Spannung ca.", "approx.", "English", []),
     ("Die Prüfung ist abgeschlossen", "The test is complete.", "English", ["punctuation"]),  # a real one still counts
+    ("कार्य पूरा हो गया है।", "The work is complete.", "English", []),  # Devanagari danda ↔ .
+    ("هل المنشأة مؤرضة؟", "Is the installation earthed?", "English", []),  # Arabic question mark ↔ ?
+    ("ตรวจรับงานแบบมีเงื่อนไข", "Conditional acceptance.", "English", []),  # Thai ends sentences without a mark
+    ("Είναι γειωμένη\u037e", "Is it earthed?", "English", []),  # Greek question mark
 ])
 def test_punctuation_and_spaces(source, target, target_lang, expected):
     seg = _seg(source, target)

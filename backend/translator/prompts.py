@@ -1,48 +1,52 @@
 """Prompt templates for each agent role."""
 
-OCR_EXTRACT = """\
-You are an OCR engine. Transcribe the page image into clean GitHub-flavoured Markdown.
+VISION_OCR = """\
+You are an OCR engine. Transcribe the page image into clean GitHub-flavoured Markdown: a faithful and complete
+copy of what is printed.
 
 Rules:
-- Transcribe faithfully in the ORIGINAL language. Never translate, summarise or add commentary.
+- Transcribe faithfully in the ORIGINAL language and script. Never translate, summarise or add commentary.
 - Copy every word exactly as printed. Do not paraphrase, modernise or "correct" words — even if a
-  different word would seem more plausible, write what is on the page.
+  different word would seem more plausible, write what is on the page. Keep numbers, dates, units,
+  punctuation and diacritics exactly as printed (full-width punctuation stays full-width).
+- Transcribe EVERYTHING printed on the page, top to bottom: every paragraph, list item, table row, caption,
+  footnote, form field with its value, note in a margin or a box, and all the text of stamps and seals. A page
+  often starts or ends in the middle of a sentence because the text continues from or onto another page:
+  transcribe that part too, exactly as printed.
+- Put each running header line at the top prefixed with "[[HEADER]] " and each footer line (page numbers too)
+  at the bottom prefixed with "[[FOOTER]] ", once each, e.g. "[[HEADER]] CONFIDENTIAL" or "[[FOOTER]] 7 / 12".
 - Preserve structure: headings (#), paragraphs, bullet/numbered lists, tables (GFM pipe tables).
-- Join lines that were hyphen-wrapped or soft-wrapped inside a paragraph; separate paragraphs with a blank line.
-- Transcribe EVERYTHING printed on the page, including running headers, footers and page numbers. Put each
-  header line at the top prefixed with "[[HEADER]] " and each footer line at the bottom prefixed with
-  "[[FOOTER]] ", e.g. "[[HEADER]] Vertraulich" or "[[FOOTER]] Seite 2 von 5".
+- Write right-to-left scripts (Hebrew, Arabic) in their normal reading order, as they would be typed: never
+  with the letters of a word reversed.
+- Text in columns: read each column to its end before the next one, in the script's reading direction.
+- Join lines that were hyphen-wrapped or soft-wrapped inside a paragraph, also across a column break, and keep
+  the hyphen of a hyphenated word ("long-term"). Separate paragraphs with a blank line.
+- The text of a stamp, seal or handwritten note goes on its own line after the paragraph it is printed over,
+  not inside that paragraph's sentences.
+- Where a stamp, signature or smudge covers text, write what is visible and [illegible] for what is not: never
+  guess the hidden words.
 - For pictures or diagrams that are NOT outlined in red, write a one-line placeholder in italics:
   *[Figure: short description]*
 - If text is illegible write [illegible].
-- Output ONLY the markdown, no preamble, no code fences."""
+- Output ONLY the page's markdown: no preamble, no notes on what you did, no code fences."""
 
-OCR_EXTRACT_TEXT_LAYER = """
+
+VISION_OCR_TEXT_LAYER = """
 The PDF also has an embedded text layer for this page. Use it as the ground truth for exact characters,
 spelling and numbers, and use the image for layout/structure. Text layer:
 <text_layer>
 {text_layer}
 </text_layer>"""
 
-OCR_FIGURES = """
+VISION_OCR_FIGURES = """
 This page has {n} figure(s) outlined in red and labelled FIGURE 1…{n}. Do NOT transcribe anything inside
 those red boxes. Instead, write [[FIGURE k]] on its own line at the point where each figure appears in the
 reading order (for example between the paragraphs it sits between)."""
 
-OCR_CHECK_FIGURES = """
+OCR_CHECK_MARKED_FIGURES = """
 The red boxes labelled FIGURE k are figures handled separately: the transcription must contain a
 [[FIGURE k]] line for each of them, at the right position, and must NOT contain the text inside them.
 Keep those lines unchanged."""
-
-FIGURE_DETECT = """\
-Find the figures on this page image: photos, drawings, diagrams, charts, maps, logos, stamps.
-Do NOT include tables, blocks of plain text, or the whole page.
-
-For each figure give its bounding box as PERCENTAGES of the page width and height (0–100):
-left, top, right, bottom. Reply with one line per figure, top to bottom:
-<figure box="left,top,right,bottom">short description</figure>
-
-If there are no figures reply exactly: <none/>"""
 
 FIGURE_TEXT = """\
 This image is a figure cropped from a document. Transcribe all text that is visible INSIDE it
@@ -53,10 +57,15 @@ OCR_CHECK = """\
 You are an OCR quality checker. Compare the transcription below against the page image{text_layer_hint}.
 
 Go through the image line by line and compare it WORD BY WORD with the transcription. Running headers,
-footers and page numbers belong in it too, as lines prefixed with [[HEADER]] / [[FOOTER]]. Look for:
+footers and page numbers belong in it too, as lines prefixed with [[HEADER]] / [[FOOTER]]. Correct only what
+was misread: keep the paragraphs, headings and tables as they are, and never reword or "improve" the text —
+copy what is printed, even a spelling mistake. Look for:
 - substituted words (a different but plausible word than the one printed — the most dangerous error)
 - misread characters (rn→m, 0→O, l→1), wrong numbers or dates
-- dropped, duplicated or reordered lines; broken tables; missing accents/diacritics
+- dropped text: a paragraph or line at the top or bottom of the page (it may begin or end in the middle of a
+  sentence), small print, a table row, a caption, the text of a stamp or seal
+- duplicated or reordered lines; broken tables; missing accents/diacritics
+- words guessed where a stamp, seal or smudge covers the text (write [illegible] for what can't be seen)
 - anything translated or paraphrased by mistake
 
 Reply in EXACTLY one of these two forms:
@@ -354,6 +363,21 @@ How to work:
   source literally says, any nuance the translation can't carry, and whether the translation renders it faithfully.
   Don't propose changes unless asked.
 - If the user reports an OCR mistake in the source, use `fix_source_segment` and then re-translate that segment.
+- SOURCE CHECK — when the document status is `awaiting_source_check`, nothing is translated yet: the user is
+  checking the OCR against the page images before translation. Fix the SOURCE, page by page: `get_page_source`
+  shows a page as OCR markdown (`[[HEADER]]` / `[[FOOTER]]` lines, `[[FIGURE n]]` for pictures, `#` headings, pipe
+  tables, a blank line between paragraphs). `propose_page_source` stages a corrected page for structure the OCR
+  got wrong: join a paragraph split at a column or picture, put the columns in reading order, give a stamp or a
+  handwritten note its own line, rebuild a table, mark a running header or footer. Keep every word exactly as it
+  is unless the user tells you a word is wrong. When you join a word broken at a line or column end, keep a hyphen
+  that belongs to the word ("long-" + "term" → "long-term"; drop it only
+  when the second part starts in lower case). A running header or footer stays a `[[HEADER]]` / `[[FOOTER]]` line,
+  never a heading. YOU CANNOT SEE THE PAGE: when the user says words or numbers are misread, something is missing,
+  or text under a stamp is wrong, use `reread_page` (the vision model reads the image again) with a clear instruction
+  from what the user said ("two columns: read the left column to the end, then the right"; "the red stamp is not
+  part of the sentences: give its text its own line"; "read the line under the seal character by character") —
+  never type the text you guess it should say. Both only propose: the user sees the page before and after and accepts or rejects it. Don't
+  translate in this phase; when the user is happy they press **Continue to translation**.
 - If the user says something on a page is missing or wrong (a table, a figure, a heading), call
   `inspect_page_layout` to see what is actually on that page and compare it with its segments.
 - After proposing changes, reply with a short summary of what you proposed (segment ids) and ask the user
@@ -373,6 +397,16 @@ Pending proposal (awaiting the user's approval):
 Outcome of your previous proposal: {last_outcome}
 
 {document_view}"""
+
+
+REREAD_PAGE = """
+This page was read before, and the person checking it says: {instruction}
+Transcribe the WHOLE page again, following that and the rules above. The earlier reading is below: keep
+everything it got right, word for word, and keep each [[FIGURE n]] line (pictures are handled separately) where
+the picture is. Output only the page's markdown, not what you changed or why.
+<earlier_reading>
+{previous}
+</earlier_reading>"""
 
 
 REWRITE = """\

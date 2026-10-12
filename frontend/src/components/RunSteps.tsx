@@ -6,9 +6,17 @@ import { api } from "@/lib/api";
 import type { DocFormat, DocStatus, LqaResult, Progress, Segment } from "@/lib/types";
 
 const STEPS = ["Read", "Analyse", "Translate", "Review", "Ready"] as const;
+const WITH_CHECK = ["Read", "Check", "Analyse", "Translate", "Review", "Ready"] as const; // PDFs and images
 
-/** Where a pipeline run is: progress stages and statuses mapped onto the five steps people see. */
-function stepOf(progress: Progress | null, status: DocStatus | undefined, translated: boolean): number {
+/** Where a pipeline run is: progress stages and statuses mapped onto the steps people see (with the source check
+ * after reading for PDFs and images). */
+function stepOf(progress: Progress | null, status: DocStatus | undefined, translated: boolean, check: boolean): number {
+  if (progress?.stage === "check" || status === "awaiting_source_check") return 1;
+  const base = baseStep(progress, status, translated);
+  return check && base >= 1 ? base + 1 : base;
+}
+
+function baseStep(progress: Progress | null, status: DocStatus | undefined, translated: boolean): number {
   if (status === "ready") return 4;
   switch (progress?.stage) {
     case "queued":
@@ -52,18 +60,22 @@ export function RunSteps({
   status,
   running,
   segments,
+  check = false,
 }: {
   progress: Progress | null;
   status: DocStatus | undefined;
   running: boolean;
   segments: Segment[];
+  check?: boolean; // the document is read with OCR, so it stops for the source check
 }) {
-  const waiting = status === "awaiting_answers" && !running;
-  const current = stepOf(progress, status, segments.some((s) => s.translatable && s.target));
+  const checking = status === "awaiting_source_check" && !running;
+  const waiting = (status === "awaiting_answers" || checking) && !running;
+  const steps = check ? WITH_CHECK : STEPS;
+  const current = stepOf(progress, status, segments.some((s) => s.translatable && s.target), check);
   return (
     <div className="rounded-xl border border-border bg-panel p-3 text-sm">
       <ol className="flex items-center">
-        {STEPS.map((label, i) => {
+        {steps.map((label, i) => {
           const done = i < current;
           const now = i === current;
           return (
@@ -84,14 +96,18 @@ export function RunSteps({
                 </span>
                 <span className={`text-[11px] ${now ? "font-medium text-fg" : "text-muted"}`}>{label}</span>
               </div>
-              {i < STEPS.length - 1 && <div className={`mx-1 mb-4 h-0.5 flex-1 rounded ${done ? "bg-accent" : "bg-border"}`} />}
+              {i < steps.length - 1 && <div className={`mx-1 mb-4 h-0.5 flex-1 rounded ${done ? "bg-accent" : "bg-border"}`} />}
             </li>
           );
         })}
       </ol>
       <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted">
         <span className="truncate">
-          {waiting ? "Waiting for your answers below — the agents continue as soon as you decide." : (progress?.message ?? "Working…")}
+          {checking
+            ? "Check the source text — ask me to fix anything, then press Continue to translation."
+            : waiting
+              ? "Waiting for your answers below — the agents continue as soon as you decide."
+              : (progress?.message ?? "Working…")}
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {!waiting && progress && progress.total > 0 && (

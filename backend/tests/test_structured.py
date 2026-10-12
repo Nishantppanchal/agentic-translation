@@ -21,6 +21,7 @@ from translator import state as st
 from translator.agents import pipeline
 
 from .test_flow import _prompt, _reply
+from .fakes import fake_ocr
 
 pytestmark = pytest.mark.structured
 
@@ -114,9 +115,8 @@ def test_workflow_with_structured_output(monkeypatch):
     SCHEMAS.clear()
     monkeypatch.setattr(structured, "enabled", lambda role: True)
     pages = iter(["# Abnahmeprotokoll\n\nDie Kabelpritsche ist nicht geerdet.", "## Ergebnis\n\nDie Anlage wird unter Vorbehalt der Mängel abgenommen."])
-    monkeypatch.setattr(pipeline.ocr_extractor, "before_model_callback", lambda *_: _reply(next(pages)))
+    fake_ocr(monkeypatch, pages)
     monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    monkeypatch.setattr(pipeline.figure_detector, "before_model_callback", lambda *_: _reply("<none/>"))
     monkeypatch.setattr(pipeline.translator, "before_model_callback", _with_schema(_translate))
     monkeypatch.setattr(pipeline.reviewer, "before_model_callback", _with_schema(_review))
     monkeypatch.setattr(pipeline.refiner, "before_model_callback", _with_schema(_refine))

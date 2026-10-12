@@ -2,7 +2,7 @@
 
 Everything the app does as of October 2026 (roadmap milestones M0–M9). Setup, architecture, the API, tests and the demo script are in the [README](../README.md).
 
-**In one paragraph:** upload a document (PDF, scan, image, Word, PowerPoint, Excel, XLIFF or text) in any language into a project; everything is translated into **English**. Agents first read the whole document and ask you about the terms that need a decision — explained in plain English with English options and a recommendation, so you can answer without knowing the source language. Then they translate page by page, using the project's style guide, termbase and translation memory, and review and polish their own work. You finish it in a CAT-style segment editor, or by asking for changes in the chat. Every agent change is a proposal you accept or reject, and every accepted change is a version you can diff. Download it in the original format and layout, reflowed, as a bilingual review table, or as XLIFF for other CAT tools.
+**In one paragraph:** upload a document (PDF, scan, image, Word, PowerPoint, Excel, XLIFF or text) in any language into a project; everything is translated into **English**. A PDF or scan first stops after reading, so you can check the source against the page images and have the chat fix it before anything is translated. Agents then read the whole document and ask you about the terms that need a decision — explained in plain English with English options and a recommendation, so you can answer without knowing the source language. Then they translate page by page, using the project's style guide, termbase and translation memory, and review and polish their own work. You finish it in a CAT-style segment editor, or by asking for changes in the chat. Every agent change is a proposal you accept or reject, and every accepted change is a version you can diff. Download it in the original format and layout, reflowed, as a bilingual review table, or as XLIFF for other CAT tools.
 
 **Contents**
 1. [The workspace](#1-the-workspace)
@@ -17,7 +17,7 @@ Everything the app does as of October 2026 (roadmap milestones M0–M9). Setup, 
 10. [Layout-preserving PDF](#10-layout-preserving-pdf)
 11. [Exports and exchange formats](#11-exports-and-exchange-formats)
 12. [Versions and reading views](#12-versions-and-reading-views)
-13. [Cost, models and settings](#13-cost-models-and-settings)
+13. [Models and settings](#13-models-and-settings)
 14. [Samples and demo kit](#14-samples-and-demo-kit)
 
 ---
@@ -27,8 +27,8 @@ Everything the app does as of October 2026 (roadmap milestones M0–M9). Setup, 
 | Area | What's there |
 |---|---|
 | **Sidebar** | **New translation**, then each **project** with its documents underneath (collapsible), then documents outside any project. Each document shows its status and open-question count. |
-| **Chat** (middle) | The conversation with the agents for the open document. While the pipeline runs, a **step bar** shows Read → Analyse → Translate → Review → Ready, with the current page and the elapsed time; while it waits for you, the current step says so. Then the question cards, proposals with diffs, and links to each version's diff. When a run ends, a **Next steps** card offers the obvious actions: *Review N drafts*, *Fix N QA errors*, *Check quality score*, *Download*. **Shortcuts** above the input: *Fix QA errors*, *Apply termbase*, *Summarise* (what the document says, in plain English), *More formal*. Enter sends, Shift+Enter adds a new line. |
-| **Document panel** (right) | Five tabs: **Segments**, **Document** (views: *Reading*, *Side by side*, *Original layout*), **Quality**, **History**, **Source & notes** (views: *Source* / *Page images & OCR*, and *Brief, terms & checks*). The header (one line) holds the file name and status, the version picker, the download menu and the cost chip. Drag the divider between chat and document to resize; the width is remembered. |
+| **Chat** (middle) | The conversation with the agents for the open document. While the pipeline runs, a **step bar** shows Read → Analyse → Translate → Review → Ready (with **Check** after Read for PDFs and images), with the current page and the elapsed time; while it waits for you, the current step says so. Then the source-check card, the question cards, proposals with diffs, and links to each version's diff. When a run ends, a **Next steps** card offers the obvious actions: *Review N drafts*, *Fix N QA errors*, *Check quality score*, *Download*. **Shortcuts** above the input: *Fix QA errors*, *Apply termbase*, *Summarise* (what the document says, in plain English), *More formal*. Enter sends, Shift+Enter adds a new line. |
+| **Document panel** (right) | Five tabs: **Segments**, **Document** (views: *Reading*, *Side by side*, *Original layout*), **Quality**, **History**, **Source & notes** (views: *Source* / *Page images & OCR*, and *Brief, terms & checks*). The header (one line) holds the file name and status, the version picker, the download menu and the token chip. Drag the divider between chat and document to resize; the width is remembered. |
 | **Project page** | Opens from the sidebar. Tabs: **Documents**, **Style guide**, **Termbase**, **Translation memory**, **Settings**. |
 
 Hovering a passage in the reading views shows a button that **references it in the chat** ("p3.2"), so you can say "make this more formal" without copying text. In the Segments grid, **explain** on a row asks the agent what the source says.
@@ -86,8 +86,8 @@ Deleting a project removes its termbase and TM, but keeps its documents. Databas
 
 | Input | How it's read | What you can download |
 |---|---|---|
-| **PDF with a text layer** | Vision OCR per page, cross-checked against the text layer | Layout-preserving PDF, reflowed formats, review table, XLIFF |
-| **Scanned PDF, image** (PNG, JPG, WebP) | Vision OCR + OCR check; line positions from PP-OCRv5 for the layout PDF | Same as above; the layout PDF needs the layout server |
+| **PDF with a text layer** | Vision LLM per page, cross-checked against the text layer; then the source check | Layout-preserving PDF, reflowed formats, review table, XLIFF |
+| **Scanned PDF, image** (PNG, JPG, WebP) | Vision LLM, then the OCR check; then the source check | Reflowed formats, review table, XLIFF (no layout-preserving PDF: it needs a text layer) |
 | **Word** (.docx) | Read directly, no OCR; formatting becomes inline codes | **Translated .docx in its original formatting**, plus all the formats above |
 | **PowerPoint** (.pptx) | Read directly | Translated .pptx, plus the formats above |
 | **Excel** (.xlsx) | Read directly | Translated .xlsx, plus the formats above |
@@ -102,8 +102,11 @@ The pipeline is a Google ADK `Workflow` graph, run once per upload:
 
 ```
 upload ─► route_source
-            ├─ PDF / image / text ─► ocr       vision OCR + OCR check per page (2 pages at a time)
-            │                                  figures detected, cropped and kept
+            ├─ PDF / image / text ─► ocr       vision LLM, then the OCR check, per page (2 at a time)
+            │                         │        figures detected, cropped and kept
+            │                         ▼
+            │                        check_source   PDFs and images pause: you check the reading against the
+            │                                       page images; the chat proposes page fixes; Continue
             └─ Word / PPT / Excel / XLIFF ─► extract   text read from the file, formatting → inline codes
                        │
                        ▼
@@ -132,17 +135,31 @@ upload ─► route_source
 
 ### Reading the source
 - **OCR with verification:**
-  1. Each page is rendered to an image, and a vision model transcribes it into markdown.
-  2. A second agent checks the transcription against the image, and against the PDF's text layer when there is one. It either approves the transcription or returns a corrected one.
-  3. **The check is skipped only when two independent readings agree exactly:** the transcription is the same text as the PDF's own text layer (ignoring markdown, spacing, line-end hyphens and character variants such as ligatures) on a page without pictures. A single misread word, digit or minus sign, a messy text layer, a scan or a page with figures all get the check as before (`OCR_CHECK=always` checks every page).
-  4. The Source tab shows which pages were corrected and which matched their text layer.
-  5. **Cached per page:** if a run fails (a rate limit, a restart), **Retry** reuses the pages already read.
+  1. **Vision LLM:** each page is rendered to an image and transcribed into markdown by a vision model (the `OCR` role, e.g. Qwen3-VL), in any script. It was measured on 23 languages: see [samples/SAMPLES.md](../samples/SAMPLES.md#ocr-measured).
+  2. **Pictures marked on the page:** the PDF's embedded images and the pictures, charts and seals PP-DocLayoutV3 finds (the layout server's `detect_layout` tool) are outlined in red and numbered on the page image, so the model writes `[[FIGURE n]]` in their place instead of transcribing them.
+  3. **OCR check:** a vision model compares the page with the image, and with the PDF's text layer when there is one. Its corrections are applied only when they're small fixes inside a word (a misread letter) or when the text layer confirms them. Anything else (a different word, a changed number, added or dropped text, and on scans any change to Chinese, Japanese or Korean characters) is listed in the Source tab as a *possible misreading* to compare with the page image, and the reading is kept.
+  4. **The check is skipped only when two independent readings agree exactly:** the transcription is the same text as the PDF's own text layer (ignoring markdown, spacing, line-end hyphens and character variants such as ligatures) on a page without pictures. A single misread word, digit or minus sign, a messy text layer, a scan or a page with figures all get the check as before (`OCR_CHECK=always` checks every page).
+  5. The Source tab shows which pages were corrected, the possible misreadings to check, and which pages matched their text layer.
+  6. **Cached per page:** if a run fails (a rate limit, a restart), **Retry** reuses the pages already read.
 - **Figures:**
-  - **Detection:** photos, diagrams, charts and seals are found from the embedded image positions, from PP-DocLayout (an MCP tool), or, as a fallback on scans, from the vision model.
+  - **Detection:** photos, diagrams, charts and seals: the pictures embedded in the PDF, plus the picture, chart and seal regions PP-DocLayoutV3 finds. Without the layout server (`LAYOUT_SERVER_DIR` blank), only the embedded pictures.
   - **Placement:** each figure is cropped and placed in the translation where it appears.
-  - **Text inside a figure** is read and translated as a legend underneath.
+  - **Text inside a figure** is read from its crop by the vision model and translated as a legend underneath.
 - **Whole document:** running headers, footers and page numbers become segments too; a bare page number is just copied. A paragraph that runs across a page break (past a footer and the next page's header) is joined into one segment.
 - **Office and XLIFF files** skip OCR (see [§9](#9-office-and-xliff-files)).
+
+### Source check: fixing the reading before translating
+Every PDF and image **pauses after reading** (status *Check source*; the step bar shows Read → **Check** → Analyse). Nothing is translated yet, so a fix to the source loses nothing. Office, XLIFF and text files don't pause.
+- **The card** in the chat: *Check the source before translating*, with a **Continue to translation** button.
+- **Checking:** compare the reading with the page images (**Source & notes → Page images & OCR**) and describe what's wrong in the chat, in plain words: two columns read straight across, a paragraph split at the column break, a stamp's text missing or inside a sentence, a heading or running header not marked.
+- **Page fixes:** the chat editor proposes a fix for the whole page: the page's source as OCR markdown, before and after (a word-level diff), with a list of the words the fix adds or removes, and pictures dropped or added. A structure-only fix (join, split, reorder, mark a header, footer or heading) changes no words — but the word list can't tell a right reading order from a wrong one (two columns stitched the wrong way round keep every word), so each passage the fix **moves** is quoted separately (*Text moves*). The green *Only the structure changes* line means the same words in the same order. Two editor tools make them:
+  - `propose_page_source`: the editor rewrites the page's structure itself;
+  - `reread_page`: the vision model reads the page image again, with an instruction taken from what you said ("two columns: read the left column to the end, then the right; the red stamp is not part of the text").
+
+  `get_page_source` shows a page's current source.
+- **Accept** or **Reject** each page fix. Check the word list and any moved passages against the page image first. Accepting splits the page into segments again.
+- **Continue to translation** goes on to the analysis; page fixes you haven't decided are dropped.
+- **Afterwards:** page fixes are only possible during the source check; later, `fix_source_segment` corrects one segment.
 
 ### Translating: page by page, with the document carried along
 Each **page** is one translator call, and pages are translated **in order**. A segment is a paragraph, heading, list item or table cell. What counts as a page depends on the format:
@@ -215,7 +232,7 @@ Before the document is handed over, the consistency fixer runs on the AI draft: 
 ### Runs
 - **Queue:** at most `MAX_PARALLEL_RUNS` (default 2) pipelines or tasks run at once across all documents; the rest show **Queued**. Chat turns never wait.
 - **Reconnecting:** progress streams to the browser and replays when you reconnect or reload.
-- **Step bar:** Read → Analyse → Translate → Review → Ready, with the current page, a progress bar and the elapsed time.
+- **Step bar:** Read → Analyse → Translate → Review → Ready (Read → Check → Analyse … for PDFs and images), with the current page, a progress bar and the elapsed time.
 - **Rate limits and stalls:** every model call retries with exponential backoff on rate limits and API errors (`MODEL_RETRIES`, default 5), and times out after `MODEL_TIMEOUT` (180 s) instead of hanging on a stalled provider connection, then retries.
 - **Interrupted runs:** a run stopped by an error or a server restart shows a **Retry** button; pages already read are reused.
 
@@ -286,8 +303,9 @@ Ask questions too: "explain p1.4" or **Summarise** (a shortcut above the input) 
 | `run_qa_checks` | Run the automatic QA, for example "fix the QA errors" |
 | `add_comment` | Leave a comment on a segment |
 | `ask_user_about_term`, `resolve_question` | Ask you about a term (with its meaning and English options), or apply your answer to a question card |
-| `fix_source_segment` | Correct an OCR mistake in the source (not for Word, PowerPoint, Excel or XLIFF, whose source is exact) |
-| `inspect_page_layout` | Run PP-DocLayout on a source page and compare it with that page's segments |
+| `get_page_source`, `propose_page_source`, `reread_page` | During the source check: show a page's source, propose a page fix (the editor rewrites the page's structure), or have the vision model read the page again with an instruction (see [§4](#source-check-fixing-the-reading-before-translating)) |
+| `fix_source_segment` | Correct an OCR mistake in one source segment, after the source check (not for Word, PowerPoint, Excel or XLIFF, whose source is exact) |
+| `inspect_page_layout` | Run PP-DocLayoutV3 on a source page and compare it with that page's segments |
 
 **Proposal card**
 - Each change is shown as a word-level diff and can be unticked individually, here or under the segment in the grid.
@@ -401,27 +419,19 @@ Use the download menu → **Import a returned XLIFF…**, with a 2.0 or 1.2 file
 
 ## 10. Layout-preserving PDF
 
-**Translated PDF — original layout**: the translation is set into the original pages.
+**Translated PDF — original layout**: the translation is set into the original pages. Only PDFs with a text layer get one; scans and page images get the reflowed formats instead.
 
-- **PDFs with a text layer:**
-  - **What's removed:** only the text. Images, vector graphics, shading and table rules stay.
-  - **Typesetting:** each block is re-set in place with the original size, weight and colour, in Noto Sans with a CJK fallback.
-- **Scans and page images:**
-  - **Finding the lines:** PP-OCRv5 on the layout server finds each line's box, text and word boxes.
-  - **Erasing:** the source is painted out with the paper colour sampled inside the line, so shaded table headers stay shaded.
-  - **Typesetting:** font size comes from the line height, ink colour from the glyphs, and bold from ink density (headings are always bold).
-  - **Figures:** text inside them stays as printed.
-  - **Caching:** OCR results are cached per document.
+- **What's removed:** only the text. Images, vector graphics, shading and table rules stay.
+- **Typesetting:** each block is re-set in place with the original size, weight and colour, in Noto Sans with a CJK fallback.
 - **Alignment:** segments are matched to the PDF's lines, tolerating hyphenation, spacing and markdown differences, and following paragraphs across page breaks.
   - **Headers and footers** are matched first, on their own page, so a paragraph continuing across the break doesn't swallow them.
   - **Own page first:** a segment is looked for on its own page(s) first, and lines another segment already took are skipped — a sentence printed on two pages goes to each page's own segment.
   - **Table cells** are matched individually, down to word level when two cells share a line.
-  - **Misread lines (scans):** a segment whose line OCR misread is placed by position between its aligned neighbours, only when the gap holds a plausible amount of text.
 - **Fit:** each block grows into free space (right up to the next column or object, down to the next block) and shrinks if needed.
   - **Never silently lost:** a block that still can't fit keeps its source text and is reported.
   - **Headers and footers** are translated in place on every page.
 - **Output size:** fonts are subset, so a 2-page document is about 50 KB. Renders are cached per version.
-- **Layout tab:** original and translated pages side by side. Each segment's box is coloured *fit*, *shrunk to fit* or *didn't fit — original kept*. Clicking a box highlights the segment. Scans show how many segments were placed by position.
+- **Layout tab:** original and translated pages side by side. Each segment's box is coloured *fit*, *shrunk to fit* or *didn't fit — original kept*. Clicking a box highlights the segment.
 
 ---
 
@@ -432,7 +442,7 @@ Any saved version can be downloaded from the menu in the document header.
 | Group | Format | Notes |
 |---|---|---|
 | Original layout | **Translated file, original format** | Word, PowerPoint, Excel or XLIFF in, the same format out |
-| Original layout | **Translated PDF, original layout** | PDFs with a text layer; scans and images with the layout server |
+| Original layout | **Translated PDF, original layout** | PDFs with a text layer only |
 | Reflowed | **Word document** | Real headings, lists, tables, figures with captions. Header and footer as the document's own, with live `PAGE`/`NUMPAGES` fields. Document language set, East Asian font for CJK targets. |
 | Reflowed | **Web page (HTML)** | Self-contained; running headers and footers are left out |
 | Reflowed | **Markdown (+ figures)** | A zip when the document has figures |
@@ -453,7 +463,7 @@ Downloads with non-ASCII names keep them.
 - **Document → Sheets** (Excel): each sheet as a grid — sheet tabs, row and column headers, merged cells, fills, bold, column widths; the translated text in every cell that uses it, numbers, dates and formula results (marked *fx*, the formula on hover) as in the file. Original/Translation toggle; click a cell to open its segment.
 - **Document → Slides** (PowerPoint): each slide as a canvas with its text boxes, tables and pictures where they sit, text shrunk to fit like the downloaded file, speaker notes underneath. Translation / Original / Side by side; click a text to open its segment. (Not a renderer: charts, themes and backgrounds aren't drawn.)
 - **Document → Side by side:** source and translation in parallel.
-- **Document → Original layout** (PDFs and scans): see [§10](#10-layout-preserving-pdf).
+- **Document → Original layout** (PDFs with a text layer): see [§10](#10-layout-preserving-pdf).
 - **Source & notes → Source / Page images & OCR:** the page images next to the transcription, plus the OCR check results. For Office and XLIFF files: the extracted source with its formatting.
 - **Source & notes → Brief, terms & checks:**
   - the OCR report;
@@ -466,20 +476,22 @@ Downloads with non-ASCII names keep them.
 
 ---
 
-## 13. Cost, models and settings
+## 13. Models and settings
 
-- **Cost chip** (document header): tokens and US dollars per pipeline step and model, computed from the run's saved events. Prices come from LiteLLM and OpenRouter's model list. A two-page document costs well under one cent on the budget models.
-- **Models:** any provider works through LiteLLM (OpenRouter, Anthropic, OpenAI, Gemini, Ollama, vLLM, …). Each role can use a different model:
+- **Token chip** (document header): tokens per pipeline step and model, computed from the run's saved events (no prices: the models run on your own servers).
+- **Models:** every role calls a vLLM server directly (no router). An endpoint is a URL, the served model name, an API key, extra HTTP headers and extra request fields; each role can use its own:
 
   | Role | Needs | Setting |
   |---|---|---|
-  | OCR, OCR check | vision | `OCR_MODEL`, `OCR_CHECK_MODEL` |
-  | Analyse, translate, refine | text; structured output if available | `TRANSLATE_MODEL` |
+  | OCR | vision; reads whole pages, the text inside pictures, and pages again for the source check | `OCR_MODEL` |
+  | OCR check | vision | `OCR_CHECK_MODEL` |
+  | Analyse, translate, refine | text | `TRANSLATE_MODEL` |
   | Review | text; ideally a different model than the translator's | `REVIEW_MODEL` |
-  | Chat editor | tool calling | `EDITOR_MODEL` |
-  | LQA | text | `LQA_MODEL` (defaults to the review model) |
+  | Chat editor | tool calling (`--enable-auto-tool-choice --tool-call-parser …`); also makes the source check's page fixes | `EDITOR_MODEL` |
+  | LQA | text | `LQA_MODEL` (defaults to the review endpoint) |
 
-  Unset roles use `MODEL`. The current setup uses OpenRouter budget models: Claude Haiku for analysis, translation and the editor; a Qwen flash model for vision, review and LQA.
+  Each role has `<ROLE>_MODEL`, `_API_BASE`, `_API_KEY`, `_HEADERS` and `_EXTRA_BODY`; anything left unset comes from `MODEL`, `MODEL_API_BASE`, `MODEL_API_KEY`, `MODEL_HEADERS` and `MODEL_EXTRA_BODY`. Headers and extra body are JSON objects; a role's own replaces the default, and `{}` sends none. Any OpenAI-compatible endpoint works, e.g. OpenRouter: `<ROLE>_API_BASE=https://openrouter.ai/api/v1`, `<ROLE>_MODEL=<model id>`, `<ROLE>_API_KEY=…`.
+- **Errors:** every failed call is logged as `vLLM error — <role> model <name> at <url>: HTTP <status> <type>: <server message>`, and a run that stops shows the same text. If the analysis or the final consistency pass fails, translation goes on and the chat says so with the error. Keys, header values and URL credentials are never printed.
 - **Other settings** (`backend/.env`):
 
   | Setting | Default | Effect |
@@ -494,17 +506,18 @@ Downloads with non-ASCII names keep them.
   | `MAX_QUESTIONS_PER_BATCH` | 3 | Late questions per page from the translator |
   | `MAX_CONCURRENCY` | 2 | Model calls at once within one run (OCR, review) |
   | `MAX_PARALLEL_RUNS` | 2 | Pipelines/tasks at once across documents |
-  | `STRUCTURED_OUTPUT` | auto | JSON schema output, or the tag format |
+  | `STRUCTURED_OUTPUT` | auto | JSON schema output (vLLM guided decoding), or `off` for the tag format |
   | `OCR_CHECK_ENABLED` | true | Second-pass OCR verification |
   | `OCR_CHECK` | auto | `auto` skips the check when the transcription equals the text layer (page without pictures); `always` |
-  | `MODEL_RETRIES` | 5 | Retries per model call on rate limits (exponential backoff) and API errors |
+  | `MODEL_RETRIES` | 5 | Retries per model call on rate limits (exponential backoff) and server errors |
   | `MODEL_TIMEOUT` | 180 | Seconds per model call before it is retried |
-  | `REVIEW_REASONING_TOKENS` | 2000 | Cap on the reviewer's and LQA's hidden reasoning (OpenRouter reasoning models); 0 = no cap |
+  | `REVIEW_REASONING_TOKENS` | 2000 | Cap on the reviewer's and LQA's hidden thinking (vLLM `thinking_token_budget`; needs `--reasoning-parser`, else the call is retried uncapped); 0 = no cap |
   | `OCR_DPI` | 150 | Page render resolution for OCR |
-  | `FIGURE_DETECTION` | auto | `auto`, `layout`, `vision`, `pdf` or `off` |
+  | `FIGURE_DETECTION` | auto | `auto` (the PDF's embedded pictures + the pictures PP-DocLayoutV3 finds) or `off` |
   | `FIGURE_TEXT` | true | Read text inside figures as legends |
-  | `LAYOUT_SERVER_DIR` | ../layout-server | Blank disables PP-DocLayout and PP-OCRv5 |
-  | `LAYOUT_MODEL` | PP-DocLayout_plus-L | Layout detection model |
+  | `LAYOUT_SERVER_DIR` | ../layout-server | The layout MCP server, which finds the pictures on pages. Blank = the PDF's embedded pictures only |
+  | `LAYOUT_MODEL` | PP-DocLayoutV3 | `detect_layout`'s model |
+  | `LAYOUT_MODEL_DIR` | (blank) | Where the PP-DocLayoutV3 model files are: a folder of model folders by name (like `~/.paddlex/official_models`) or the model's own folder. Blank = download to PaddleX's cache |
 
 ---
 
@@ -513,8 +526,9 @@ Downloads with non-ASCII names keep them.
 - **Sample files** (`samples/`, catalogued with what each one tests in [samples/SAMPLES.md](../samples/SAMPLES.md)):
   - **German:** acceptance and maintenance reports and a follow-up report (PDF and scanned copies), a contract excerpt whose abbreviations are only defined on page 2, a Word report, a PowerPoint training deck and an Excel defect list.
   - **Chinese:** an acceptance report and a follow-up inspection (PDF and scanned copies, repeating paragraphs for TM leverage), a Word test report with tracked changes, a PowerPoint safety training and an Excel defect list with formulas — with utility terms that genuinely need a decision (两票三制, 五防, 三措一案…).
+  - **Source check:** two two-column scans in `samples/review/`, German and Chinese, each with a paragraph running across the column break and a red stamp or seal over the text.
   - **English references** in `samples/reference/`, so a non-speaker can judge the output.
-  - All generated by `scripts/make_samples.py` (run in `backend/`).
+  - All generated by `scripts/make_samples.py` (run in `backend/`); the source-check scans by `scripts/make_review_samples.py`.
 - **`scripts/seed_demo.py --reset --upload`** creates two projects — German → English and Chinese → English — each with a style guide, a termbase with forbidden variants and a translation memory, and uploads two documents into each (`--only de|zh` for one).
 - **Vendor files:** `samples/demo/pruefbericht.vendor.en.xlf` and `samples/demo/zh/jiance-baogao.vendor.en.xlf`, with planted errors for the QA, LQA and consistency demo.
 - **Hands-on test script:** [docs/TESTING.md](TESTING.md). A shorter walkthrough is the README's [Demo](../README.md#demo).

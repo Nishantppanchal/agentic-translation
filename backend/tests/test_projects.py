@@ -23,6 +23,7 @@ from translator.agents import pipeline
 from translator.filters import exchange
 from translator.project_routes import router
 from translator.projects import ProjectStore
+from .fakes import fake_ocr
 
 
 @pytest.fixture()
@@ -151,9 +152,8 @@ def test_pipeline_reuses_exact_matches_and_shows_fuzzy_ones(store, monkeypatch):
         segs = re.findall(r'<seg id="([^"]+)">\n(.*?)\n</seg>', text, re.S)
         return _reply("\n".join(f'<seg id="{sid}">EN {src}</seg>' for sid, src in segs))
 
-    monkeypatch.setattr(pipeline.ocr_extractor, "before_model_callback", lambda *_: _reply(PAGE))
+    fake_ocr(monkeypatch, PAGE)
     monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    monkeypatch.setattr(pipeline.figure_detector, "before_model_callback", lambda *_: _reply("<none/>"))
     monkeypatch.setattr(pipeline.translator, "before_model_callback", fake_translate)
     monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
 

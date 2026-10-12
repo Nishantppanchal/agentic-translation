@@ -6,6 +6,7 @@ const LABELS: Record<DocStatus, string> = {
   ocr_check: "Checking OCR",
   translating: "Translating",
   awaiting_answers: "Needs input",
+  awaiting_source_check: "Check source",
   reviewing: "Reviewing",
   ready: "Ready",
   error: "Error",
@@ -17,7 +18,7 @@ export function StatusBadge({ status, compact = false }: { status: DocStatus; co
       ? "bg-ins text-ins-fg"
       : status === "error"
         ? "bg-del text-del-fg"
-        : status === "awaiting_answers"
+        : status === "awaiting_answers" || status === "awaiting_source_check"
           ? "bg-warn text-warn-fg"
         : "bg-accent-soft text-accent";
   return (

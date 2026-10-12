@@ -25,6 +25,7 @@ from translator import state as st
 from translator.agents import pipeline
 from translator.agents.editor import editor_agent
 from translator.timeline import history
+from .fakes import fake_ocr
 
 APP = "translator"
 
@@ -37,11 +38,10 @@ def _prompt(llm_request) -> str:
     return "\n".join(p.text or "" for c in llm_request.contents for p in c.parts or [] if p.text)
 
 
-def fake_ocr(callback_context, llm_request):
-    page = re.search(r"Transcribe page (\d+)", _prompt(llm_request)).group(1)
-    if page == "1":
-        return _reply("# Abnahmeprotokoll\n\nDie Kabelpritsche ist nicht geerdet.\n\n| Nr. | Frist |\n|---|---|\n| 1 | 30.04. |")
-    return _reply("## Ergebnis\n\nDie Anlage wird abgenomen.")
+def read_page(page):
+    if page.number == 1:
+        return "# Abnahmeprotokoll\n\nDie Kabelpritsche ist nicht geerdet.\n\n| Nr. | Frist |\n|---|---|\n| 1 | 30.04. |"
+    return "## Ergebnis\n\nDie Anlage wird abgenomen."
 
 
 def fake_ocr_check(callback_context, llm_request):
@@ -109,8 +109,7 @@ class FakeEditor:
 
 @pytest.fixture(autouse=True)
 def fake_models(monkeypatch):
-    monkeypatch.setattr(pipeline.ocr_extractor, "before_model_callback", fake_ocr)
-    monkeypatch.setattr(pipeline.figure_detector, "before_model_callback", lambda *_: _reply("<none/>"))
+    fake_ocr(monkeypatch, read_page)
     monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", fake_ocr_check)
     monkeypatch.setattr(pipeline.translator, "before_model_callback", fake_translate)
     monkeypatch.setattr(pipeline.reviewer, "before_model_callback", fake_review)

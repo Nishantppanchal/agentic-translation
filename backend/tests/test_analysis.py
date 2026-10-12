@@ -24,6 +24,7 @@ from translator.agents import pipeline
 from translator.agents.ops import consistency_fixer
 from translator.formats import parse_terms
 from translator.timeline import pending_interrupt
+from .fakes import fake_ocr
 
 APP = "translator"
 PAGE1 = "# Abnahmeprotokoll\n\nDie Kabelpritsche ist nicht geerdet."
@@ -57,10 +58,9 @@ class Calls:
 def calls(monkeypatch) -> Calls:
     c = Calls()
 
-    def ocr(callback_context, llm_request):
-        page = re.search(r"Transcribe page (\d+)", _prompt(llm_request)).group(1)
-        c.ocr.append(page)
-        return _reply(PAGE1 if page == "1" else PAGE2)
+    def ocr(page):
+        c.ocr.append(str(page.number))
+        return PAGE1 if page.number == 1 else PAGE2
 
     def check(callback_context, llm_request):
         c.check.append(_prompt(llm_request))
@@ -93,9 +93,8 @@ def calls(monkeypatch) -> Calls:
         out.append('<term source="Abnahmeprotokoll" guess="Acceptance report" segs="p1.1">record or certificate?</term>')
         return _reply("\n".join(out))
 
-    monkeypatch.setattr(pipeline.ocr_extractor, "before_model_callback", ocr)
+    fake_ocr(monkeypatch, ocr)
     monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", check)
-    monkeypatch.setattr(pipeline.figure_detector, "before_model_callback", lambda *_: _reply("<none/>"))
     monkeypatch.setattr(pipeline.analyst, "before_model_callback", analyse)
     monkeypatch.setattr(pipeline.translator, "before_model_callback", translate)
     monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
@@ -198,6 +197,46 @@ def test_analysis_off_goes_straight_to_translation(calls):
     asyncio.run(main())
 
 
+@pytest.mark.analysis
+def test_a_failed_analysis_is_shown_and_translation_goes_on(calls, monkeypatch):
+    from translator.llm import EndpointError
+
+    def too_long(*_):
+        raise EndpointError("translate model Qwen/Qwen3-32B at http://gpu:8100/v1: HTTP 400 ContextWindowExceededError: "
+                            "This model's maximum context length is 32768 tokens.")
+
+    monkeypatch.setattr(pipeline.analyst, "before_model_callback", too_long)
+
+    async def main():
+        sessions, _, runner, session = await _setup(_pdf("Abnahmeprotokoll", "Ergebnis"))
+        events = await _run(runner, session.id, types.Content(role="user", parts=[types.Part(text="Translate")]))
+        notes = [p.text for ev in events if ev.content for p in ev.content.parts or [] if p.text and "couldn't read" in p.text]
+        assert len(notes) == 1 and "maximum context length is 32768" in notes[0] and "ANALYSIS_CHUNK_CHARS" in notes[0]
+        s = await _get(sessions, session.id)
+        assert calls.translate and not s.state.get("doc:key_terms")  # translated anyway, without the analysis
+
+    asyncio.run(main())
+
+
+def test_a_failed_run_reports_the_servers_error(calls, monkeypatch):
+    from translator.llm import EndpointError, error_text
+
+    message = "translate model Qwen/Qwen3-32B at http://gpu:8100/v1: InternalServerError: Cannot connect to host gpu:8100"
+
+    def down(*_):
+        raise EndpointError(message)
+
+    monkeypatch.setattr(pipeline.translator, "before_model_callback", down)
+
+    async def main():
+        _, _, runner, session = await _setup(_pdf("Abnahmeprotokoll", "Ergebnis"))
+        with pytest.raises(Exception) as err:
+            await _run(runner, session.id, types.Content(role="user", parts=[types.Part(text="Translate")]))
+        assert error_text(err.value) == message  # what the app shows (runs.py): the server's error as is
+
+    asyncio.run(main())
+
+
 def test_ocr_check_is_skipped_only_when_the_text_layer_says_the_same(calls):
     async def main():
         # Page 1's text layer is exactly what OCR reads; page 2's says something else (a misread word).
@@ -262,8 +301,7 @@ def test_polish_unifies_repeated_sentences_before_handing_over(calls, monkeypatc
     monkeypatch.setattr(pipeline.translator, "before_model_callback", translate)
     monkeypatch.setattr(consistency_fixer, "before_model_callback", fix)
     same = "Die Mängel sind zu beseitigen."
-    monkeypatch.setattr(pipeline.ocr_extractor, "before_model_callback",
-                        lambda cc, req: _reply(f"# Titel {re.search(r'page (\d)', _prompt(req)).group(1)}\n\n{same}"))
+    fake_ocr(monkeypatch, lambda page: f"# Titel {page.number}\n\n{same}")
 
     async def main():
         sessions, _, runner, session = await _setup(_pdf("x", "y"))
@@ -402,5 +440,34 @@ def test_reviewer_questions_the_refiner_already_applied_are_closed(calls, monkey
         closed = next(q for q in s.state["doc:questions"] if q["term"] == "geerdet")
         assert closed["status"] == "resolved" and closed["answer"] == "applied in review"
         assert st.open_questions(s.state) == []
+
+    asyncio.run(main())
+
+
+@pytest.mark.analysis
+def test_questions_carry_the_dictionarys_entries(calls, monkeypatch):
+    from translator import dictionary
+    from translator.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "dictionary_url", "http://dictionary.test/lookup")
+    asked: list[tuple] = []
+
+    async def lookup(terms, lang):
+        asked.append((tuple(terms), lang))
+        return {"Kabelpritsche": [{"translation": "cable rack", "definition": "A tray carrying cables.", "source": "IATE",
+                                   "domain": "electrical installations", "url": "https://iate.europa.eu/entry/1"}]}
+
+    monkeypatch.setattr(dictionary, "lookup", lookup)
+
+    async def main():
+        sessions, _, runner, session = await _setup(_pdf("Abnahmeprotokoll", "Ergebnis"))
+        await _run(runner, session.id, types.Content(role="user", parts=[types.Part(text="Translate")]))
+        s = await _get(sessions, session.id)
+        [q] = st.open_questions(s.state)
+        assert q["term"] == "Kabelpritsche" and q["dictionary"][0]["source"] == "IATE"
+        assert [o["target"] for o in q["options"]][-1] == "cable rack"  # the dictionary's translation, as an option
+        assert asked == [(("Abnahmeprotokoll", "Kabelpritsche"), "German")]  # one call for all key terms
+        key = {k["term"]: k for k in s.state["doc:key_terms"]}
+        assert key["Kabelpritsche"]["dictionary"][0]["translation"] == "cable rack" and key["Abnahmeprotokoll"]["dictionary"] == []
 
     asyncio.run(main())

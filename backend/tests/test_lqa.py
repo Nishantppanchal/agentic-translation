@@ -21,6 +21,7 @@ from translator import state as st
 from translator.agents import pipeline
 from translator.agents.lqa import lqa_reviewer, lqa_workflow
 from translator.formats import parse_issues, parse_scores
+from .fakes import fake_ocr
 
 
 def _reply(text: str) -> LlmResponse:
@@ -193,9 +194,8 @@ def test_review_forces_qa_errors_and_records_scores(monkeypatch):
 
     pdf = pymupdf.open()
     pdf.new_page().insert_text((72, 72), "Bericht")
-    monkeypatch.setattr(pipeline.ocr_extractor, "before_model_callback", lambda *_: _reply(page))
+    fake_ocr(monkeypatch, page)
     monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    monkeypatch.setattr(pipeline.figure_detector, "before_model_callback", lambda *_: _reply("<none/>"))
     monkeypatch.setattr(pipeline.translator, "before_model_callback", fake_translate)
     monkeypatch.setattr(pipeline.reviewer, "before_model_callback", fake_review)
     monkeypatch.setattr(pipeline.refiner, "before_model_callback", fake_refine)

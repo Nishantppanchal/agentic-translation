@@ -25,7 +25,7 @@ from google.genai import types
 from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from . import exports, layout, projects, proposals, qa, segments, usage, versions
+from . import dictionary, exports, layout, projects, proposals, qa, segments, source_review, usage, versions
 from . import replace as rp
 from . import state as st
 from .agents.editor import editor_agent
@@ -132,6 +132,7 @@ def _document(session: Session) -> dict[str, Any]:
         "termbase": s.get("doc:termbase") or {},
         "brief": s.get("doc:brief") or "",
         "key_terms": s.get("doc:key_terms") or [],
+        "source_fixes": s.get(source_review.FIXES) or {},
         "terms": _document_terms(s),
         "tm_stats": s.get("doc:tm_stats"),
         "lqa": s.get("doc:lqa"),
@@ -215,7 +216,16 @@ async def _source_bytes(session: Session) -> tuple[bytes, str]:
 @app.get("/api/config")
 async def config() -> dict[str, Any]:
     roles = ["ocr", "ocr_check", "translate", "review", "editor", "lqa"]
-    return {"models": {r: model_name(r) for r in roles}, "languages": LANGUAGES, "target_lang": TARGET_LANG}
+    return {"models": {r: model_name(r) for r in roles}, "languages": LANGUAGES, "target_lang": TARGET_LANG,
+            "dictionary": dictionary.enabled()}
+
+
+@app.get("/api/dictionary")
+async def dictionary_lookup(term: str, lang: str = "") -> dict[str, Any]:
+    """Look a term up in the dictionary service (DICTIONARY_URL); `lang` is the source language (name or code)."""
+    if not dictionary.enabled():
+        raise HTTPException(404, "No dictionary is set up (DICTIONARY_URL in backend/.env).")
+    return {"term": term, "entries": (await dictionary.lookup([term], lang or None)).get(term, [])}
 
 
 @app.get("/api/sessions")
@@ -686,6 +696,53 @@ async def submit_clarifications(session_id: str, body: ClarificationsIn) -> dict
             )
         ],
     )
+    _start_run(session_id, ingest_runner, response, streaming=False)
+    return {"ok": True}
+
+
+def _in_source_check(session: Session) -> None:
+    if runs.is_running(session.id):
+        raise HTTPException(409, "The agents are still working on this document.")
+    if not source_review.in_review(session.state):
+        raise HTTPException(409, "The document is not waiting for the source check.")
+
+
+@app.post("/api/sessions/{session_id}/source/fixes/{page}/accept")
+async def accept_source_fix(session_id: str, page: int) -> dict[str, Any]:
+    """Apply a page fix the chat proposed during the source check: the page is split into segments again."""
+    session = await _session(session_id)
+    _in_source_check(session)
+    fixes = dict(session.state.get(source_review.FIXES) or {})
+    fix = fixes.pop(str(page), None)
+    if fix is None:
+        raise HTTPException(404, f"No proposed fix for page {page}.")
+    delta = source_review.resegment(session.state, page, fix["after"])
+    delta[source_review.FIXES] = fixes
+    await session_service.append_event(session, versions.activity_event(f"Source of page {page} fixed: {fix['reason'] or 'accepted'}", delta))
+    return {"ok": True, "segments": sum(1 for k in delta if k.startswith(st.SEG))}
+
+
+@app.post("/api/sessions/{session_id}/source/fixes/{page}/reject")
+async def reject_source_fix(session_id: str, page: int) -> dict[str, bool]:
+    session = await _session(session_id)
+    _in_source_check(session)
+    fixes = dict(session.state.get(source_review.FIXES) or {})
+    if fixes.pop(str(page), None) is None:
+        raise HTTPException(404, f"No proposed fix for page {page}.")
+    await session_service.append_event(session, versions.activity_event(f"Fix for page {page} rejected", {source_review.FIXES: fixes}))
+    return {"ok": True}
+
+
+@app.post("/api/sessions/{session_id}/source/continue")
+async def continue_after_source_check(session_id: str) -> dict[str, bool]:
+    """The source is right: resume the workflow, which analyses and translates it."""
+    session = await _session(session_id)
+    _in_source_check(session)
+    interrupt_id = _pending_interrupt(session)
+    if not interrupt_id:
+        raise HTTPException(409, "The pipeline is not paused.")
+    response = types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(
+        id=interrupt_id, name=REQUEST_INPUT_TOOL, response={"result": {"continue": True}}))])
     _start_run(session_id, ingest_runner, response, streaming=False)
     return {"ok": True}
 

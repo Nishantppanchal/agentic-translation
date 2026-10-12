@@ -4,6 +4,7 @@ export type DocStatus =
   | "ocr_check"
   | "translating"
   | "awaiting_answers"
+  | "awaiting_source_check" // read; waiting for the person to check the source before translating
   | "reviewing"
   | "ready"
   | "error";
@@ -109,11 +110,11 @@ export interface UsageRow {
   calls: number;
   prompt_tokens: number;
   completion_tokens: number;
-  cost_usd: number | null;
+  tokens: number;
 }
 
 export interface Usage {
-  total: { calls: number; prompt_tokens: number; completion_tokens: number; tokens: number; cost_usd: number; priced: boolean };
+  total: { calls: number; prompt_tokens: number; completion_tokens: number; tokens: number };
   rows: UsageRow[];
 }
 
@@ -147,6 +148,16 @@ export interface TermOption {
 }
 
 /** A term the agents want a person to decide — explained for someone who doesn't read the source language. */
+/** An entry from the dictionary service (DICTIONARY_URL). */
+export interface DictionaryEntry {
+  term?: string; // the dictionary's headword (may be the base form of an inflected term)
+  translation?: string;
+  definition?: string;
+  domain?: string;
+  source?: string;
+  url?: string;
+}
+
 export interface Question {
   id: string;
   term: string;
@@ -157,6 +168,7 @@ export interface Question {
   gist?: string; // an English gist of a sentence using it
   segment_ids: string[];
   reason: string; // why the choice matters
+  dictionary?: DictionaryEntry[]; // what the dictionary service says, if one is set up
   origin?: "analysis" | "translator" | "reviewer" | "editor";
   status: "open" | "resolved" | "dismissed";
   answer: string | null;
@@ -176,6 +188,7 @@ export interface KeyTerm {
   target: string;
   meaning: string;
   asked: boolean;
+  dictionary?: DictionaryEntry[]; // what the dictionary service says, if one is set up
 }
 
 export interface Version {
@@ -191,7 +204,8 @@ export interface OcrPageReport {
   issues: string[];
   used_text_layer: boolean;
   figures?: number;
-  figure_source?: string; // "pdf", "layout", "vision" or combinations like "pdf+layout"
+  figure_source?: string; // "pdf" (embedded in the PDF), "layout" (found by PP-DocLayoutV3), or "pdf+layout"
+  suggestions?: string[]; // the OCR check's possible misreadings that were NOT applied (for a person to check)
 }
 
 export type Severity = "minor" | "major" | "critical";
@@ -301,6 +315,18 @@ export interface Proposal {
   created_at: number;
 }
 
+/** A page fix the chat proposed during the source check: the page's source as OCR markdown, before and after. */
+export interface SourceFix {
+  id: string;
+  page: number;
+  before: string;
+  after: string;
+  reason: string;
+  origin: "editor" | "reread";
+  word_changes: string[]; // words the fix adds or removes (none for a pure structure fix)
+  moved?: string[]; // passages that change place (quoted): a word count can't show a wrong reading order
+}
+
 export interface DocumentState {
   segments: Segment[];
   human_dirty: string[]; // segments edited by hand since the last saved version
@@ -316,6 +342,7 @@ export interface DocumentState {
   questions: Question[];
   versions: Version[];
   ocr_report: OcrPageReport[];
+  source_fixes?: Record<string, SourceFix>; // page → pending fix
   review_report: ReviewEntry[];
 }
 
@@ -371,7 +398,7 @@ export interface LayoutBox {
 export interface LayoutReport {
   version: number;
   pages: number;
-  summary: Record<LayoutStatus, number> & { scanned_pages?: number; by_position?: number };
+  summary: Record<LayoutStatus, number> & { by_position?: number };
   // matched "position": placed between its aligned neighbours (OCR couldn't read the line well)
   segments: Record<string, { status: LayoutStatus; scale: number | null; boxes: LayoutBox[]; matched?: "position" }>;
 }
@@ -380,6 +407,7 @@ export interface AppConfig {
   models: Record<string, string>;
   languages: string[]; // source languages
   target_lang: string; // always English
+  dictionary?: boolean; // a dictionary service is set up (DICTIONARY_URL)
 }
 
 export interface XliffImportReport {

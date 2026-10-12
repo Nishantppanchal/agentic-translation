@@ -1,6 +1,6 @@
 "use client";
 
-import { Languages } from "lucide-react";
+import { BookOpen, Languages } from "lucide-react";
 import type { Answer, Question, Segment } from "@/lib/types";
 
 /** What the person picked for a question: one of the options, their own English term, or an explanation. */
@@ -52,6 +52,30 @@ export function TermChoice({
         {q.meaning && <span className="text-sm text-fg/80">— {q.meaning}</span>}
       </div>
       {q.reason && <div className="mt-0.5 text-xs text-muted">Why it matters: {q.reason}</div>}
+      {!!q.dictionary?.length && (
+        <div className="mt-2 rounded-md border border-border bg-bg px-2 py-1.5 text-xs">
+          {q.dictionary.map((d, i) => (
+            <div key={i} className="flex gap-1.5 py-0.5">
+              <BookOpen size={12} className="mt-0.5 shrink-0 text-muted" />
+              <span className="min-w-0">
+                <span className="font-medium">{d.translation}</span>
+                {d.term && d.term.toLowerCase() !== q.term.toLowerCase() && <span className="text-muted"> ({d.term})</span>}
+                {d.domain && <span className="text-muted"> · {d.domain}</span>}
+                {d.definition && <span className="block text-fg/80">{d.definition}</span>}
+                <span className="text-muted">
+                  {d.url ? (
+                    <a href={d.url} target="_blank" rel="noreferrer" className="underline">
+                      {d.source || "Dictionary"}
+                    </a>
+                  ) : (
+                    d.source || "Dictionary"
+                  )}
+                </span>
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
       {context && (
         <button
           onClick={() => onJump(context.id)}

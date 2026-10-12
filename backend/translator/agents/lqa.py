@@ -55,7 +55,7 @@ async def assess(ctx: Context, node_input: Any):
     source_lang, target_lang = _langs(ctx.state)
     model = model_name("lqa")
     yield _say(
-        f"LQA: assessing {len(segments)} segments with {model.removeprefix('openrouter/')}",
+        f"LQA: assessing {len(segments)} segments with {model}",
         state=_progress("lqa", 0, total, "Assessing quality…"),
     )
     output_format = prompts.LQA_FORMAT_JSON if structured.enabled("lqa") else prompts.LQA_FORMAT_TAGS

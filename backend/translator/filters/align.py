@@ -1,4 +1,4 @@
-"""Map segments (from OCR markdown) back to the PDF's own text lines (or OCR'd lines on scanned pages).
+"""Map segments (from OCR markdown) back to the PDF's own text lines.
 
 The PDF text layer is read as lines with positions and styles. All lines form one normalised
 stream (letters/digits only, case-folded), so differences in hyphenation, spacing, markdown
@@ -48,7 +48,6 @@ class Line:
     block: int  # PyMuPDF block number on its page
     key: str = ""  # normalised text
     words: list[tuple[pymupdf.Rect, str]] = field(default_factory=list)
-    fill: tuple[float, float, float] | None = None  # scanned page: paper colour to paint the source out with
 
 
 @dataclass
@@ -205,15 +204,8 @@ def _plain(markdown: str, kind: str | None) -> str:
     return markdown or ""
 
 
-def align(doc: pymupdf.Document, segments: list[dict], targets: dict[str, str],
-          scanned: dict[int, list[Line]] | None = None) -> Alignment:
-    """`scanned`: OCR'd lines for pages without a text layer (page number → lines)."""
+def align(doc: pymupdf.Document, segments: list[dict], targets: dict[str, str]) -> Alignment:
     lines = read_lines(doc)
-    if scanned:
-        lines = sorted([ln for ln in lines if ln.page not in scanned] + [ln for p in scanned.values() for ln in p],
-                       key=lambda ln: ln.page)
-        for i, ln in enumerate(lines):
-            ln.index = i
     stream = _Stream(lines)
     out = Alignment(lines=lines)
     cursor = 0

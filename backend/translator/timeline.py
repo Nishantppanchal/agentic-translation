@@ -14,7 +14,7 @@ from .agents.editor import EDITOR_NAME
 from .agents.pipeline import UI
 
 # Raw outputs of the pipeline's worker agents (OCR text, translations) are not chat content.
-HIDDEN_AUTHORS = {"ocr_extractor", "ocr_checker", "figure_detector", "translator", "reviewer", "refiner"}
+HIDDEN_AUTHORS = {"ocr_reader", "ocr_checker", "translator", "reviewer", "refiner"}
 WATCHED_STATE = ("doc:", "seg:")
 
 

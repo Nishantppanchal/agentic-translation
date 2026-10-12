@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, CheckCircle2, Maximize2, MessageSquareQuote, Minimize2, X } from "lucide-react";
+import { AlertTriangle, BookOpen, CheckCircle2, FileSearch, Maximize2, MessageSquareQuote, Minimize2, X } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import { DIRECT_FORMATS, UNIT_LABEL, type DocumentState, type Proposal, type QaIssue, type Segment, type SessionSummary, type TaskKind } from "@/lib/types";
@@ -217,6 +217,7 @@ export function ArtifactPanel({
     setTab(id);
   };
   const ready = ["ready", "error"].includes(session.status);
+  const checking = session.status === "awaiting_source_check"; // nothing translated yet: show the reading
   const qa = useQa(session.id, doc.segments, ready && (tab === "segments" || tab === "quality"));
   const [focus, setFocus] = useState<{ id: string; n: number } | null>(null);
   const openSegment = (id: string) => {
@@ -363,6 +364,16 @@ export function ArtifactPanel({
       <div className="scroll-thin flex-1 overflow-y-auto px-6 py-5">
         {empty && <p className="text-sm text-muted">The document will appear here once OCR finishes.</p>}
 
+        {checking && !empty && (tab === "translation" || tab === "parallel") && (
+          <div className="mb-4 flex items-center gap-2 rounded-lg bg-warn/40 px-3 py-2 text-xs">
+            <FileSearch size={13} className="shrink-0 text-warn-fg" />
+            <span className="flex-1">This is the reading of the source (OCR). Nothing is translated until you continue.</span>
+            <button onClick={() => pickView("source")} className="shrink-0 text-accent hover:underline">
+              Compare with the page images
+            </button>
+          </div>
+        )}
+
         {tab === "translation" && (doc.format === "xlsx" || doc.format === "pptx") && !empty && (
           <OfficeLayoutView key={session.id} sessionId={session.id} segments={segments} onOpen={openSegment} />
         )}
@@ -379,6 +390,8 @@ export function ArtifactPanel({
                 <FigureBlock sessionId={session.id} seg={s} legend={s.target ?? s.source} />
               ) : s.target ? (
                 <Markdown text={s.target} plain={direct} labels={s.codes} heading={direct && s.kind === "heading"} />
+              ) : checking ? (
+                <Markdown text={s.source} plain={direct} labels={s.codes} heading={direct && s.kind === "heading"} />
               ) : session.status === "awaiting_answers" ? (
                 <div className="flex items-baseline gap-1.5 text-muted">
                   <span className="shrink-0 text-[10px]">not translated yet</span>
@@ -623,10 +636,15 @@ function SourceView({
                   </span>
                 ))}
               {r?.used_text_layer && <span className="text-muted">· cross-checked with PDF text layer</span>}
+              {!!r?.suggestions?.length && (
+                <span className="flex items-center gap-1 text-warn-fg">
+                  · {r.suggestions.length} possible misreading{r.suggestions.length === 1 ? "" : "s"} to check
+                </span>
+              )}
               {!!r?.figures && (
                 <span className="text-muted">
                   · {r.figures} figure{r.figures === 1 ? "" : "s"}
-                  {r.figure_source ? ` (${r.figure_source.replace("layout", "PP-DocLayout")})` : ""}
+                  {r.figure_source ? ` (${r.figure_source.replace("layout", "page layout").replace("pdf", "PDF")})` : ""}
                 </span>
               )}
             </div>
@@ -655,9 +673,19 @@ function SourceView({
             {r && !r.ok && r.issues.length > 0 && (
               <ul className="mt-2 list-disc pl-5 text-xs text-muted">
                 {r.issues.map((i, k) => (
-                  <li key={k}>{i}</li>
+                  <li key={k}>Corrected: {i}</li>
                 ))}
               </ul>
+            )}
+            {!!r?.suggestions?.length && (
+              <div className="mt-2 rounded-md border border-warn-fg/30 bg-warn/40 px-3 py-2 text-xs">
+                <div className="font-medium">Possible misreadings — not changed, please compare with the page image:</div>
+                <ul className="mt-1 list-disc pl-5 text-fg/80">
+                  {r.suggestions.map((i, k) => (
+                    <li key={k}>{i}</li>
+                  ))}
+                </ul>
+              </div>
             )}
           </div>
         );
@@ -738,7 +766,25 @@ function ChecksView({ doc, onDraft }: { doc: DocumentState; onDraft: (text: stri
                     {doc.glossary[k.term]?.target || k.target}
                     {k.asked && <span className="ml-1.5 rounded bg-accent-soft px-1 text-[10px] text-accent uppercase">asked</span>}
                   </td>
-                  <td className="py-1.5 text-xs text-muted">{k.meaning}</td>
+                  <td className="py-1.5 text-xs text-muted">
+                    {k.meaning}
+                    {k.dictionary?.map((d, i) => (
+                      <span key={i} className="mt-0.5 flex items-start gap-1 text-fg/80">
+                        <BookOpen size={11} className="mt-0.5 shrink-0" />
+                        <span>
+                          <span className="font-medium">{d.translation}</span>
+                          {d.domain && ` · ${d.domain}`} ·{" "}
+                          {d.url ? (
+                            <a href={d.url} target="_blank" rel="noreferrer" className="underline">
+                              {d.source || "Dictionary"}
+                            </a>
+                          ) : (
+                            d.source || "Dictionary"
+                          )}
+                        </span>
+                      </span>
+                    ))}
+                  </td>
                 </tr>
               ))}
             </tbody>
@@ -799,6 +845,10 @@ function ChecksView({ doc, onDraft }: { doc: DocumentState; onDraft: (text: stri
         <p className="text-muted">
           {doc.ocr_report.length} page{doc.ocr_report.length === 1 ? "" : "s"} checked ·{" "}
           {ocrFixed.length === 0 ? "no corrections needed" : `${ocrFixed.length} page(s) corrected`}
+          {(() => {
+            const n = doc.ocr_report.reduce((sum, r) => sum + (r.suggestions?.length ?? 0), 0);
+            return n ? ` · ${n} possible misreading${n === 1 ? "" : "s"} to check (Source tab)` : "";
+          })()}
         </p>
       </section>
       <section>

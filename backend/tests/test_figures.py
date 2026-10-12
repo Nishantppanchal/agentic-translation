@@ -1,4 +1,5 @@
-"""Figures: detected (PDF images or vision boxes on scans), placed via [[FIGURE n]], kept in the output."""
+"""Figures: found by the page layout (PP-DocLayoutV3) or embedded in the PDF, placed via
+[[FIGURE n]], kept in the output with the text inside them translated as a legend."""
 
 from __future__ import annotations
 
@@ -15,12 +16,15 @@ from google.genai import types
 
 from translator import state as st
 from translator.agents import pipeline
-from translator.documents import assemble_markdown, box_from_percent, load_pages, place_figure_marker
+from translator.config import get_settings
+from translator.documents import assemble_markdown, load_pages, place_figure_marker
 
-from .test_flow import _prompt, _reply, fake_review, fake_translate
+from .fakes import fake_ocr
+from .test_flow import _reply, fake_review, fake_translate
 
 APP = "translator"
-OCR_PROMPTS: list[str] = []
+INTRO = "Die Anlage besteht aus einem Schaltschrank und einer Kabelpritsche im Keller."
+OUTRO = "Die Abnahme erfolgt nach Abschluss aller Restarbeiten an der Anlage."
 
 
 def _diagram_png() -> bytes:
@@ -45,30 +49,11 @@ def _pdf(scanned: bool = False) -> bytes:
     return scan.tobytes()
 
 
-def fake_ocr(callback_context, llm_request):
-    text = _prompt(llm_request)
-    OCR_PROMPTS.append(text)
-    if "cropped from a document" in text:  # text inside the figure
-        return _reply("Schaltschrank")
-    marker = "\n\n[[FIGURE 1]]\n\n" if "outlined in red" in text else "\n\n"
-    return _reply(
-        "Die Anlage besteht aus einem Schaltschrank und einer Kabelpritsche im Keller."
-        + marker
-        + "Die Abnahme erfolgt nach Abschluss aller Restarbeiten an der Anlage."
-    )
-
-
 @pytest.fixture(autouse=True)
 def fake_models(monkeypatch):
-    OCR_PROMPTS.clear()
-    monkeypatch.setattr(pipeline.ocr_extractor, "before_model_callback", fake_ocr)
+    # The reading: the paragraph, the picture (with the text inside it) and the next paragraph.
+    fake_ocr(monkeypatch, f"{INTRO}\n\n[[FIGURE 1]]\n\n{OUTRO}", legends={1: "Schaltschrank"})
     monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    # Vision boxes as % of the page: the diagram sits at x 150–450 / 595pt, y 150–350 / 842pt.
-    monkeypatch.setattr(
-        pipeline.figure_detector,
-        "before_model_callback",
-        lambda *_: _reply('<figure box="25,17.8,75.6,41.6">diagram</figure>\n<figure box="0,0,100,100">page</figure>'),
-    )
 
     def translate_no_terms(callback_context, llm_request):
         out = fake_translate(callback_context, llm_request).content.parts[0].text
@@ -91,34 +76,67 @@ def test_pdf_embedded_image_is_detected_exactly():
     assert scan.figures == [] and scan.is_scan  # full-page image = scan, not a figure
 
 
+async def _run(pdf: bytes):
+    sessions, artifacts = InMemorySessionService(), InMemoryArtifactService()
+    runner = Runner(app=App(name=APP, root_agent=pipeline.ingest_workflow), session_service=sessions, artifact_service=artifacts)
+    s = await sessions.create_session(
+        app_name=APP, user_id="u",
+        state={"doc:filename": "a.pdf", "doc:source_artifact": "source.pdf", "doc:source_lang": "German",
+               "doc:target_lang": "English", "doc:questions": [], "doc:versions": []},
+    )
+    await artifacts.save_artifact(app_name=APP, user_id="u", session_id=s.id, filename="source.pdf",
+                                  artifact=types.Part.from_bytes(data=pdf, mime_type="application/pdf"))
+    async for _ in runner.run_async(user_id="u", session_id=s.id, new_message=types.Content(role="user", parts=[types.Part(text="go")])):
+        pass
+    return await sessions.get_session(app_name=APP, user_id="u", session_id=s.id), artifacts
+
+
 @pytest.mark.parametrize("scanned", [False, True])
-def test_figures_are_kept_in_place_with_translated_legend(scanned):
+def test_figures_are_kept_in_place_with_translated_legend(scanned, monkeypatch):
+    if scanned:  # no embedded picture on a scan: PP-DocLayoutV3 finds it (the diagram at 150–450 × 150–350 pt)
+        from translator import layout
+
+        async def boxes(png, tool_context=None):
+            return [tuple(v * 150 / 72 for v in (150, 150, 450, 350))]
+
+        monkeypatch.setattr(layout, "available", lambda: True)
+        monkeypatch.setattr(layout, "figure_boxes", boxes)
+
     async def main():
-        sessions, artifacts = InMemorySessionService(), InMemoryArtifactService()
-        runner = Runner(app=App(name=APP, root_agent=pipeline.ingest_workflow), session_service=sessions, artifact_service=artifacts)
-        s = await sessions.create_session(
-            app_name=APP, user_id="u",
-            state={"doc:filename": "a.pdf", "doc:source_artifact": "source.pdf", "doc:source_lang": "German",
-                   "doc:target_lang": "English", "doc:questions": [], "doc:versions": []},
-        )
-        await artifacts.save_artifact(
-            app_name=APP, user_id="u", session_id=s.id, filename="source.pdf",
-            artifact=types.Part.from_bytes(data=_pdf(scanned), mime_type="application/pdf"),
-        )
-        async for _ in runner.run_async(user_id="u", session_id=s.id, new_message=types.Content(role="user", parts=[types.Part(text="go")])):
-            pass
-        s = await sessions.get_session(app_name=APP, user_id="u", session_id=s.id)
+        s, artifacts = await _run(_pdf(scanned))
         assert s.state["doc:status"] == "ready"
         segs = st.get_segments(s.state)
         assert [x["kind"] for x in segs] == ["paragraph", "figure", "paragraph"]  # figure stays between the paragraphs
         fig = segs[1]
         assert fig["image"] == "figure-p1-1.png" and fig["source"] == "Schaltschrank"
         assert fig["target"] == "control cabinet"  # text inside the figure translated as a legend
-        assert s.state["doc:ocr_report"][0]["figures"] == 1  # the full-page "box" was rejected
-        part = await artifacts.load_artifact(app_name=APP, user_id="u", session_id=s.id, filename=fig["image"])
+        [report] = s.state["doc:ocr_report"]
+        assert report["figures"] == 1 and report["figure_source"] == ("layout" if scanned else "pdf")
+        part = await artifacts.load_artifact(app_name="translator", user_id="u", session_id=s.id, filename=fig["image"])
         assert part.inline_data.data[:4] == b"\x89PNG"
-        assert any("outlined in red" in p for p in OCR_PROMPTS)
         assert "![Figure 1](figures/figure-p1-1.png)\n\n> control cabinet" in assemble_markdown(segs)
+
+    asyncio.run(main())
+
+
+def test_a_pdf_picture_the_layout_missed_is_kept_before_the_text_below_it(monkeypatch):
+    fake_ocr(monkeypatch, f"{INTRO}\n\n{OUTRO}")  # the layout model found no picture
+
+    async def main():
+        s, _ = await _run(_pdf())
+        segs = st.get_segments(s.state)
+        assert [x["kind"] for x in segs] == ["paragraph", "figure", "paragraph"]
+        assert segs[1]["source"] == "" and s.state["doc:ocr_report"][0]["figure_source"] == "pdf"
+
+    asyncio.run(main())
+
+
+def test_figure_detection_off_keeps_only_the_text(monkeypatch):
+    monkeypatch.setattr(get_settings(), "figure_detection", "off")
+
+    async def main():
+        s, _ = await _run(_pdf())
+        assert [x["kind"] for x in st.get_segments(s.state)] == ["paragraph", "paragraph"]
 
     asyncio.run(main())
 
@@ -132,11 +150,3 @@ def test_figure_marker_placement():
     assert place_figure_marker("A paragraph.", 2, None) == "A paragraph.\n\n[[FIGURE 2]]"
     # Missing marker but known anchor: inserted at the right spot.
     assert place_figure_marker("Intro.\n\nOutro text here.", 1, "Outro text here") == "Intro.\n\n[[FIGURE 1]]\n\nOutro text here."
-
-
-def test_vision_boxes_are_validated_and_padded():
-    assert box_from_percent([10, 20, 60, 50], 1000, 2000) == (100, 400, 600, 1000)
-    assert box_from_percent([1, 20, 60, 99], 1000, 2000, pad=0.025) == pytest.approx((0, 350, 625, 2000))  # clamped
-    assert box_from_percent([0, 0, 100, 100], 1000, 2000) is None  # whole page is not a figure
-    assert box_from_percent([60, 20, 10, 50], 1000, 2000) is None  # inverted
-    assert box_from_percent([10, 20, 12, 50], 1000, 2000) is None  # too thin

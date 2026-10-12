@@ -3,10 +3,8 @@
 Only text is removed (images, vector graphics, shading and table rules stay). Each block is
 re-typeset with the original size, weight and colour, shrinking if the translation is longer.
 A block is erased only if its translation fits (tested on a scratch page first) — otherwise the
-source text stays and the report says `overflow`, so nothing is ever silently lost.
-
-Scanned pages (no text layer) come with OCR'd lines (`filters/scan.py`): the source is painted out
-with the paper colour sampled around each line, then the translation is typeset on top.
+source text stays and the report says `overflow`, so nothing is ever silently lost. PDFs with a
+text layer only: scanned pages have no text positions to typeset into.
 """
 
 from __future__ import annotations
@@ -43,8 +41,6 @@ def _style(lines: list[Line]) -> tuple[float, bool, bool, str]:
 
 def _html(text: str, lines: list[Line], heading: bool = False) -> str:
     size, bold, italic, color = _style(lines)
-    if heading and any(ln.fill for ln in lines):
-        bold = True  # scans: OCR doesn't report weight, and a heading the reader saw as one is set bold
     rows = []
     for raw in text.splitlines() or [""]:
         raw = raw.strip()
@@ -112,12 +108,10 @@ def _box(group: list[Line], unit: Unit, page: pymupdf.Page, page_lines: list[Lin
     return rect
 
 
-def render(pdf: bytes, segments: list[dict], targets: dict[str, str], scanned: dict | None = None) -> tuple[bytes, dict]:
-    """Translated PDF + report {segments: {id: {status, scale, boxes, matched}}, summary}.
-    `scanned`: page number → `scan.ScanPage` (OCR'd lines and figures) for pages without a text layer."""
-    scanned = scanned or {}
+def render(pdf: bytes, segments: list[dict], targets: dict[str, str]) -> tuple[bytes, dict]:
+    """Translated PDF + report {segments: {id: {status, scale, boxes, matched}}, summary}."""
     doc = pymupdf.open(stream=pdf, filetype="pdf")
-    alignment = align(doc, segments, targets, {p: sp.lines for p, sp in scanned.items()})
+    alignment = align(doc, segments, targets)
     css, archive = _fonts()
     scratch = pymupdf.open()
 
@@ -135,9 +129,7 @@ def render(pdf: bytes, segments: list[dict], targets: dict[str, str], scanned: d
     for pno, items in sorted(by_page.items()):
         page = doc[pno - 1]
         page_lines = [ln for ln in alignment.lines if ln.page == pno]
-        scan_page = scanned.get(pno)
-        # On a scan the page image is the whole page: its figures (from layout detection) are the obstacles.
-        obstacles = list(scan_page.figures) if scan_page else _obstacles(page)
+        obstacles = _obstacles(page)
         sp = scratch.new_page(width=page.rect.width, height=page.rect.height)
         planned = []
         for unit, group, text in items:
@@ -158,40 +150,25 @@ def render(pdf: bytes, segments: list[dict], targets: dict[str, str], scanned: d
                 entry["status"] = status
             if used:
                 entry["scale"] = min(entry["scale"] or 1.0, round(used[1], 3))
-                fill = next((ln.fill for ln in group if ln.fill), None)
-                erase = _erase_rects(unit, group)
-                if fill and unit.rects:  # scan: paint the cell's words as one span (no glyph remnants between)
-                    span = pymupdf.Rect(erase[0])
-                    for r in erase[1:]:
-                        span |= r
-                    erase = [span]
-                planned.append((rect, markup, used[0], erase, fill))
+                planned.append((rect, markup, used[0], _erase_rects(unit, group)))
             entry["boxes"].append(
                 {"page": pno, "rect": [round(v, 1) for v in shown], "width": page.rect.width, "height": page.rect.height, "status": status}
             )
-        if scan_page:
-            # Paint the printed source out with the paper colour around it (the scan stays underneath).
-            for _, _, _, erase, fill in planned:
-                for r in erase:
-                    r = pymupdf.Rect(r)
-                    page.draw_rect(pymupdf.Rect(r.x0 - 2.5, r.y0 - 1, r.x1 + 2.5, r.y1 + 1), color=None, fill=fill or (1, 1, 1), overlay=True)
-        else:
-            for _, _, _, erase, _ in planned:
-                for r in erase:
-                    r = pymupdf.Rect(r)
-                    pad = r.height * 0.2  # keep clear of neighbouring lines' ascenders/descenders
-                    page.add_redact_annot(pymupdf.Rect(r.x0, r.y0 + pad, r.x1, r.y1 - pad), fill=False)
-            page.apply_redactions(
-                images=pymupdf.PDF_REDACT_IMAGE_NONE,
-                graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
-                text=pymupdf.PDF_REDACT_TEXT_REMOVE,
-            )
-        for rect, markup, low, _, _ in planned:
+        for _, _, _, erase in planned:
+            for r in erase:
+                r = pymupdf.Rect(r)
+                pad = r.height * 0.2  # keep clear of neighbouring lines' ascenders/descenders
+                page.add_redact_annot(pymupdf.Rect(r.x0, r.y0 + pad, r.x1, r.y1 - pad), fill=False)
+        page.apply_redactions(
+            images=pymupdf.PDF_REDACT_IMAGE_NONE,
+            graphics=pymupdf.PDF_REDACT_LINE_ART_NONE,
+            text=pymupdf.PDF_REDACT_TEXT_REMOVE,
+        )
+        for rect, markup, low, _ in planned:
             page.insert_htmlbox(rect, markup, css=css, archive=archive, scale_low=low)
 
     counts = Counter(v["status"] for v in report.values())
     summary = {k: counts.get(k, 0) for k in _SEVERITY}
-    summary["scanned_pages"] = len(scanned)
     summary["by_position"] = sum(1 for v in report.values() if v.get("matched") == "position")
     # Each typeset block embeds full fonts (Noto Sans, a CJK fallback): subset them to the glyphs
     # used and de-duplicate objects — a 2-page document goes from ~4 MB to ~50 KB.

@@ -159,6 +159,14 @@ export const api = {
       json<{ rejected: number }>(r),
     ),
 
+  continueAfterSourceCheck: (id: string) =>
+    fetch(`${API_URL}/api/sessions/${id}/source/continue`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
+
+  decideSourceFix: (id: string, page: number, accept: boolean) =>
+    fetch(`${API_URL}/api/sessions/${id}/source/fixes/${page}/${accept ? "accept" : "reject"}`, { method: "POST" }).then((r) =>
+      json<{ ok: boolean }>(r),
+    ),
+
   retry: (id: string) =>
     fetch(`${API_URL}/api/sessions/${id}/retry`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
 

@@ -13,10 +13,9 @@ from google.adk.artifacts import BaseArtifactService
 from google.adk.sessions import Session
 from google.genai import types
 
-from . import layout
 from . import state as st
-from .documents import IMAGE_EXTS, assemble_markdown
-from .filters import office, pdf_layout, reflow, scan, xliff
+from .documents import assemble_markdown
+from .filters import office, pdf_layout, reflow, xliff
 from .languages import lang_code
 
 FORMATS = [
@@ -58,63 +57,15 @@ async def _save(artifact_service: BaseArtifactService, session: Session, name: s
     )
 
 
-SCAN_OCR_VERSION = 1  # bump to invalidate cached OCR lines
-
-
-def _scannable(session: Session) -> bool:
-    """Scanned PDFs and page images: positions come from OCR on the layout server."""
-    ext = Path(session.state.get("doc:filename", "")).suffix.lower()
-    return (ext == ".pdf" or ext in IMAGE_EXTS) and layout.available()
-
-
 def layout_capable(session: Session, source: bytes | None) -> bool:
-    """A layout-preserving PDF needs a PDF with a text layer, or (scans, images) the layout server's OCR."""
+    """A layout-preserving PDF needs a PDF with a text layer (scans and images have no positions to typeset into)."""
     known = session.state.get("doc:layout_capable")
-    if known:
-        return True
-    if _scannable(session):
-        return True
-    if known is not None or source is None or Path(session.state.get("doc:filename", "")).suffix.lower() != ".pdf":
+    if known is not None:
+        return bool(known)
+    if source is None or Path(session.state.get("doc:filename", "")).suffix.lower() != ".pdf":
         return False
     with pymupdf.open(stream=source, filetype="pdf") as doc:
         return any(len(p.get_text().strip()) >= 40 for p in doc)
-
-
-def _as_pdf(data: bytes, filename: str) -> bytes:
-    """Page images become a one-page PDF (the scan path then treats it like any scanned page)."""
-    ext = Path(filename).suffix.lower()
-    if ext == ".pdf":
-        return data
-    with pymupdf.open(stream=data, filetype=ext.lstrip(".")) as img:
-        return img.convert_to_pdf()
-
-
-async def _scan_pages(artifact_service: BaseArtifactService, session: Session, pdf: bytes) -> dict[int, scan.ScanPage]:
-    """OCR'd lines and figures for every page without a text layer (cached per document)."""
-    name = f"scan-ocr-r{SCAN_OCR_VERSION}.json"
-    cached = await _artifact(artifact_service, session, name)
-    raw: dict[str, dict] = json.loads(cached.text) if cached and cached.text else {}
-    script = scan.script_for(lang_code(session.state.get("doc:detected_lang") or session.state.get("doc:source_lang")))
-    doc = pymupdf.open(stream=pdf, filetype="pdf")
-    pages: dict[int, scan.ScanPage] = {}
-    changed = False
-    for pno, page in enumerate(doc, start=1):
-        if not scan.is_scan(page):
-            continue
-        pix = scan.render(page)
-        if str(pno) not in raw:
-            png = pix.tobytes("png")
-            ocr = await layout.ocr_lines(png, script)
-            if ocr is None:
-                raise ExportError("Scanned pages need the layout server (PP-OCRv5) to find the text lines; it isn't available.")
-            regions = await layout.detect_layout(png)
-            ocr["figures"] = [r["box"] for r in (regions or {}).get("regions", []) if r["label"] in layout.FIGURE_LABELS]
-            raw[str(pno)] = ocr
-            changed = True
-        pages[pno] = scan.lines_from_ocr(raw[str(pno)], page, pix, pno, raw[str(pno)].get("figures") or [])
-    if changed:
-        await _save(artifact_service, session, name, types.Part(text=json.dumps(raw)))
-    return pages
 
 
 async def source_bytes(artifact_service: BaseArtifactService, session: Session) -> bytes | None:
@@ -177,12 +128,10 @@ async def layout_pdf(artifact_service: BaseArtifactService, session: Session, ve
         return cached_pdf.inline_data.data, json.loads(cached_report.text)
     source = await source_bytes(artifact_service, session)
     if not layout_capable(session, source):
-        raise ExportError("A layout-preserving PDF needs a PDF with a text layer, or the layout server for scans.")
-    pdf_source = _as_pdf(source, session.state.get("doc:filename", "document.pdf"))
-    scanned = await _scan_pages(artifact_service, session, pdf_source)
+        raise ExportError("A layout-preserving PDF needs a PDF with a text layer.")
     segments = await segments_at(artifact_service, session, version)
     targets = {s["id"]: s.get("target") or "" for s in segments}
-    pdf, report = await asyncio.to_thread(pdf_layout.render, pdf_source, segments, targets, scanned)
+    pdf, report = await asyncio.to_thread(pdf_layout.render, source, segments, targets)
     report["version"] = version
     await _save(artifact_service, session, f"{stem}.pdf", types.Part.from_bytes(data=pdf, mime_type="application/pdf"))
     await _save(artifact_service, session, f"{stem}.json", types.Part(text=json.dumps(report)))

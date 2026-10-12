@@ -119,7 +119,7 @@ function Scorecard({ lqa, latest, onOpen }: { lqa: LqaResult; latest: number; on
         <div className="mb-1 text-xs text-muted">
           {lqa.penalty} penalty point{lqa.penalty === 1 ? "" : "s"} in {lqa.words} source words
           <br />
-          v{lqa.version ?? "?"} · {lqa.model.replace("openrouter/", "")} · {new Date(lqa.at * 1000).toLocaleString()}
+          v{lqa.version ?? "?"} · {lqa.model} · {new Date(lqa.at * 1000).toLocaleString()}
           {lqa.version !== null && lqa.version < latest && <span className="text-warn-fg"> · translation changed since (v{latest})</span>}
         </div>
       </div>

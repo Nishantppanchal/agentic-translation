@@ -103,25 +103,18 @@ export function LayoutView({
         </a>
       </div>
 
-      {!!report.summary.scanned_pages && (
+      {!!report.summary.by_position && (
         <div className="rounded-lg bg-accent-soft/60 p-2.5 text-xs">
-          {report.summary.scanned_pages} scanned page{report.summary.scanned_pages === 1 ? "" : "s"}: line positions come from OCR
-          (PP-OCRv5), and the source is painted out with the paper colour before the translation is set in place.
-          {!!report.summary.by_position && (
-            <>
-              {" "}
-              {report.summary.by_position} segment{report.summary.by_position === 1 ? " was" : "s were"} placed by position between
-              their neighbours because OCR misread the line —{" "}
-              {Object.entries(report.segments)
-                .filter(([, s]) => s.matched === "position")
-                .map(([id]) => (
-                  <button key={id} onClick={() => pick(id)} className="mr-1.5 font-mono underline-offset-2 hover:underline">
-                    {id}
-                  </button>
-                ))}
-              — worth a look.
-            </>
-          )}
+          {report.summary.by_position} segment{report.summary.by_position === 1 ? " was" : "s were"} placed by position between
+          their neighbours because the reading differs from the PDF&apos;s text there —{" "}
+          {Object.entries(report.segments)
+            .filter(([, s]) => s.matched === "position")
+            .map(([id]) => (
+              <button key={id} onClick={() => pick(id)} className="mr-1.5 font-mono underline-offset-2 hover:underline">
+                {id}
+              </button>
+            ))}
+          — worth a look.
         </div>
       )}
 

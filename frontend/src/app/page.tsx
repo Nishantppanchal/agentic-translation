@@ -47,6 +47,16 @@ export default function Home() {
   const [artifactOpen, setArtifactOpen] = useState(true);
   const [wide, setWide] = useState(false); // segment editor full width (chat hidden)
   const [tab, setTab] = useState<Tab>("translation");
+  // When a document stops for the source check, open its page images next to the reading (once per check).
+  const checkFor = detail?.summary.status === "awaiting_source_check" ? detail.summary.id : null;
+  const [shownCheck, setShownCheck] = useState<string | null>(null);
+  if (checkFor !== shownCheck) {
+    setShownCheck(checkFor);
+    if (checkFor) {
+      setTab("source");
+      setArtifactOpen(true);
+    }
+  }
   const [diffTarget, setDiffTarget] = useState<number | null>(null);
   const [highlight, setHighlight] = useState<string | null>(null);
   const [draft, setDraft] = useState("");
@@ -222,6 +232,24 @@ export default function Home() {
     }
   };
 
+  const onDecideSourceFix = async (page: number, accept: boolean) => {
+    if (!activeId) return;
+    try {
+      await api.decideSourceFix(activeId, page, accept);
+      await loadDetail(activeId);
+    } catch (e) {
+      setTimeline((t) => [...t, { kind: "error", id: `err-${Date.now()}`, text: String(e), ts: Date.now() / 1000 }]);
+    }
+  };
+  const onContinueSourceCheck = async () => {
+    if (!activeId) return;
+    try {
+      await api.continueAfterSourceCheck(activeId);
+      attach(activeId);
+    } catch (e) {
+      setTimeline((t) => [...t, { kind: "error", id: `err-${Date.now()}`, text: String(e), ts: Date.now() / 1000 }]);
+    }
+  };
   const onRetry = async () => {
     if (!activeId) return;
     try {
@@ -366,7 +394,13 @@ export default function Home() {
           </div>
         ) : !activeId ? (
           <div className="flex-1">
-            <UploadPanel key={uploadProject ?? "none"} languages={languages} projects={projects} initialProject={uploadProject} onSubmit={onUpload} />
+            <UploadPanel
+              key={uploadProject ?? "none"}
+              languages={languages}
+              projects={projects}
+              initialProject={uploadProject}
+              onSubmit={onUpload}
+            />
           </div>
         ) : (
           <>
@@ -396,6 +430,9 @@ export default function Home() {
                 onAnswer={onAnswer}
                 onClarify={onClarify}
                 onRetry={onRetry}
+                sourceFixes={Object.values(detail?.document.source_fixes ?? {}).sort((a, b) => a.page - b.page)}
+                onDecideSourceFix={onDecideSourceFix}
+                onContinueSourceCheck={onContinueSourceCheck}
                 onShowDiff={(v) => {
                   setArtifactOpen(true);
                   setDiffTarget(v);

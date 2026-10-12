@@ -22,6 +22,7 @@ from translator.documents import Page, load_pages, segments_from_pages, split_bl
 from translator.downloads import content_disposition
 
 from .test_flow import _prompt, _reply
+from .fakes import fake_ocr
 
 SAMPLES = Path(__file__).resolve().parents[2] / "samples"
 ZH_PDF = SAMPLES / "yanshou-baogao.pdf"
@@ -121,11 +122,7 @@ EN = {
 }
 
 
-def fake_ocr(callback_context, llm_request):
-    text = _prompt(llm_request)
-    if "cropped from a document" in text:
-        return _reply("缺少接地连接\n配电柜\nUPS电源\n电缆桥架")
-    return _reply(ZH_PAGE)
+ZH_LEGEND = "缺少接地连接\n配电柜\nUPS电源\n电缆桥架"  # the text inside the picture
 
 
 TRANSLATE_PROMPTS: list[str] = []
@@ -152,9 +149,8 @@ def fake_translate(callback_context, llm_request):
 @pytest.fixture(autouse=True)
 def fake_models(monkeypatch):
     TRANSLATE_PROMPTS.clear()
-    monkeypatch.setattr(pipeline.ocr_extractor, "before_model_callback", fake_ocr)
+    fake_ocr(monkeypatch, ZH_PAGE, legends={1: ZH_LEGEND})
     monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    monkeypatch.setattr(pipeline.figure_detector, "before_model_callback", lambda *_: _reply("<none/>"))
     monkeypatch.setattr(pipeline.translator, "before_model_callback", fake_translate)
     monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
 

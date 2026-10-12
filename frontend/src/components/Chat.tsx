@@ -11,7 +11,7 @@ import {
   Wrench,
 } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
-import type { Answer, DocFormat, DocStatus, LqaResult, Progress, Proposal, Question, Segment, TimelineItem } from "@/lib/types";
+import type { Answer, DocFormat, DocStatus, LqaResult, Progress, Proposal, Question, Segment, SourceFix, TimelineItem } from "@/lib/types";
 import { ClarifyForm } from "./ClarifyForm";
 import { VersionDiff } from "./Diff";
 import { ProposalCard } from "./ProposalCard";
@@ -19,6 +19,7 @@ import type { ProposalPick } from "./proposalPick";
 import { Markdown } from "./Markdown";
 import { QuestionCard } from "./QuestionCard";
 import { NextSteps, RunSteps } from "./RunSteps";
+import { SourceCheck } from "./SourceCheck";
 
 const FIX_QA = "Please run the QA checks and fix the errors they find.";
 /** One-click requests (sent to the chat editor, or run as a task); results come back as proposals. */
@@ -178,6 +179,9 @@ export function Chat({
   onOpenSegments,
   onRunLqa,
   onRunTask,
+  sourceFixes,
+  onDecideSourceFix,
+  onContinueSourceCheck,
 }: {
   sessionId: string;
   proposal: Proposal | null;
@@ -205,14 +209,18 @@ export function Chat({
   onOpenSegments: () => void;
   onRunLqa: () => void;
   onRunTask: (kind: "consistency") => void;
+  sourceFixes: SourceFix[];
+  onDecideSourceFix: (page: number, accept: boolean) => Promise<void>;
+  onContinueSourceCheck: () => Promise<void>;
 }) {
   const bottomRef = useRef<HTMLDivElement>(null);
   const groups = useMemo(() => groupTimeline(timeline), [timeline]);
   const segMap = useMemo(() => new Map(segments.map((s) => [s.id, s])), [segments]);
   const openQs = questions.filter((q) => q.status === "open");
   const paused = status === "awaiting_answers" && !running;
+  const checking = status === "awaiting_source_check" && !running; // the chat stays open: it fixes the source
   // A pipeline status with no live run means the run died (error or server restart).
-  const stalled = !running && !serverRunning && !!status && !["ready", "awaiting_answers"].includes(status);
+  const stalled = !running && !serverRunning && !!status && !["ready", "awaiting_answers", "awaiting_source_check"].includes(status);
   const locked = running || paused || stalled;
   const pipeline = !!status && !["ready", "error"].includes(status); // the ingest run (not a task or chat turn)
   const idle = !running && status === "ready";
@@ -227,6 +235,16 @@ export function Chat({
     onSend(t);
     setDraft("");
   };
+
+  const placeholder = running
+    ? "Agents are working…"
+    : paused
+      ? "Answer the questions above to continue…"
+      : checking
+        ? "What's wrong with the reading? e.g. “page 1 has two columns: read the left one first”"
+        : stalled
+          ? "Retry processing to continue…"
+          : "Ask for a change, or e.g. “explain p1.4”";
 
   return (
     <div className="flex h-full min-w-0 flex-col">
@@ -275,7 +293,9 @@ export function Chat({
             }
           })}
 
-          {(pipeline || paused) && !stalled && <RunSteps progress={progress} status={status} running={running} segments={segments} />}
+          {(pipeline || paused) && !stalled && (
+            <RunSteps progress={progress} status={status} running={running} segments={segments} check={format === "pdf" || format === "image"} />
+          )}
 
           {running && progress && !pipeline && (
             <div className="rounded-xl border border-border bg-panel p-3 text-sm">
@@ -338,6 +358,8 @@ export function Chat({
             </div>
           )}
 
+          {checking && <SourceCheck fixes={sourceFixes} onDecide={onDecideSourceFix} onContinue={onContinueSourceCheck} />}
+
           {paused && openQs.length > 0 && (
             <ClarifyForm questions={openQs} segments={segMap} onSubmit={onClarify} onJump={onJump} />
           )}
@@ -379,28 +401,29 @@ export function Chat({
           </div>
         )}
         <div className="mx-auto flex max-w-2xl items-end gap-2 rounded-2xl border border-border bg-panel px-3 py-2 shadow-sm focus-within:border-accent">
-          <textarea
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            rows={Math.min(6, Math.max(1, draft.split("\n").length))}
-            placeholder={
-              running
-                ? "Agents are working…"
-                : paused
-                  ? "Answer the questions above to continue…"
-                  : stalled
-                    ? "Retry processing to continue…"
-                    : "Ask for a change, or e.g. “explain p1.4”"
-            }
-            disabled={paused || stalled}
-            className="max-h-40 flex-1 resize-none bg-transparent py-1.5 text-sm outline-none"
-          />
+          {/* Grows with its text (or the placeholder) up to 10 lines: the hidden copy sets the height. */}
+          <div className="grid min-w-0 flex-1">
+            <div
+              aria-hidden
+              className="invisible col-start-1 row-start-1 max-h-60 overflow-hidden py-1.5 text-sm whitespace-pre-wrap [overflow-wrap:anywhere]"
+            >
+              {(draft || placeholder) + " "}
+            </div>
+            <textarea
+              value={draft}
+              onChange={(e) => setDraft(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              rows={1}
+              placeholder={placeholder}
+              disabled={paused || stalled}
+              className="col-start-1 row-start-1 resize-none overflow-y-auto bg-transparent py-1.5 text-sm whitespace-pre-wrap outline-none [overflow-wrap:anywhere]"
+            />
+          </div>
           <button
             onClick={send}
             disabled={locked || !draft.trim()}

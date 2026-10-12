@@ -18,6 +18,7 @@ from translator import state as st
 from translator.agents import pipeline
 
 from .test_flow import _prompt, _reply
+from .fakes import fake_ocr
 
 # --------------------------------------------------------------------------- #
 # Unit checks
@@ -143,9 +144,8 @@ def _refine(callback_context, llm_request):
 def run_doc(monkeypatch):
     CALLS.clear()
     page = iter([PAGE_1, PAGE_2])
-    monkeypatch.setattr(pipeline.ocr_extractor, "before_model_callback", lambda *_: _reply(next(page)))
+    fake_ocr(monkeypatch, page)
     monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    monkeypatch.setattr(pipeline.figure_detector, "before_model_callback", lambda *_: _reply("<none/>"))
     monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))  # reviewer sees nothing wrong
     monkeypatch.setattr(pipeline.refiner, "before_model_callback", _refine)
 

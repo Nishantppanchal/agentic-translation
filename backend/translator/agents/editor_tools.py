@@ -13,7 +13,7 @@ import uuid
 
 from google.adk.tools import ToolContext
 
-from .. import layout, proposals, qa
+from .. import dictionary, layout, prompts, proposals, qa, source_review
 from .. import state as st
 from ..documents import render_page
 from ..filters import inline
@@ -230,6 +230,114 @@ def ask_user_about_term(
     return {"status": "asked", "note": "The user will answer via the question card. Continue with your best guess."}
 
 
+def _not_in_review(state) -> dict | None:
+    if not source_review.in_review(state):
+        return {"status": "error", "message": "Page fixes are only for the source check before translating; use "
+                                              "fix_source_segment for a single segment now."}
+    return None
+
+
+def _stage_page(state, page: int, markdown: str, reason: str, origin: str) -> dict:
+    if page not in source_review.pages(state):
+        return {"status": "error", "message": f"No page {page}."}
+    fix = source_review.stage(state, page, markdown, reason, origin)
+    if fix is None:
+        return {"status": "unchanged", "page": page, "note": "That is what the page already says."}
+    state[source_review.FIXES] = {**(state.get(source_review.FIXES) or {}), str(page): fix}
+    out = {"status": "proposed", "page": page, "note": "The user sees the page before and after and accepts or rejects it."}
+    if fix["word_changes"]:
+        out["word_changes"] = fix["word_changes"][:12]
+        out["warning"] = "These words would change: make sure the user asked for that or the page image shows it."
+    if fix["moved"]:
+        out["moved"] = fix["moved"]
+        out["moved_note"] = "These passages change place: tell the user to check the reading order against the page image."
+    return out
+
+
+def get_page_source(page_number: int, tool_context: ToolContext) -> dict:
+    """The SOURCE text of one page as OCR markdown: `[[HEADER]]` / `[[FOOTER]]` lines, `[[FIGURE n]]` for pictures,
+    `#` headings, pipe tables, paragraphs separated by a blank line. Use it before proposing a page fix.
+
+    Args:
+      page_number: The page (1-based).
+    """
+    state = tool_context.state
+    if page_number not in source_review.pages(state):
+        return {"status": "error", "message": f"No page {page_number}; pages: {source_review.pages(state)}."}
+    pending = (state.get(source_review.FIXES) or {}).get(str(page_number))
+    return {"page": page_number, "markdown": source_review.page_markdown(state, page_number),
+            **({"pending_fix": pending["after"]} if pending else {})}
+
+
+def propose_page_source(page_number: int, corrected_markdown: str, reason: str, tool_context: ToolContext) -> dict:
+    """Propose the corrected SOURCE of a page, during the source check before translating: the whole page as OCR
+    markdown (same format as get_page_source). For structure the OCR got wrong — a paragraph split at a column,
+    columns in the wrong order, a stamp's text inside a sentence, a broken table. Keep every word unless the user
+    says it is wrong.
+
+    Args:
+      page_number: The page (1-based).
+      corrected_markdown: The complete corrected page.
+      reason: One sentence: what you fixed.
+    """
+    return _not_in_review(tool_context.state) or _stage_page(tool_context.state, page_number, corrected_markdown,
+                                                             reason, "editor")
+
+
+async def reread_page(page_number: int, instruction: str, tool_context: ToolContext) -> dict:
+    """Have the vision model read a page again with an instruction, during the source check before translating;
+    the result is proposed as the page's new source. Use it when the text itself is misread or the order is too
+    tangled to fix by hand.
+
+    Args:
+      page_number: The page (1-based).
+      instruction: What to do differently, from what the user said, e.g. "two columns: read the left column to
+        the end, then the right one; the red stamp is not part of the text".
+    """
+    from google.adk.models.llm_request import LlmRequest
+    from google.genai import types
+
+    from ..llm import build_model, error_text
+
+    state = tool_context.state
+    if (refused := _not_in_review(state)) is not None:
+        return refused
+    source = await tool_context.load_artifact(state.get("doc:source_artifact"))
+    png = render_page(source.inline_data.data, state.get("doc:filename", ""), page_number) if source and source.inline_data else None
+    if png is None:
+        return {"status": "error", "message": f"No page image for page {page_number}."}
+    request = LlmRequest(contents=[types.Content(role="user", parts=[
+        types.Part.from_bytes(data=png, mime_type="image/png"),
+        types.Part(text=f"Transcribe page {page_number}." + prompts.REREAD_PAGE.format(
+            instruction=instruction.strip(), previous=source_review.page_markdown(state, page_number)))])])
+    request.config.system_instruction = prompts.VISION_OCR
+    try:
+        replies = [r async for r in build_model("ocr").generate_content_async(request)]
+    except Exception as e:
+        return {"status": "error", "message": f"Reading the page again failed: {error_text(e)}"}
+    from ..formats import clean
+
+    # Not the model's thinking: a reasoning model's arrives as thought parts (OpenRouter's `reasoning`, vLLM's
+    # reasoning parser) and would otherwise open the page.
+    markdown = clean("".join(p.text or "" for r in replies if r.content for p in r.content.parts or [] if not p.thought))
+    return _stage_page(state, page_number, markdown, f"Read again: {instruction.strip()}", "reread")
+
+
+async def look_up_term(term: str, tool_context: ToolContext) -> dict:
+    """Look a source-language term up in the dictionary service: English translations with their definition,
+    domain and source. Use it before explaining or choosing a translation for a specialised term.
+
+    Args:
+      term: The term as it appears in the source text.
+    """
+    state = tool_context.state
+    lang = state.get("doc:detected_lang") or state.get("doc:source_lang")
+    entries = (await dictionary.lookup([term.strip()], lang)).get(term.strip(), [])
+    if not entries:
+        return {"status": "not found", "term": term, "note": "The dictionary has no entry; rely on context."}
+    return {"status": "found", "term": term, "entries": entries}
+
+
 def fix_source_segment(segment_id: str, corrected_source: str, tool_context: ToolContext) -> dict:
     """Propose a correction to an OCR error in the SOURCE text. Then propose the matching translation too.
 
@@ -312,4 +420,7 @@ EDITOR_TOOLS = [
     run_qa_checks,
     propose_alternatives,
     add_comment,
-]
+    get_page_source,
+    propose_page_source,
+    reread_page,
+] + ([look_up_term] if dictionary.enabled() else [])  # only offered when a dictionary is set up

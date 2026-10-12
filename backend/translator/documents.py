@@ -163,8 +163,12 @@ def crop_png(png: bytes, box: tuple[float, float, float, float]) -> bytes:
         return page.get_pixmap(clip=pymupdf.Rect(box) & page.rect).tobytes("png")
 
 
+def _norm(text: str) -> str:
+    return re.sub(r"[\W_]+", "", text).casefold()
+
+
 def mark_figures(png: bytes, boxes: list[tuple[float, float, float, float]]) -> bytes:
-    """Outline figures in red and label them FIGURE 1…n, so OCR can place `[[FIGURE n]]` markers."""
+    """Outline figures in red and label them FIGURE 1…n, so the vision engine can place `[[FIGURE n]]` markers."""
     doc, page = _image_page(png)
     with doc:
         size = max(14.0, page.rect.width / 60)
@@ -176,33 +180,6 @@ def mark_figures(png: bytes, boxes: list[tuple[float, float, float, float]]) -> 
             page.draw_rect(tag, color=(0.85, 0, 0), fill=(0.85, 0, 0))
             page.insert_text((tag.x0 + size * 0.3, tag.y1 - size * 0.4), label, fontsize=size, color=(1, 1, 1))
         return page.get_pixmap().tobytes("png")
-
-
-def box_from_percent(
-    values: list[float], width: float, height: float, pad: float = 0.0
-) -> tuple[float, float, float, float] | None:
-    """Validate a model-proposed `left,top,right,bottom` box in % of the page; returns pixels or None.
-
-    `pad` (fraction of the page) widens the box: vision models tend to draw boxes a little tight.
-    """
-    if len(values) != 4:
-        return None
-    left, top, right, bottom = values
-    if not (0 <= left < right <= 100 and 0 <= top < bottom <= 100):
-        return None
-    w, h = (right - left) / 100, (bottom - top) / 100
-    if w < MIN_FIGURE_SIDE or h < MIN_FIGURE_SIDE or w * h > MAX_FIGURE_AREA:
-        return None
-    return (
-        max(0.0, (left / 100 - pad) * width),
-        max(0.0, (top / 100 - pad) * height),
-        min(width, (right / 100 + pad) * width),
-        min(height, (bottom / 100 + pad) * height),
-    )
-
-
-def _norm(text: str) -> str:
-    return re.sub(r"[\W_]+", "", text).casefold()
 
 
 def place_figure_marker(markdown: str, n: int, anchor: str | None) -> str:
@@ -221,11 +198,6 @@ def place_figure_marker(markdown: str, n: int, anchor: str | None) -> str:
             if key in _norm(block)[: len(key) + 12]:
                 return "\n\n".join([*blocks[:i], marker, *blocks[i:]])
     return markdown if present else f"{markdown}\n\n{marker}"
-
-
-def image_size(png: bytes) -> tuple[int, int]:
-    pix = pymupdf.Pixmap(png)
-    return pix.width, pix.height
 
 
 # --------------------------------------------------------------------------- #

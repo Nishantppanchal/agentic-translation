@@ -1,4 +1,4 @@
-"""Real PP-DocLayout MCP server + the real workflow (LLM calls faked). Opt-in: RUN_LAYOUT_TESTS=1."""
+"""The real layout MCP server (PP-DocLayoutV3) + the real workflow (LLM calls faked). Opt-in: RUN_LAYOUT_TESTS=1."""
 
 from __future__ import annotations
 
@@ -20,6 +20,7 @@ from translator.agents import pipeline
 from translator.agents.editor import editor_agent
 from google.adk.models import LlmResponse
 
+from .fakes import fake_ocr
 from .test_flow import _prompt, _reply
 
 SAMPLES = Path(__file__).resolve().parents[2] / "samples"
@@ -28,23 +29,16 @@ pytestmark = pytest.mark.layout
 
 @pytest.fixture(autouse=True)
 def fake_llms(monkeypatch):
-    def ocr(callback_context, llm_request):
-        text = _prompt(llm_request)
-        if "cropped from a document" in text:
-            return _reply("Schaltschrank")
-        return _reply("# Wartungsbericht\n\nIntro text here.\n\n[[FIGURE 1]]\n\nAbb. 1: Anlagenübersicht\n\nOutro text.")
-
-    def must_not_run(*_):
-        raise AssertionError("vision box detection should not run when the layout server works")
-
-    monkeypatch.setattr(pipeline.ocr_extractor, "before_model_callback", ocr)
+    # The vision OCR writes [[FIGURE 1]] where PP-DocLayoutV3 found the picture (outlined in red on the page).
+    fake_ocr(monkeypatch, "# Wartungsbericht\n\nIntro text here.\n\n[[FIGURE 1]]\n\nAbb. 1: Anlagenübersicht\n\nOutro text.",
+             legends={1: "Schaltschrank"})
     monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    monkeypatch.setattr(pipeline.figure_detector, "before_model_callback", must_not_run)
     def translate(callback_context, llm_request):
         segs = re.findall(r'<seg id="([^"]+)">', _prompt(llm_request))
         return _reply("\n".join(f'<seg id="{sid}">English text {sid}</seg>' for sid in segs))
 
     monkeypatch.setattr(pipeline.translator, "before_model_callback", translate)
+    monkeypatch.setattr(pipeline.refiner, "before_model_callback", translate)  # QA flags on the fake text ask for a fix
     monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
 
     def editor(callback_context, llm_request):

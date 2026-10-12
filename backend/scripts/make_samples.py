@@ -729,13 +729,17 @@ def blocks_html(blocks: list[Block], figure_width: int) -> str:
 
 
 def flow_pdf(blocks: list[Block], *, title: str, header: str, footer: str, images: dict[str, bytes] | None = None,
-             figure_width: int = 300) -> pymupdf.Document:
+             figure_width: int = 300, rtl: bool = False) -> pymupdf.Document:
     """Typeset the blocks as flowing text over as many A4 pages as needed (a paragraph may run on to the next
-    page), then add the running header and the page-number footer (`footer` takes {page} and {pages})."""
+    page), then add the running header and the page-number footer (`footer` takes {page} and {pages}).
+    `rtl`: a right-to-left document (Arabic, Hebrew)."""
     archive = pymupdf.Archive()
     for name, data in (images or {}).items():
         archive.add(data, name)
-    story = pymupdf.Story(blocks_html(blocks, figure_width), user_css=PDF_CSS, archive=archive)
+    html = blocks_html(blocks, figure_width)
+    if rtl:
+        html = f'<div dir="rtl" style="text-align: right">{html}</div>'
+    story = pymupdf.Story(html, user_css=PDF_CSS, archive=archive)
     buf = io.BytesIO()
     writer = pymupdf.DocumentWriter(buf)
     more = True
@@ -748,11 +752,13 @@ def flow_pdf(blocks: list[Block], *, title: str, header: str, footer: str, image
     doc = pymupdf.open("pdf", buf.getvalue())
     grey = (0.7, 0.7, 0.7)
     for number, page in enumerate(doc, start=1):
-        page.insert_htmlbox(pymupdf.Rect(56, 30, 539, 46), f"<p>{esc(header)}</p>", css=FURNITURE_CSS)
+        side = ' dir="rtl" style="text-align: right"' if rtl else ""
+        page.insert_htmlbox(pymupdf.Rect(56, 30, 539, 46), f"<p{side}>{esc(header)}</p>", css=FURNITURE_CSS)
         page.draw_line((56, 46), (539, 46), color=grey, width=0.5)
         page.draw_line((56, 798), (539, 798), color=grey, width=0.5)
         text = esc(footer.format(page=number, pages=len(doc)))
-        page.insert_htmlbox(pymupdf.Rect(56, 802, 539, 818), f'<p style="text-align: right">{text}</p>', css=FURNITURE_CSS)
+        foot = ' dir="rtl" style="text-align: left"' if rtl else ' style="text-align: right"'
+        page.insert_htmlbox(pymupdf.Rect(56, 802, 539, 818), f"<p{foot}>{text}</p>", css=FURNITURE_CSS)
     doc.set_metadata({"title": title, "author": "UW-2291", "creator": "make_samples.py", "producer": "PyMuPDF",
                       "creationDate": PDF_TIME, "modDate": PDF_TIME})
     doc.subset_fonts()

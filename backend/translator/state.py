@@ -144,6 +144,7 @@ def add_questions(state: Mapping[str, Any], new_terms: list[dict], origin: str =
             "gist": t.get("gist", ""),
             "segment_ids": t.get("segment_ids", []),
             "reason": t.get("reason", ""),
+            "dictionary": t.get("dictionary") or [],  # entries from the dictionary service, if one is set up
             "origin": origin,
             "status": "open",
             "answer": None,

@@ -107,23 +107,6 @@ def parse_keeps(text: str) -> dict[str, str]:
     }
 
 
-def parse_figure_boxes(text: str) -> list[tuple[list[float], str]]:
-    """`<figure box="l,t,r,b">desc</figure>` → [([l, t, r, b], desc)] (values in % of the page)."""
-    boxes = []
-    for attrs, body in _tags(clean(text), "figure"):
-        try:
-            values = [float(v) for v in re.split(r"[,\s]+", attrs.get("box", "").strip()) if v]
-        except ValueError:
-            continue
-        boxes.append((values, body))
-    return boxes
-
-
-def is_none_reply(text: str) -> bool:
-    t = clean(text).strip().lower()
-    return not t or t in {"<none/>", "<none />", "none", "(none)", "no text"}
-
-
 def parse_issues(text: str, tag: str = "issue") -> list[dict]:
     """`<issue seg="p1.2" severity="major" category="accuracy">problem → fix</issue>` (LQA: tag="error")."""
     from . import structured  # local: structured imports this module
@@ -162,6 +145,11 @@ def parse_scores(text: str) -> dict[str, int]:
         if attrs.get("seg") and m:
             out[attrs["seg"].strip()] = max(0, min(100, round(float(m[0]))))
     return out
+
+
+def is_none_reply(text: str) -> bool:
+    t = clean(text).strip().lower()
+    return not t or t in {"<none/>", "<none />", "none", "(none)", "no text"}
 
 
 def parse_ocr_check(text: str) -> tuple[bool, list[str], str | None]:

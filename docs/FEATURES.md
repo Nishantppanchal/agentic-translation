@@ -2,7 +2,7 @@
 
 Everything the app does as of October 2026 (roadmap milestones M0–M9). Setup, architecture, the API, tests and the demo script are in the [README](../README.md).
 
-**In one paragraph:** upload a document (PDF, scan, image, Word, PowerPoint, Excel, XLIFF or text) in any language into a project; everything is translated into **English**. A PDF or scan first stops after reading, so you can check the source against the page images and have the chat fix it before anything is translated. Agents then read the whole document and ask you about the terms that need a decision — explained in plain English with English options and a recommendation, so you can answer without knowing the source language. Then they translate page by page, using the project's style guide, termbase and translation memory, and review and polish their own work. You finish it in a CAT-style segment editor, or by asking for changes in the chat. Every agent change is a proposal you accept or reject, and every accepted change is a version you can diff. Download it in the original format and layout, reflowed, as a bilingual review table, or as XLIFF for other CAT tools.
+**In one paragraph:** upload a document (PDF, scan, image or text) in any language into a project; everything is translated into **English**. A PDF or scan first stops after reading, so you can check the source against the page images and have the chat fix it before anything is translated. Agents then read the whole document and ask you about the terms that need a decision — explained in plain English with English options and a recommendation, so you can answer without knowing the source language. Then they translate page by page, using the project's style guide, termbase and translation memory, and review and polish their own work. You finish it in a CAT-style segment editor, or by asking for changes in the chat. Every agent change is a proposal you accept or reject, and every accepted change is a version you can diff. Download it as a Word document or as Markdown.
 
 **Contents**
 1. [The workspace](#1-the-workspace)
@@ -13,12 +13,10 @@ Everything the app does as of October 2026 (roadmap milestones M0–M9). Setup, 
 6. [Chat editor and proposals](#6-chat-editor-and-proposals)
 7. [Agentic tasks](#7-agentic-tasks)
 8. [Quality: QA checks, find & replace, LQA](#8-quality)
-9. [Office and XLIFF files](#9-office-and-xliff-files)
-10. [Layout-preserving PDF](#10-layout-preserving-pdf)
-11. [Exports and exchange formats](#11-exports-and-exchange-formats)
-12. [Versions and reading views](#12-versions-and-reading-views)
-13. [Models and settings](#13-models-and-settings)
-14. [Samples and demo kit](#14-samples-and-demo-kit)
+9. [Downloads](#9-downloads)
+10. [Versions and reading views](#10-versions-and-reading-views)
+11. [Models and settings](#11-models-and-settings)
+12. [Samples and demo kit](#12-samples-and-demo-kit)
 
 ---
 
@@ -28,7 +26,7 @@ Everything the app does as of October 2026 (roadmap milestones M0–M9). Setup, 
 |---|---|
 | **Sidebar** | **New translation**, then each **project** with its documents underneath (collapsible), then documents outside any project. Each document shows its status and open-question count. |
 | **Chat** (middle) | The conversation with the agents for the open document. While the pipeline runs, a **step bar** shows Read → Analyse → Translate → Review → Ready (with **Check** after Read for PDFs and images), with the current page and the elapsed time; while it waits for you, the current step says so. Then the source-check card, the question cards, proposals with diffs, and links to each version's diff. When a run ends, a **Next steps** card offers the obvious actions: *Review N drafts*, *Fix N QA errors*, *Check quality score*, *Download*. **Shortcuts** above the input: *Fix QA errors*, *Apply termbase*, *Summarise* (what the document says, in plain English), *More formal*. Enter sends, Shift+Enter adds a new line. |
-| **Document panel** (right) | Five tabs: **Segments**, **Document** (views: *Reading*, *Side by side*, *Original layout*), **Quality**, **History**, **Source & notes** (views: *Source* / *Page images & OCR*, and *Brief, terms & checks*). The header (one line) holds the file name and status, the version picker, the download menu and the token chip. Drag the divider between chat and document to resize; the width is remembered. |
+| **Document panel** (right) | Five tabs: **Segments**, **Document** (views: *Reading*, *Side by side*), **Quality**, **History**, **Source & notes** (views: *Page images & OCR*, and *Brief, terms & checks*). The header (one line) holds the file name and status, the version picker, the download menu and the token chip. Drag the divider between chat and document to resize; the width is remembered. |
 | **Project page** | Opens from the sidebar. Tabs: **Documents**, **Style guide**, **Termbase**, **Translation memory**, **Settings**. |
 
 Hovering a passage in the reading views shows a button that **references it in the chat** ("p3.2"), so you can say "make this more formal" without copying text. In the Segments grid, **explain** on a row asks the agent what the source says.
@@ -49,11 +47,10 @@ Free-text instructions ("British spelling. Formal register. Keep LV position num
 - **QA:** a forbidden variant in a translation is an error. A missing approved target is a warning, and inflected forms still count as present.
 - **Write-back:** your answers to the agents' questions are saved — **approved** when you chose the term, **proposed** when you just accepted the recommendation (see [§4](#analysis-and-questions-decided-before-translating)) — and accepted glossary changes go in too. They are merged, so a note never erases an approved target.
 - **Statuses:** *approved* terms are rules (prompts, QA, consistency fixer); *proposed* terms are suggestions only, with an **Approve** button; *note* entries explain a meaning without a fixed translation.
-- **Import and export:** TBX (v2 `martif` and v3; deprecated terms become forbidden variants) and CSV import. CSV import detects header rows in several languages, accepts `;` `,` or tab delimiters, and reads UTF-8 or Windows-1252. Export as TBX-Basic v3, or as CSV with a BOM so Excel opens it correctly.
-- **Editing:** terms can be filtered, edited inline, added and deleted.
+- **Editing:** terms can be filtered, edited inline, added and deleted. There is no file import; the demo seeder adds the rows of its `termbase.csv` through the terms API (`POST /api/projects/{pid}/terms`).
 
 ### Translation memory
-- **What's stored:** only segments a **person confirmed one by one** (Ctrl+Enter, or saving an edit as confirmed), each with the previous source segment as context, and confirmed work from an imported XLIFF. Bulk actions (**Confirm AI-checked**, **Mark confirmed as reviewed**) don't write to the TM: a click over many segments isn't a person checking each sentence, and the TM reuses its units as approved wording.
+- **What's stored:** only segments a **person confirmed one by one** (Ctrl+Enter, or saving an edit as confirmed), each with the previous source segment as context. Bulk actions (**Confirm AI-checked**, **Mark confirmed as reviewed**) don't write to the TM: a click over many segments isn't a person checking each sentence, and the TM reuses its units as approved wording.
 - **Match levels:**
 
   | Match | Meaning | What happens before translation |
@@ -62,12 +59,10 @@ Free-text instructions ("British spelling. Formal register. Keep LV position num
   | **100%** (exact) | Same source | Filled in with no model call, as **draft**. |
   | **75–99%** (fuzzy) | Scored per word, or per character for CJK | Passed to the translator as a reference to adapt. |
 
-  An exact match whose formatting codes differ from the source is downgraded to a 99% fuzzy match, so the codes get fixed.
 - **TM panel in the grid:** the active segment shows its top matches, with a diff between the stored source and this segment. **Alt+1–3** inserts a match.
 - **Concordance search** on the project's Translation memory tab. Units can be deleted there.
 - **Words saved:** shown in the chat ("5 segments reused, 47 words, no model call") and on the Checks tab.
-- **Import and export:** TMX 1.4b. Region codes match (`de-DE` = German), inline codes are skipped, and markdown is stripped on export.
-- **Safety and reporting:** XML imports are parsed with entities and network access disabled. Every import reports what was added, updated and warned about.
+- **Adding units in bulk:** `POST /api/projects/{pid}/tm` with a JSON list `[{source, target, origin?}]` adds units; a unit with the same source is updated. The demo seeder loads its `memory.json` this way; it is also the integration point for other tools.
 
 ### Settings
 - **Languages:** the source language; the target is always English.
@@ -86,13 +81,9 @@ Deleting a project removes its termbase and TM, but keeps its documents. Databas
 
 | Input | How it's read | What you can download |
 |---|---|---|
-| **PDF with a text layer** | Vision LLM per page, cross-checked against the text layer; then the source check | Layout-preserving PDF, reflowed formats, review table, XLIFF |
-| **Scanned PDF, image** (PNG, JPG, WebP) | Vision LLM, then the OCR check; then the source check | Reflowed formats, review table, XLIFF (no layout-preserving PDF: it needs a text layer) |
-| **Word** (.docx) | Read directly, no OCR; formatting becomes inline codes | **Translated .docx in its original formatting**, plus all the formats above |
-| **PowerPoint** (.pptx) | Read directly | Translated .pptx, plus the formats above |
-| **Excel** (.xlsx) | Read directly | Translated .xlsx, plus the formats above |
-| **XLIFF 2.0 / 1.2** (.xlf, .xliff) | Read directly; existing translations kept | The same XLIFF with targets filled in, plus the formats above |
-| **Text, Markdown** (.txt, .md) | Read as text | Reflowed formats, review table, XLIFF |
+| **PDF with a text layer** | Vision LLM per page, cross-checked against the text layer; then the source check | Word document, Markdown |
+| **Scanned PDF, image** (PNG, JPG, WebP) | Vision LLM, then the OCR check; then the source check | Word document, Markdown |
+| **Text, Markdown** (.txt, .md) | Read as text | Word document, Markdown |
 
 ---
 
@@ -101,13 +92,12 @@ Deleting a project removes its termbase and TM, but keeps its documents. Databas
 The pipeline is a Google ADK `Workflow` graph, run once per upload:
 
 ```
-upload ─► route_source
-            ├─ PDF / image / text ─► ocr       vision LLM, then the OCR check, per page (2 at a time)
-            │                         │        figures detected, cropped and kept
-            │                         ▼
-            │                        check_source   PDFs and images pause: you check the reading against the
-            │                                       page images; the chat proposes page fixes; Continue
-            └─ Word / PPT / Excel / XLIFF ─► extract   text read from the file, formatting → inline codes
+upload ─►         ocr           vision LLM, then the OCR check, per page (2 at a time);
+                                figures detected, cropped and kept; text files read as they are
+                       │
+                       ▼
+                  check_source  PDFs and images pause: you check the reading against the
+                                page images; the chat proposes page fixes; Continue
                        │
                        ▼
                   analyse       reads the WHOLE document: brief + key terms up front;
@@ -135,7 +125,7 @@ upload ─► route_source
 
 ### Reading the source
 - **OCR with verification:**
-  1. **Vision LLM:** each page is rendered to an image and transcribed into markdown by a vision model (the `OCR` role, e.g. Qwen3-VL), in any script. It was measured on 23 languages: see [samples/SAMPLES.md](../samples/SAMPLES.md#ocr-measured).
+  1. **Vision LLM:** each page is rendered to an image and transcribed into markdown by a vision model (the `ocr` step, see [§11](#11-models-and-settings)), in any script. It was measured on 23 languages: see [samples/SAMPLES.md](../samples/SAMPLES.md#ocr-measured).
   2. **Pictures marked on the page:** the PDF's embedded images and the pictures, charts and seals PP-DocLayoutV3 finds (the layout server's `detect_layout` tool) are outlined in red and numbered on the page image, so the model writes `[[FIGURE n]]` in their place instead of transcribing them.
   3. **OCR check:** a vision model compares the page with the image, and with the PDF's text layer when there is one. Its corrections are applied only when they're small fixes inside a word (a misread letter) or when the text layer confirms them. Anything else (a different word, a changed number, added or dropped text, and on scans any change to Chinese, Japanese or Korean characters) is listed in the Source tab as a *possible misreading* to compare with the page image, and the reading is kept.
   4. **The check is skipped only when two independent readings agree exactly:** the transcription is the same text as the PDF's own text layer (ignoring markdown, spacing, line-end hyphens and character variants such as ligatures) on a page without pictures. A single misread word, digit or minus sign, a messy text layer, a scan or a page with figures all get the check as before (`OCR_CHECK=always` checks every page).
@@ -146,10 +136,10 @@ upload ─► route_source
   - **Placement:** each figure is cropped and placed in the translation where it appears.
   - **Text inside a figure** is read from its crop by the vision model and translated as a legend underneath.
 - **Whole document:** running headers, footers and page numbers become segments too; a bare page number is just copied. A paragraph that runs across a page break (past a footer and the next page's header) is joined into one segment.
-- **Office and XLIFF files** skip OCR (see [§9](#9-office-and-xliff-files)).
+- **Text files** (.txt, .md) skip OCR: they are read as they are.
 
 ### Source check: fixing the reading before translating
-Every PDF and image **pauses after reading** (status *Check source*; the step bar shows Read → **Check** → Analyse). Nothing is translated yet, so a fix to the source loses nothing. Office, XLIFF and text files don't pause.
+Every PDF and image **pauses after reading** (status *Check source*; the step bar shows Read → **Check** → Analyse). Nothing is translated yet, so a fix to the source loses nothing. Text files don't pause.
 - **The card** in the chat: *Check the source before translating*, with a **Continue to translation** button.
 - **Checking:** compare the reading with the page images (**Source & notes → Page images & OCR**) and describe what's wrong in the chat, in plain words: two columns read straight across, a paragraph split at the column break, a stamp's text missing or inside a sentence, a heading or running header not marked.
 - **Page fixes:** the chat editor proposes a fix for the whole page: the page's source as OCR markdown, before and after (a word-level diff), with a list of the words the fix adds or removes, and pictures dropped or added. A structure-only fix (join, split, reorder, mark a header, footer or heading) changes no words — but the word list can't tell a right reading order from a wrong one (two columns stitched the wrong way round keep every word), so each passage the fix **moves** is quoted separately (*Text moves*). The green *Only the structure changes* line means the same words in the same order. Two editor tools make them:
@@ -162,15 +152,7 @@ Every PDF and image **pauses after reading** (status *Check source*; the step ba
 - **Afterwards:** page fixes are only possible during the source check; later, `fix_source_segment` corrects one segment.
 
 ### Translating: page by page, with the document carried along
-Each **page** is one translator call, and pages are translated **in order**. A segment is a paragraph, heading, list item or table cell. What counts as a page depends on the format:
-
-| Format | One "page" is |
-|---|---|
-| PDF, image | A real page |
-| Word | A part of about 2,500 characters of body text, split at a heading where possible. Headers and footers are in part 1; footnotes and endnotes come after the body. |
-| PowerPoint | A slide, with its notes |
-| Excel | A sheet |
-| XLIFF | A `<file>` |
+Each **page** is one translator call, and pages are translated **in order**. A segment is a paragraph, heading, list item or table cell. A page is a real page of the PDF or image; a text file is one page.
 
 A page over 6,000 characters (`PAGE_MAX_CHARS`) is split into parts that still run in order.
 
@@ -183,7 +165,7 @@ Each call sees:
 - the project's **termbase entries** that occur on this page, its **forbidden variants**, and the **style guide**;
 - **fuzzy TM matches** for these segments, to adapt.
 
-The translator replies in JSON that follows a schema built for that call, so the segment ids can only be this page's ids. Models without structured output fall back to a tag format (`STRUCTURED_OUTPUT=auto|on|off`). The result is saved as **v1 "Draft translation"**.
+The translator replies in JSON that follows a schema built for that call, so the segment ids can only be this page's ids. Models without structured output fall back to a tag format (`structured_output: false` on the model in `models.yaml`). The result is saved as **v1 "Draft translation"**.
 
 Because the analysis has read the whole document first, a term explained on page 4 is already known while page 1 is translated.
 
@@ -211,9 +193,9 @@ Because the analysis has read the whole document first, a term explained on page
 - The Source & notes tab lists the brief and the key terms with their meanings, a glossary for someone who doesn't read the source language. Pauses survive a server restart.
 
 ### Review ⇄ refine
-- **Review:** a reviewer agent checks each page against the source, the brief, the glossary, the termbase and the style guide. It uses `REVIEW_MODEL`, which should be a different model than the translator's, so the work gets a second opinion (the current setup: Qwen reviews Claude Haiku's translation). Qwen is a reasoning model: uncapped it thinks for about 4.5 minutes per page, so its hidden reasoning is capped at `REVIEW_REASONING_TOKENS` (2,000; about 35 s per page). In a benchmark the capped Qwen still caught a meaning error ("spätestens" → "at least") that Haiku, reviewing its own translation, missed.
+- **Review:** a reviewer agent checks each page against the source, the brief, the glossary, the termbase and the style guide. It uses the `review` step's model, which should be a different model than the translator's, so the work gets a second opinion (the current `pipeline.yaml`: Qwen reviews Claude Haiku's translation). A reasoning model can think for minutes per page: uncapped, Qwen took about 4.5 minutes per page, and with its hidden reasoning capped at 2,000 tokens (`extra_body: {thinking_token_budget: 2000}` on the step, see [§11](#11-models-and-settings)) about 35 s. In a benchmark the capped Qwen still caught a meaning error ("spätestens" → "at least") that Haiku, reviewing its own translation, missed.
   - **What it reports:** issues with an MQM category (accuracy, fluency, terminology, style, locale, markup), a severity (minor, major, critical) and a **QE score** (0–100) per segment.
-  - **Forced issues:** deterministic QA errors (a missing number, a forbidden term, a broken code) and flags are always added as must-fix issues, whatever the reviewer says.
+  - **Forced issues:** deterministic QA errors (a missing number, a forbidden term) and flags are always added as must-fix issues, whatever the reviewer says.
 - **Refine:** a refiner agent fixes the reported issues. Round 1 fixes everything raised. Round 2 re-reviews only what changed and chases only major issues. The loop stops early when nothing changes.
 - **100% TM matches are protected:** they are a person's approved wording for the same sentence, so the refiner only changes them for a major or critical issue, never for style.
 - **Reviewer questions** only appear when the reviewer recommends something different from the current translation; if the refiner applies the recommendation anyway, the question is closed ("applied in review").
@@ -227,13 +209,12 @@ Before the document is handed over, the consistency fixer runs on the AI draft: 
 - **Merged:** text that shifted between neighbouring segments gets one retry with just those segments, then is flagged `merged`.
 - **What flags do:** a flag becomes a forced major issue in review, and anything still flagged at the end is listed in the chat and badged in the UI.
 - **Invented terms:** "terms" the model reports that don't occur in the source are discarded.
-- **Escaped codes:** formatting codes the model escaped or respelled are normalised.
 
 ### Runs
 - **Queue:** at most `MAX_PARALLEL_RUNS` (default 2) pipelines or tasks run at once across all documents; the rest show **Queued**. Chat turns never wait.
 - **Reconnecting:** progress streams to the browser and replays when you reconnect or reload.
 - **Step bar:** Read → Analyse → Translate → Review → Ready (Read → Check → Analyse … for PDFs and images), with the current page, a progress bar and the elapsed time.
-- **Rate limits and stalls:** every model call retries with exponential backoff on rate limits and API errors (`MODEL_RETRIES`, default 5), and times out after `MODEL_TIMEOUT` (180 s) instead of hanging on a stalled provider connection, then retries.
+- **Rate limits and stalls:** every model call retries with exponential backoff on rate limits and API errors (`retries` in `models.yaml`, default 5), and times out after `timeout` (180 s) instead of hanging on a stalled provider connection, then retries.
 - **Interrupted runs:** a run stopped by an error or a server restart shows a **Retry** button; pages already read are reused.
 
 ---
@@ -245,7 +226,7 @@ The **Segments** tab is a CAT-style grid: id | source | target | status, with QE
 ### Statuses record human work only
 | Status | Set by |
 |---|---|
-| `new` | OCR'd or extracted, not translated yet |
+| `new` | Read (OCR or a text file), not translated yet |
 | `draft` | Machine translation, TM 100%, accepted proposals, human edits |
 | `confirmed` | The translator (Ctrl+Enter), or a 101% TM match with auto-confirm on |
 | `reviewed` | A second, human linguist (the ISO 17100 revision step) |
@@ -275,13 +256,12 @@ Edits save when you leave a segment.
 - **Proposed changes banner:** while the agents have a pending proposal, a banner offers **Apply all** (or **Apply N selected**) and **Reject all**.
 
 ### In each row
-- **Source:** project terms are underlined with a hover card. Formatting codes appear as numbered tags.
-- **Target:** clickable code chips insert a code; a paired code wraps the selected words. A broken code is refused with a hint.
+- **Source:** project terms are underlined with a hover card.
 - **QA issues:** shown under the row whenever it has any (severity, check and what's wrong, e.g. *Date 12.01.2026 from the source is missing*), refreshed live. **Fix** asks the agent to correct it (the change comes back as a proposal); **Ignore** hides it until the text changes.
 - **Proposed change:** an agent's pending change shows under the segment as a diff, with a tick box (and the alternatives to pick from, if any). It's the same selection as the proposal card in the chat.
 - **explain:** asks the agent what the source says in plain English and whether the translation carries it — an answer in the chat, no edits.
 - **Lock:** a locked segment can't be edited by people or agents.
-- **Comments:** add, resolve, reopen and delete, tagged with the current role. Comments never change the text. They appear in the bilingual review table and in XLIFF notes, and the chat editor sees them.
+- **Comments:** add, resolve, reopen and delete, tagged with the current role. Comments never change the text. The chat editor sees them.
 
 Editing is read-only while agents run. A save fails with a conflict if the segment changed underneath you.
 
@@ -296,7 +276,7 @@ Ask questions too: "explain p1.4" or **Summarise** (a shortcut above the input) 
 | Tool | What it does |
 |---|---|
 | `search_segments`, `get_segments` | Find and read segments (showing the proposed text when a proposal is pending) |
-| `update_segment` | Propose a new translation for a segment (codes validated) |
+| `update_segment` | Propose a new translation for a segment |
 | `replace_in_translation` | Propose a find/replace across segments, case-preserving |
 | `propose_alternatives` | Offer several options for a segment, each with a note |
 | `set_glossary_term` | Propose a glossary entry, which also goes into the project termbase |
@@ -304,7 +284,7 @@ Ask questions too: "explain p1.4" or **Summarise** (a shortcut above the input) 
 | `add_comment` | Leave a comment on a segment |
 | `ask_user_about_term`, `resolve_question` | Ask you about a term (with its meaning and English options), or apply your answer to a question card |
 | `get_page_source`, `propose_page_source`, `reread_page` | During the source check: show a page's source, propose a page fix (the editor rewrites the page's structure), or have the vision model read the page again with an instruction (see [§4](#source-check-fixing-the-reading-before-translating)) |
-| `fix_source_segment` | Correct an OCR mistake in one source segment, after the source check (not for Word, PowerPoint, Excel or XLIFF, whose source is exact) |
+| `fix_source_segment` | Correct an OCR mistake in one source segment, after the source check |
 | `inspect_page_layout` | Run PP-DocLayoutV3 on a source page and compare it with that page's segments |
 
 **Proposal card**
@@ -319,7 +299,7 @@ Ask questions too: "explain p1.4" or **Summarise** (a shortcut above the input) 
 
 Tasks run through a dedicated workflow, and their results come back as proposals.
 
-- **Rewrite a selection:** tick segments in the grid, then choose **More formal**, **Simpler**, **Shorter**, **3 alternatives**, or type your own instruction. With alternatives you pick one per segment in the proposal. Options that break formatting codes are dropped, and locked segments are skipped.
+- **Rewrite a selection:** tick segments in the grid, then choose **More formal**, **Simpler**, **Shorter**, **3 alternatives**, or type your own instruction. With alternatives you pick one per segment in the proposal. Locked segments are skipped.
 - **Fix consistency** (Quality tab):
   - **Finding the groups:** done without a model. A group is either the same source translated differently, or a set of segments breaking a termbase rule (a forbidden variant used, or the approved term missing).
   - **Fixing them:**
@@ -341,7 +321,7 @@ Deterministic checks run on every change; the **Quality** tab lists the issues, 
 | **Merged segments** | error | Text moved into or out of a neighbouring segment |
 | **Numbers & dates** | error if missing, warning if extra | Locale-aware: `30.04.2026` = `30 April 2026` = `04/30/2026` = `2026年4月30日`; `1.500,50` = `1,500.50`; `14:30` = `2:30 pm`; `4.2.7` stays an identifier |
 | **Terminology** | error (forbidden variant) / warning (approved term missing) | Termbase rules for this language; inflected forms count |
-| **Markup & tags** | error (heading level, table shape, inline codes) / warning (list items, bold) | Structure and formatting that differ from the source |
+| **Markup** | error (heading level, table shape) / warning (list items, bold) | Structure and formatting that differ from the source |
 | **Punctuation** | warning | A different final punctuation mark, with CJK equivalents |
 | **Spaces** | warning | Double spaces, a space before punctuation (French spacing allowed) |
 | **Consistency** | warning | The same source translated differently across the document |
@@ -357,7 +337,7 @@ Deterministic checks run on every change; the **Quality** tab lists the issues, 
 - **Applying:** saves the changes as your edits in one version. Locked segments are skipped and reported. Your replacement wins over a pending agent proposal for the same segment.
 
 ### Quality score (LQA)
-- **What it is:** **Run LQA** sends an independent assessor over the current version. It annotates errors by MQM category and severity without changing anything. It uses `LQA_MODEL`, which defaults to the review model; set it to a different model for a second opinion.
+- **What it is:** **Run LQA** sends an independent assessor over the current version. It annotates errors by MQM category and severity without changing anything. It uses the `lqa` step's model; point it at a different model than the translator's for a second opinion.
 - **Score:** 100 − penalty points per 1,000 source words, with minor = 1, major = 5 and critical = 25 points. CJK characters count as half a word each.
 - **Pass or fail:** compared with the project's threshold (default 90).
 - **Scorecard:** category × severity counts with their points. It is marked stale once the translation changes.
@@ -365,106 +345,26 @@ Deterministic checks run on every change; the **Quality** tab lists the issues, 
 
 ---
 
-## 9. Office and XLIFF files
-
-Word, PowerPoint, Excel and XLIFF files are read straight from the file (no OCR) and come back in their own format with the translation in place.
-
-### Inline codes
-- **Representation:** formatting is kept as XLIFF-style codes in the segment text:
-  - **paired codes** `<g id="1">…</g>` for bold, italic, links and content controls;
-  - **placeholders** `<x id="2"/>` for tabs, line breaks, images, footnote marks and fields.
-- **Preparation:** runs are cleaned up first (spell-check marks, revision ids), and the paragraph's base formatting is whichever needs the fewest codes.
-- **Rules:** the translator must keep every code, but may move a span to wherever its words end up in the target sentence.
-- **Enforcement:** codes are checked in QA, in human edits, in find & replace, in the chat editor and in imports. They are repaired on export: extra codes are dropped and missing placeholders appended.
-
-### By format
-- **Word:**
-  - **What's translated:** the body with nested tables, text boxes (both stored copies), headers and footers, footnotes and endnotes.
-  - **Fields** (`TOC`, `PAGE`, `REF`, `HYPERLINK`, legacy form fields) keep their instruction while their visible result is translated, so a table of contents comes out translated and can still be updated.
-  - **Content controls** keep their box.
-  - **Tracked changes** are translated as if accepted, and the chat warns you as soon as the file is read.
-  - The document language is set to English.
-- **PowerPoint:** slides in order (shapes, groups, tables) and speaker notes. Text that grew gets shrink-on-overflow, and new runs are marked English.
-- **Excel:**
-  - **What's translated:** shared strings, in first-use order and once even when used in many cells, plus inline strings.
-  - **What's untouched:** formulas, numbers and sheet names.
-  - **Formulas that compare against a cell text** (`=COUNTIF(F:F,"未整改")`) are updated to that text's translation in the translated file (`"Not rectified"`), case-insensitively and keeping a comparison prefix like `"<>…"`, so their results stay right instead of dropping to 0. The download menu notes it, and the Sheets view shows each formula as it is in the translated file (on hover).
-- **Where a segment lives:** the grid shows it, for example "Table 2", "Slide 3 · Title" or "Prices!B4".
-
-### XLIFF 2.0
-- **Export:** one unit per segment; `<pc>`/`<ph>` for codes; location, comments and QA notes as notes.
-  - **States:** draft = translated, confirmed = reviewed, reviewed = final.
-  - The exact status is kept in `subState`, and locked segments are flagged.
-- **As an input:** existing translations are kept, only empty segments are translated, and the original file comes back with its own code attributes.
-
-### XLIFF 1.2 (memoQ, older Trados)
-- **Export, import and input**, like 2.0.
-- **Codes:** `<g>`/`<x>`. Native `<bpt>`/`<ept>`/`<ph>`/`<bx>`/`<ex>`/`<it>` codes are copied back whole.
-- **Segmentation:** `<seg-source>` segmentation gives one segment per `<mrk mtype="seg">`, and the markers survive the write-back.
-- **States:** draft = needs-review-translation; confirmed = translated with `approved="yes"`; reviewed = signed-off.
-
-### Importing a returned XLIFF (vendor or reviewer round trip)
-Use the download menu → **Import a returned XLIFF…**, with a 2.0 or 1.2 file.
-- **The result is a proposal**, which you accept or reject in the chat.
-- **Checked first:**
-  - The languages must match.
-  - These units are reported and not applied:
-    - unknown units;
-    - units whose source changed;
-    - locked segments;
-    - units whose codes don't match.
-- **Confirmed segments:** a segment someone confirmed here is only replaced by a `final` unit. Confirmed work from the other tool goes into the project TM.
-
----
-
-## 10. Layout-preserving PDF
-
-**Translated PDF — original layout**: the translation is set into the original pages. Only PDFs with a text layer get one; scans and page images get the reflowed formats instead.
-
-- **What's removed:** only the text. Images, vector graphics, shading and table rules stay.
-- **Typesetting:** each block is re-set in place with the original size, weight and colour, in Noto Sans with a CJK fallback.
-- **Alignment:** segments are matched to the PDF's lines, tolerating hyphenation, spacing and markdown differences, and following paragraphs across page breaks.
-  - **Headers and footers** are matched first, on their own page, so a paragraph continuing across the break doesn't swallow them.
-  - **Own page first:** a segment is looked for on its own page(s) first, and lines another segment already took are skipped — a sentence printed on two pages goes to each page's own segment.
-  - **Table cells** are matched individually, down to word level when two cells share a line.
-- **Fit:** each block grows into free space (right up to the next column or object, down to the next block) and shrinks if needed.
-  - **Never silently lost:** a block that still can't fit keeps its source text and is reported.
-  - **Headers and footers** are translated in place on every page.
-- **Output size:** fonts are subset, so a 2-page document is about 50 KB. Renders are cached per version.
-- **Layout tab:** original and translated pages side by side. Each segment's box is coloured *fit*, *shrunk to fit* or *didn't fit — original kept*. Clicking a box highlights the segment.
-
----
-
-## 11. Exports and exchange formats
+## 9. Downloads
 
 Any saved version can be downloaded from the menu in the document header.
 
-| Group | Format | Notes |
-|---|---|---|
-| Original layout | **Translated file, original format** | Word, PowerPoint, Excel or XLIFF in, the same format out |
-| Original layout | **Translated PDF, original layout** | PDFs with a text layer only |
-| Reflowed | **Word document** | Real headings, lists, tables, figures with captions. Header and footer as the document's own, with live `PAGE`/`NUMPAGES` fields. Document language set, East Asian font for CJK targets. |
-| Reflowed | **Web page (HTML)** | Self-contained; running headers and footers are left out |
-| Reflowed | **Markdown (+ figures)** | A zip when the document has figures |
-| Review | **Bilingual review table (DOCX)** | Landscape table: id, source, target, status, notes (AI review issues, flags, comments). Rows are shaded by status and the header repeats on every page. |
-| Exchange | **XLIFF 2.0** / **XLIFF 1.2** | For other CAT tools, and for round trips |
-
-Project-level exchange (project page): **TMX** for the TM; **TBX** and **CSV** for the termbase.
+| Format | Notes |
+|---|---|
+| **Word document** (DOCX) | Reflowed: real headings, lists, tables, figures with captions. Header and footer as the document's own, with live `PAGE`/`NUMPAGES` fields. Document language set, East Asian font for CJK targets. |
+| **Markdown (+ figures)** | A zip when the document has figures |
 
 Downloads with non-ASCII names keep them.
 
 ---
 
-## 12. Versions and reading views
+## 10. Versions and reading views
 
 - **Versions:** saved after the draft, after clarifications, after AI review fixes, after each accepted proposal, after find & replace, and for saved human edits. Each version keeps a full snapshot.
 - **History:** compare any two versions as a diff. Each version note in the chat opens its diff inline.
 - **Document → Reading:** the translation as a formatted document, with figures and their legends. Flags are badged, and a paragraph that continues onto the next page says so.
-- **Document → Sheets** (Excel): each sheet as a grid — sheet tabs, row and column headers, merged cells, fills, bold, column widths; the translated text in every cell that uses it, numbers, dates and formula results (marked *fx*, the formula on hover) as in the file. Original/Translation toggle; click a cell to open its segment.
-- **Document → Slides** (PowerPoint): each slide as a canvas with its text boxes, tables and pictures where they sit, text shrunk to fit like the downloaded file, speaker notes underneath. Translation / Original / Side by side; click a text to open its segment. (Not a renderer: charts, themes and backgrounds aren't drawn.)
 - **Document → Side by side:** source and translation in parallel.
-- **Document → Original layout** (PDFs with a text layer): see [§10](#10-layout-preserving-pdf).
-- **Source & notes → Source / Page images & OCR:** the page images next to the transcription, plus the OCR check results. For Office and XLIFF files: the extracted source with its formatting.
+- **Source & notes → Page images & OCR:** the page images next to the transcription, plus the OCR check results.
 - **Source & notes → Brief, terms & checks:**
   - the OCR report;
   - TM leverage;
@@ -476,22 +376,29 @@ Downloads with non-ASCII names keep them.
 
 ---
 
-## 13. Models and settings
+## 11. Models and settings
 
-- **Token chip** (document header): tokens per pipeline step and model, computed from the run's saved events (no prices: the models run on your own servers).
-- **Models:** every role calls a vLLM server directly (no router). An endpoint is a URL, the served model name, an API key, extra HTTP headers and extra request fields; each role can use its own:
+- **Token chip** (document header): tokens per pipeline step and model, computed from the run's saved events (tokens only, no prices).
+- **Models** are set in two YAML files in `backend/config/` (details and examples in the README's [Models](../README.md#models)):
+  - **`models.yaml`** lists the models (copy it from `models.example.yaml`; it is git-ignored, so keys and internal server addresses are never committed). Each model has an `id`, the `model_name` the server knows it by, a `url` (any OpenAI-compatible server: vLLM, SGLang, OpenRouter, Ollama, LM Studio…) and an `api_key`, plus optional `headers`, `extra_body`, `timeout`, `retries`, `temperature` and `structured_output`. `defaults` apply to every model; a model's own values win.
+  - **`pipeline.yaml`** says which model (by id) does each step: a `default`, plus `steps`. A step can also be `{model: <id>, extra_body: {...}, temperature: ...}`; its `extra_body` is added to the model's, e.g. `{thinking_token_budget: 2000}` to cap a reasoning model's thinking on vLLM (the server needs `--reasoning-parser`; one without it gets the call again without the budget).
+  - **`${NAME}`** in either file is an environment variable from `backend/.env`, which holds the secrets (e.g. `OPENROUTER_API_KEY`).
 
-  | Role | Needs | Setting |
+  | Step | What it does | Needs |
   |---|---|---|
-  | OCR | vision; reads whole pages, the text inside pictures, and pages again for the source check | `OCR_MODEL` |
-  | OCR check | vision | `OCR_CHECK_MODEL` |
-  | Analyse, translate, refine | text | `TRANSLATE_MODEL` |
-  | Review | text; ideally a different model than the translator's | `REVIEW_MODEL` |
-  | Chat editor | tool calling (`--enable-auto-tool-choice --tool-call-parser …`); also makes the source check's page fixes | `EDITOR_MODEL` |
-  | LQA | text | `LQA_MODEL` (defaults to the review endpoint) |
-
-  Each role has `<ROLE>_MODEL`, `_API_BASE`, `_API_KEY`, `_HEADERS` and `_EXTRA_BODY`; anything left unset comes from `MODEL`, `MODEL_API_BASE`, `MODEL_API_KEY`, `MODEL_HEADERS` and `MODEL_EXTRA_BODY`. Headers and extra body are JSON objects; a role's own replaces the default, and `{}` sends none. Any OpenAI-compatible endpoint works, e.g. OpenRouter: `<ROLE>_API_BASE=https://openrouter.ai/api/v1`, `<ROLE>_MODEL=<model id>`, `<ROLE>_API_KEY=…`.
-- **Errors:** every failed call is logged as `vLLM error — <role> model <name> at <url>: HTTP <status> <type>: <server message>`, and a run that stops shows the same text. If the analysis or the final consistency pass fails, translation goes on and the chat says so with the error. Keys, header values and URL credentials are never printed.
+  | `ocr` | Reads each page image, the text inside pictures, and pages read again in the source check | vision |
+  | `ocr_check` | Compares the reading with the page image | vision |
+  | `analyse` | Brief, key terms and the questions before translating | |
+  | `translate` | The translation, page by page | |
+  | `review` | The AI review; ideally a different model than the translator's | |
+  | `refine` | Fixes what the review found | |
+  | `polish` | Consistency fixes before Ready, and the consistency task | |
+  | `rewrite` | Tasks: rewrite with an instruction, alternatives | |
+  | `editor` | The chat; also makes the source check's page fixes | tool calling (on vLLM: `--enable-auto-tool-choice --tool-call-parser …`) |
+  | `lqa` | Independent quality scoring (MQM) | |
+- **Headers:** every model request gets `defaults.headers`, the model's own `headers` and the run's headers (later ones win). `defaults.forward_headers` names headers of the API request that starts a run (e.g. `X-Request-Id`, `X-Tenant-Id`) to pass on to all its model calls; only those are forwarded, never the caller's other headers.
+- **Mistakes in the files** are reported when the backend starts, with the file and what's wrong (an unknown model id, a step without a model and no default, a misspelt field, a `${NAME}` that isn't set, a missing `models.yaml`).
+- **Errors:** every failed call is logged as `vLLM error — <step> model <name> at <url>: <server message>`, and a run that stops shows the same text. If the analysis or the final consistency pass fails, translation goes on and the chat says so with the error. Keys, header values and URL credentials are never printed.
 - **Other settings** (`backend/.env`):
 
   | Setting | Default | Effect |
@@ -506,31 +413,31 @@ Downloads with non-ASCII names keep them.
   | `MAX_QUESTIONS_PER_BATCH` | 3 | Late questions per page from the translator |
   | `MAX_CONCURRENCY` | 2 | Model calls at once within one run (OCR, review) |
   | `MAX_PARALLEL_RUNS` | 2 | Pipelines/tasks at once across documents |
-  | `STRUCTURED_OUTPUT` | auto | JSON schema output (vLLM guided decoding), or `off` for the tag format |
   | `OCR_CHECK_ENABLED` | true | Second-pass OCR verification |
   | `OCR_CHECK` | auto | `auto` skips the check when the transcription equals the text layer (page without pictures); `always` |
-  | `MODEL_RETRIES` | 5 | Retries per model call on rate limits (exponential backoff) and server errors |
-  | `MODEL_TIMEOUT` | 180 | Seconds per model call before it is retried |
-  | `REVIEW_REASONING_TOKENS` | 2000 | Cap on the reviewer's and LQA's hidden thinking (vLLM `thinking_token_budget`; needs `--reasoning-parser`, else the call is retried uncapped); 0 = no cap |
   | `OCR_DPI` | 150 | Page render resolution for OCR |
   | `FIGURE_DETECTION` | auto | `auto` (the PDF's embedded pictures + the pictures PP-DocLayoutV3 finds) or `off` |
   | `FIGURE_TEXT` | true | Read text inside figures as legends |
   | `LAYOUT_SERVER_DIR` | ../layout-server | The layout MCP server, which finds the pictures on pages. Blank = the PDF's embedded pictures only |
   | `LAYOUT_MODEL` | PP-DocLayoutV3 | `detect_layout`'s model |
   | `LAYOUT_MODEL_DIR` | (blank) | Where the PP-DocLayoutV3 model files are: a folder of model folders by name (like `~/.paddlex/official_models`) or the model's own folder. Blank = download to PaddleX's cache |
+  | `DATA_DIR` | data | Where documents and the project database are stored |
+  | `MODELS_FILE` / `PIPELINE_FILE` | config/models.yaml / config/pipeline.yaml | Other places for the model files |
+
+  The dictionary settings (`DICTIONARY_URL`, …) are in the README's [Dictionary service](../README.md#dictionary-service).
 
 ---
 
-## 14. Samples and demo kit
+## 12. Samples and demo kit
 
 - **Sample files** (`samples/`, catalogued with what each one tests in [samples/SAMPLES.md](../samples/SAMPLES.md)):
-  - **German:** acceptance and maintenance reports and a follow-up report (PDF and scanned copies), a contract excerpt whose abbreviations are only defined on page 2, a Word report, a PowerPoint training deck and an Excel defect list.
-  - **Chinese:** an acceptance report and a follow-up inspection (PDF and scanned copies, repeating paragraphs for TM leverage), a Word test report with tracked changes, a PowerPoint safety training and an Excel defect list with formulas — with utility terms that genuinely need a decision (两票三制, 五防, 三措一案…).
+  - **German:** acceptance and maintenance reports and a follow-up report (PDF and scanned copies), and a contract excerpt whose abbreviations are only defined on page 2.
+  - **Chinese:** an acceptance report and a follow-up inspection (PDF and scanned copies, repeating paragraphs for TM leverage), with utility terms that genuinely need a decision (消缺, 运维单位, 保电) and one defined only on page 2 (三措一案).
+  - **Other languages:** the same one-page acceptance report in 21 more languages, in `samples/languages/`.
   - **Source check:** two two-column scans in `samples/review/`, German and Chinese, each with a paragraph running across the column break and a red stamp or seal over the text.
   - **English references** in `samples/reference/`, so a non-speaker can judge the output.
-  - All generated by `scripts/make_samples.py` (run in `backend/`); the source-check scans by `scripts/make_review_samples.py`.
-- **`scripts/seed_demo.py --reset --upload`** creates two projects — German → English and Chinese → English — each with a style guide, a termbase with forbidden variants and a translation memory, and uploads two documents into each (`--only de|zh` for one).
-- **Vendor files:** `samples/demo/pruefbericht.vendor.en.xlf` and `samples/demo/zh/jiance-baogao.vendor.en.xlf`, with planted errors for the QA, LQA and consistency demo.
+  - **Generators** (run in `backend/`): `scripts/make_samples.py` writes the Chinese follow-up inspection, the contract excerpt (with their scans), the Chinese termbase and TM, and the references of these and of `yanshou-baogao.pdf`; `scripts/make_review_samples.py` the source-check scans; `scripts/make_language_samples.py` the other languages.
+- **`scripts/seed_demo.py --reset --upload`** creates two projects — German → English and Chinese → English — each with a style guide, a termbase with forbidden variants (`termbase.csv`, added through the terms API) and a translation memory (`memory.json`, added through `POST /api/projects/{pid}/tm`), from `samples/demo/` and `samples/demo/zh/`. It uploads `nachbegehung.pdf` (German) and `fucha-baogao.pdf` (Chinese) and lists more files to try, such as the source-check scans (`--only de|zh` for one project).
 - **Hands-on test script:** [docs/TESTING.md](TESTING.md). A shorter walkthrough is the README's [Demo](../README.md#demo).
 
 For what isn't supported yet, see [Known limitations](../README.md#known-limitations--next-steps).

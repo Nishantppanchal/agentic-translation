@@ -2,7 +2,7 @@
 
 A hands-on checklist for every feature, written for someone who doesn't read German or Chinese: each test says which sample to use, what to do, what you should see, and what the source text means. Tick the boxes as you go and note anything that differs.
 
-The agents run on real models, so wording differs between runs. **Which** terms get asked about can vary too: "expected" questions are the likely ones, and the important thing is that every question can be answered without knowing the source language. Exact counts (TM matches, QA errors, import reports) are deterministic and should match.
+The agents run on real models, so wording differs between runs. **Which** terms get asked about can vary too: "expected" questions are the likely ones, and the important thing is that every question can be answered without knowing the source language. Exact counts (TM matches, QA errors) are deterministic and should match.
 
 - **What each sample contains, and its traps:** [samples/SAMPLES.md](../samples/SAMPLES.md).
 - **English reference translations:** `samples/reference/*.en.md`. Compare the app's output with these.
@@ -12,11 +12,11 @@ The agents run on real models, so wording differs between runs. **Which** terms 
 ## 0. Setup
 
 ```bash
-# model server (GPU machine; set MODEL / MODEL_API_BASE in backend/.env to match)
-vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8100 --enable-auto-tool-choice --tool-call-parser hermes
-
-# backend (terminal 1)
-cd backend && uv sync && uv run uvicorn translator.api:app --port 8000
+# backend (terminal 1): the models are in config/models.yaml and config/pipeline.yaml, their keys in .env
+# (see "Models" in the README; for your own vLLM server, add it to models.yaml and point the steps at it)
+cd backend && uv sync
+cp config/models.example.yaml config/models.yaml && cp .env.example .env    # then put the API key in .env
+uv run uvicorn translator.api:app --port 8000
 
 # frontend (terminal 2)
 cd frontend && npm install && npm run dev        # http://localhost:3000
@@ -32,8 +32,9 @@ uv run python scripts/seed_demo.py --reset         # two projects: German → En
 ```
 
 - [ ] `seed_demo.py` prints:
-  - **German project:** 12 terms and 12 TM units added.
-  - **Chinese project:** 15 terms and 9 TM units added.
+  - **German project:** `termbase.csv: 12 terms` and `memory.json: 12 translation-memory units added`.
+  - **Chinese project:** `termbase.csv: 15 terms` and `memory.json: 9 translation-memory units added`.
+  - For each project, a list of files to try.
 - [ ] The sidebar shows two projects: **Acme Energie – Umspannwerk Nord** (German) and **北区变电站改造 – UW-2291** (Chinese (Simplified)).
 
 > If you restarted the backend after an upgrade, older projects are migrated automatically: English terms and TM units are kept, other target languages dropped.
@@ -52,7 +53,6 @@ uv run python scripts/seed_demo.py --reset         # two projects: German → En
 - [ ] The project opens; its Settings say *French → English*.
 - [ ] Settings → untick **Auto-confirm 101% matches**, set the LQA threshold to 95, reload: both changes are kept.
 - [ ] Termbase → add a term with a forbidden variant (e.g. `devis` → `quotation`, never `estimate`). It appears in the list.
-- [ ] Termbase → **Export CSV**: the file opens in Excel with correct accents.
 - [ ] Delete the project (bin icon). Its documents are kept, outside any project.
 
 ---
@@ -61,7 +61,7 @@ uv run python scripts/seed_demo.py --reset         # two projects: German → En
 
 **2.1 Upload.** Click **New translation**, choose `samples/fucha-baogao.pdf`, Project = the Chinese project, then **Translate**.
 - [ ] The form says *Translate a document into English*; "Into" is fixed to English.
-- [ ] The chat shows the **step bar**: Read → Check → Analyse → Translate → Review → Ready (a Word, PowerPoint, Excel or XLIFF file has no Check step). The current step spins, with page x/y and a timer.
+- [ ] The chat shows the **step bar**: Read → Check → Analyse → Translate → Review → Ready (a .txt or .md file has no Check step). The current step spins, with page x/y and a timer.
 - [ ] The sidebar shows the document under its project with a spinner.
 - [ ] After reading, the run stops at **Check**: the sidebar says *Check source*, and the chat shows *Check the source before translating*. Click **Continue to translation** (fixing the source is section 3).
 
@@ -113,7 +113,7 @@ What the model gets wrong differs between runs; the lists below are what a live 
 - [ ] Ask for a page fix, then **Reject** it: the page stays as it was read.
 - [ ] Ask for a page fix and click **Continue to translation** without deciding: the card says undecided fixes are left out, and the chat says so after continuing.
 - [ ] After **Continue**, ask for a source fix: the chat corrects single segments instead (page fixes are only possible during the source check).
-- [ ] Upload `pruefbericht.docx`: it doesn't stop at Check.
+- [ ] Upload a text file (.txt or .md): it doesn't stop at Check.
 
 ---
 
@@ -137,15 +137,18 @@ What the model gets wrong differs between runs; the lists below are what a live 
 - [ ] Project → Termbase: your choice appears as an **approved** term, with the meaning as the note. (Questions where you kept the recommendation are saved as **proposed** — see 4.2.)
 - [ ] Compare with `samples/reference/vertragsauszug.en.md`.
 
-**4.2 Questions before translating (Chinese).** Upload `samples/quexian-qingdan.xlsx` (a defect list) into the Chinese project.
-- [ ] A question about **运维方** ("the operations and maintenance side": which party is that?), explained in English.
-- [ ] **Accept all recommendations & continue** → the translation runs with no further pause on that term.
-- [ ] Project → Termbase: the accepted term is **proposed** (not approved), with an **Approve** button. Click **Approve**: it becomes approved.
+**4.2 Questions before translating (Chinese).** `fucha-baogao.pdf` in the Chinese project (uploaded in 2.1; after **Continue to translation**).
+- [ ] Likely questions, explained in English:
+  - **消缺** (utility jargon for "eliminating a defect"; the report also says 整改, rectification, for the same defects);
+  - **运维单位** (which party is that? the utility's O&M organisation);
+  - **保电** / 高考保电期 (a period of guaranteed supply, here during the college entrance exam: no planned outages).
+- [ ] **Accept all recommendations & continue** → the translation runs with no further pause on those terms.
+- [ ] Project → Termbase: the accepted terms are **proposed** (not approved), with an **Approve** button. Click **Approve** on one: it becomes approved.
 
-**4.3 Terms defined later are used from the start.** Upload `samples/anquan-peixun.pptx` (a safety training).
-- *What it is:* slide 1 demands strict **两票三制** and **五防**; slides 3 and 4 explain them (the "two permits and three systems" and the "five preventions", safety rules in Chinese utilities).
-- [ ] No question about 五防 / 两票三制. The brief and the key terms explain them.
-- [ ] Slide 1's translation uses the same terms as slides 3–4. Compare with `reference/anquan-peixun.en.md`.
+**4.3 Terms defined later are used from the start.** Same document, `fucha-baogao.pdf`.
+- *What it is:* page 1 says the re-inspection follows the approved **三措一案** without explaining it; page 2 (§ 四) defines it (the organisational, technical and safety measures and the construction plan for the outage work).
+- [ ] No question about 三措一案 (if one is asked, its recommendation already reflects the definition). The brief and the key terms explain it.
+- [ ] Page 1's translation uses the same term as the definition on page 2 (the reference: *Three Measures and One Plan*). Compare with `reference/fucha-baogao.en.md`.
 
 **4.4 Skip.** On any document that asks, click **Skip — let the AI decide**.
 - [ ] Translation continues. The term isn't in the glossary or the project termbase, but the recommendation is used consistently.
@@ -178,12 +181,11 @@ What the model gets wrong differs between runs; the lists below are what a live 
 
 ## 6. Segment editor
 
-Use `jiance-baogao.docx` (a Chinese earthing test report in Word) or `pruefbericht.docx`.
+Use `fucha-baogao.pdf` or `nachbegehung.pdf` (any translated document works).
 
 - [ ] **Translator / Reviewer** switch: Ctrl+Enter confirms (Translator) or marks *Reviewed* (Reviewer).
 - [ ] **Keyboard:** Alt+↓/↑ move between segments; Esc reverts an edit; Alt+S copies the source; Alt+1 inserts the first TM match (when the TM panel shows one).
 - [ ] **Terms:** project terms are underlined in the source. Hovering shows the target and the forbidden variants.
-- [ ] **Formatting codes:** the source of p1.4 shows numbered tags (bold, italic). In the target, the code chips insert at the cursor. Deleting a code and leaving the segment gives a *codes don't match* error and the save is refused.
 - [ ] **Comments:** add a comment as reviewer, resolve it. The **Comments** filter shows open ones.
 - [ ] **Lock** a segment: it can't be edited, and agents skip it.
 - [ ] **QA issues under the segment:** a segment with a QA problem shows it right under the row (no need to click in): severity, check, message, **Fix** and **Ignore**. Click **Fix** → the chat gets the request and the agent proposes the correction.
@@ -222,88 +224,46 @@ Use `jiance-baogao.docx` (a Chinese earthing test report in Word) or `pruefberic
 - [ ] **Rewrite:** in Segments, tick 2 segments (shift-click for a range), then **More formal**. A proposal arrives.
 - [ ] **Alternatives:** tick 2 segments → **3 alternatives**. Each change offers 3 options with notes; pick one per segment (in the grid or the chat), then accept.
 - [ ] **Apply termbase** (chat shortcut) or Quality → **Fix consistency**. Repeated sentences are unified and termbase rules applied, as a proposal.
-  - `jiance-baogao.docx` repeats 测试条件：天气晴… ("Test conditions: sunny, ambient temperature 25 °C…") as p1.10 and p1.28.
+  - `fucha-baogao.pdf` repeats 乙方应在整改完成后5个工作日内书面通知甲方，并申请复验。 ("The Contractor shall notify the Client in writing within 5 working days…") on pages 1 and 2.
 
 ---
 
 ## 10. Quality: QA, find & replace, LQA
 
-**10.1 Vendor XLIFF (Chinese).** On `jiance-baogao.docx`: download menu → **Import a returned XLIFF…** → `samples/demo/zh/jiance-baogao.vendor.en.xlf`.
-- [ ] The report lists the vendor's changes (about 30–49: units identical to the AI's translation count as *unchanged*), with **p1.6 refused** because the vendor dropped the footnote code.
-- [ ] Accept the proposal. The **Quality** tab shows the 4 planted errors and the consistency warning:
-  - p1.4: forbidden *Party A* (should be *Client*);
-  - p1.24: 0.35 Ω became *0.53 Ω*;
-  - p1.46: the deadline 15 **June** 2026 became *15 May*;
-  - p1.47: left in Chinese (untranslated);
-  - p1.10 / p1.28: the same sentence translated two ways (consistency warning).
+**10.1 Planting errors.** On a translated `fucha-baogao.pdf`, edit segments in the grid (as Translator):
+- the date line: change *20 May 2026* to *14 March 2026*;
+- the repeated paragraph on page 1 (*The Contractor shall notify the Client…*): write *Party A* instead of *the Client*.
+- [ ] The **Quality** tab shows:
+  - a numbers error: the date 2026年5月20日 is missing;
+  - a terminology error: forbidden *Party A* (should be *Client*);
+  - a consistency warning: the paragraph is now translated two ways (page 1 and page 2).
 
-**10.2 Vendor XLIFF (German).** On `pruefbericht.docx`, import `samples/demo/pruefbericht.vendor.en.xlf`.
-- [ ] The report gives the vendor's proposed changes and one refusal (a dropped footnote code).
-- [ ] After accepting, QA shows:
-  - forbidden *cable bridge* and *Substation Nord*;
-  - a wrong date;
-  - an untranslated sentence;
-  - *in Ordnung* ("OK / satisfactory") translated two ways.
-
-**10.3 Fix it with the agents.** In the chat, **Next steps → Fix N QA errors** (or the *Fix QA errors* shortcut).
+**10.2 Fix it with the agents.** In the chat, **Next steps → Fix N QA errors** (or the *Fix QA errors* shortcut).
 - [ ] The editor runs the QA checks and proposes fixes. Accept them.
 - [ ] Then **Apply termbase**, accept. QA errors go to 0 (warnings about heading numbers like "1." may remain; they're benign).
 
-**10.4 QA details.**
+**10.3 QA details.**
 - [ ] **Ignore** a warning: it disappears; **Show ignored** brings it back. It returns if the text changes.
-- [ ] **Excel formulas:** on `quexian-qingdan.xlsx` the chat says 3 cell texts are used inside formulas. Download menu → *Translated file — original format* notes that those formulas are updated to the translation.
 
-**10.5 Find & replace.** Segments → **Replace**: find `retention`, replace `retainage`.
+**10.4 Find & replace.** Segments → **Replace**: find `retention`, replace `retainage`.
 - [ ] The preview lists the changes as diffs. Untick one, then apply: the rest become one new version. Locked segments are skipped.
 
-**10.6 LQA.** **Next steps → Check quality score** (or Quality → Run LQA).
+**10.5 LQA.** **Next steps → Check quality score** (or Quality → Run LQA).
 - [ ] A score per 1,000 words, pass or fail against the threshold, a category × severity scorecard, and the review queue (lowest scores first).
-- [ ] After the vendor import (before fixes) the document fails; after the fixes the score rises.
+- [ ] Run it with the errors of 10.1 in place, and again after the fixes of 10.2: the score rises. After an edit, the scorecard is marked stale.
 
 ---
 
-## 11. Office round trips
-
-- [ ] **Word** (`jiance-baogao.docx`):
-  - The chat notes **2 tracked changes**, translated as accepted.
-  - Download **Translated file — original format**. In Word: bold and italic in the right places, the link works, the footnote is there, the footer shows a live page number, and there are no revision marks.
-  - p1.46 says the work must be done **by 15 June 2026**. That's the tracked insertion; the deleted word 尽快 ("as soon as possible") is gone.
-- [ ] **PowerPoint** (`anquan-peixun.pptx`): download the PPTX. Speaker notes are translated. The slogan box on slide 4 (*Safety first, prevention foremost, comprehensive management*) shrinks to fit instead of overflowing.
-- [ ] **Excel view:** Document → **Sheets** shows each sheet as a grid (tabs 缺陷 / 汇总): the header row shaded, numbers right-aligned, deadlines as dates, the summary sheet's formula results with an *fx* marker (hover shows the formula). Toggle **Original**: the Chinese text in the same cells. Click a cell: its segment opens.
-- [ ] **PowerPoint view:** Document → **Slides** shows each slide with its text where it sits and the notes underneath; **Side by side** puts the Chinese slide next to the English one; the slogan box on slide 4 shrinks its text to fit.
-- [ ] **Excel** (`quexian-qingdan.xlsx`): download the XLSX.
-  - Formulas, numbers and real dates are untouched.
-  - The bold 【重要】 ("[Important]") part of C7 stays bold.
-  - The summary sheet's formulas compare against the English texts (`=COUNTIF(缺陷!F:F,"Not rectified")`), so the counts stay 3 / 3 / 4 after Excel recalculates. Sheet names (缺陷, 汇总) are not translated, so the references still work.
-
----
-
-## 12. Layout-preserving PDF
-
-- [ ] **Text-layer PDF** (`fucha-baogao.pdf`): **Document → Original layout** shows original and translated pages side by side.
-  - The table, the figure, the header ("North District Substation Renovation Project · UW-2291 · Internal") and the footer ("Page 1 of 2") stay in place.
-  - The paragraph that runs across the page break flows across in English.
-  - Boxes are coloured *fit* or *shrunk*.
-- [ ] Download **Translated PDF — original layout** and open it: searchable English text.
-- [ ] **Scan** (`fucha-baogao-scanned.pdf` or `abnahmeprotokoll-scanned.pdf`): *Translated PDF — original layout* is not available in the download menu (it needs a PDF with a text layer); the reflowed formats are.
-
----
-
-## 13. Exports and exchange
+## 11. Downloads
 
 - [ ] Download each format from the menu, and each file opens:
-  - Word (reflowed);
-  - HTML;
-  - Markdown (a zip when there are figures);
-  - **Bilingual review table** (a landscape table with id, source, target, status and notes);
-  - XLIFF 2.0;
-  - XLIFF 1.2.
-- [ ] Export XLIFF 2.0, then import it straight back: *0 changes*.
-- [ ] Project → Translation memory → **Export TMX**; Termbase → **Export TBX**. Import them into a new project: same counts.
+  - **Word document** (`fucha-baogao.pdf`): real headings, the defects table, the figure; the running header (*North District Substation Renovation Project · UW-2291 · Internal*) is Word's header, and the footer (*Page 1 of 2*) shows live page numbers;
+  - **Markdown**: a zip with the figure when the document has one.
+- [ ] Pick an older version in the version picker and download: the menu says *Exports version vN*, and the file has that version's text.
 
 ---
 
-## 14. Robustness
+## 12. Robustness
 
 - [ ] **Reload during a run:** the step bar and progress come back.
 - [ ] **Retry:** stop the backend while a PDF is in the *Read* step, restart it, open the document and click **Retry**.
@@ -315,21 +275,27 @@ Use `jiance-baogao.docx` (a Chinese earthing test report in Word) or `pruefberic
   - The run's error in the app shows the same text.
   - Start the server again and click **Retry**.
 - [ ] **Analysis too long for the model:** set `ANALYSIS_CHUNK_CHARS=200000` and start vLLM with a small `--max-model-len` (e.g. 8192); upload a long document. The chat shows *Note: I couldn't read the whole document first…* with the context-length error and the `ANALYSIS_CHUNK_CHARS` hint, and the document is still translated. Restore the setting.
-- [ ] **Wrong model name:** set `MODEL=does-not-exist`, restart, upload a file. The log shows `vLLM error — … HTTP 404 NotFoundError: The model `does-not-exist` does not exist.` Restore `MODEL`.
-- [ ] **Custom headers:** with `MODEL_HEADERS={"X-Test": "1"}` (behind a proxy that logs headers, or a gateway that requires one), runs complete and the header arrives on every request.
-- [ ] **Reviewer thinking cap:** on a server started with `--reasoning-parser`, review takes well under a minute per page. On a server without one, the log shows `vLLM error — review model … refused the thinking budget (…); retrying without it` once, and review continues.
+- [ ] **Wrong model name:** in `config/models.yaml`, set a model's `model_name` to `does-not-exist`, restart, upload a file. The log shows `vLLM error — … HTTP 404 NotFoundError: The model `does-not-exist` does not exist.` Restore it.
+- [ ] **Mistakes in the model files:** each one stops the backend at startup with the file and what's wrong. Try one at a time, then restore:
+  - in `config/pipeline.yaml`, point a step at an id that isn't in `models.yaml`;
+  - in `models.yaml`, refer to `${NOT_SET}` (an environment variable that isn't set);
+  - misspell a field (e.g. `modle_name`);
+  - rename `models.yaml`: the error says to copy `models.example.yaml` to `models.yaml`.
+- [ ] **Custom headers:** with `headers: {X-Test: "1"}` under `defaults` in `models.yaml` (behind a proxy that logs headers, or a gateway that requires one), runs complete and the header arrives on every request.
+- [ ] **Forwarded headers:** with `forward_headers: [X-Request-Id]` under `defaults`, upload a document with an `X-Request-Id` header (e.g. with `curl -H`). Every model call of that run carries it (check with a proxy that logs headers); the request's other headers (e.g. `Authorization`) are not passed on.
+- [ ] **Reviewer thinking cap:** in `pipeline.yaml`, set `review: {model: <id>, extra_body: {thinking_token_budget: 2000}}` for a reasoning model on vLLM. On a server started with `--reasoning-parser`, review takes well under a minute per page. On a server without one, the log shows `vLLM error — review model … refused the thinking budget (…); retrying without it` once, and review continues.
 - [ ] **OCR check skip:** on `nachbegehung.pdf` (a clean digital PDF), the activity log may say *matches the PDF's text layer (no second check needed)* for a page. On scans every page says *verified* or *checker fixed…*, plus *possible misreadings to check* when the checker suggested changes that weren't applied.
 
 ---
 
-## 15. Layout and navigation
+## 13. Layout and navigation
 
 - [ ] The document panel has five tabs:
   - Segments;
-  - Document (Reading / Side by side / Original layout);
+  - Document (Reading / Side by side);
   - Quality;
   - History;
-  - Source & notes (Source or Page images & OCR / Brief, terms & checks).
+  - Source & notes (Page images & OCR / Brief, terms & checks).
 - [ ] Switching tabs returns to the last view you used in that tab.
 - [ ] Drag the divider between chat and document. The width is kept after a reload.
 - [ ] **Widen** hides the chat; again brings it back.
@@ -338,7 +304,7 @@ Use `jiance-baogao.docx` (a Chinese earthing test report in Word) or `pruefberic
 
 ---
 
-## 16. Other source languages
+## 14. Other source languages
 
 `samples/languages/` has the same one-page acceptance report in 21 more languages (Spanish, French, Italian,
 Portuguese, Dutch, Polish, Swedish, Turkish, Russian, Ukrainian, Greek, Arabic, Hebrew, Hindi, Bengali, Indonesian,
@@ -346,7 +312,7 @@ Vietnamese, Thai, Japanese, Korean, Chinese (Traditional)). Every one says what
 `samples/reference/acceptance-report.en.md` says, so you can check any of them without reading the language.
 Use a project without a termbase (or none) and Source = *Auto-detect*. Each PDF stops at **Check** after reading: click **Continue to translation**.
 
-**16.1 A Latin-script language.** Upload `acceptance-fr-scanned.pdf`.
+**14.1 A Latin-script language.** Upload `acceptance-fr-scanned.pdf`.
 - [ ] Source & notes shows the running header and *Page 1 sur 1* as their own segments, the defects table as a
   table (3 rows), and the diagram as a figure whose legend is its four French labels.
 - [ ] The detected language is French.
@@ -354,20 +320,19 @@ Use a project without a termbase (or none) and Source = *Auto-detect*. Each PDF 
   a legal term) and *ASI* (the French abbreviation for UPS).
 - [ ] The translation matches the reference: 110 kV, item 4.2.7, the three deadlines, week 18, 5%.
 
-**16.2 Right to left.** Upload `acceptance-ar-scanned.pdf` (or `acceptance-he.pdf`).
+**14.2 Right to left.** Upload `acceptance-ar-scanned.pdf` (or `acceptance-he.pdf`).
 - [ ] The Arabic text reads in the right order in the Source tab (it is shown in logical order); the table has
   رقم / الوصف / المهلة as its header.
 - [ ] The translation matches the reference.
 
-**16.3 Scripts without spaces, and shaped scripts.** Upload `acceptance-th-scanned.pdf`, `acceptance-ja.pdf` and
+**14.3 Scripts without spaces, and shaped scripts.** Upload `acceptance-th-scanned.pdf`, `acceptance-ja.pdf` and
 `acceptance-hi-scanned.pdf`.
 - [ ] Thai and Japanese sentences are not broken up by stray spaces; dates read 2026年3月14日 / 14/03/2026.
 - [ ] No *punctuation* QA warnings because Thai sentences end without a full stop, or because Hindi ends them with ।.
 
-**16.4 Text layer vs scan.** For a language with both files (e.g. `acceptance-ko.pdf` and `acceptance-ko-scanned.pdf`):
+**14.4 Text layer vs scan.** For a language with both files (e.g. `acceptance-ko.pdf` and `acceptance-ko-scanned.pdf`):
 - [ ] The text PDF's pages say *matches the PDF's text layer* or *verified*; the scan's say *verified* or list
   possible misreadings to compare with the image.
-- [ ] Download the **layout-preserving PDF** of the Korean text PDF: English text sits where the Korean was.
 
 ---
 

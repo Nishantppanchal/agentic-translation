@@ -1,0 +1,8 @@
+# Tests never call a real model: every step points at a port where nothing listens (and every agent is faked).
+defaults:
+  timeout: 5
+  retries: 0
+models:
+  - id: test-model
+    model_name: test/model
+    url: http://127.0.0.1:9/v1

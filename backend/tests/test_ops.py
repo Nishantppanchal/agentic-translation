@@ -19,12 +19,14 @@ from google.adk.models import LlmResponse
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from translator import exports, projects, proposals, segments, structured
-from translator import state as st
-from translator.agents import ops
-from translator.project_routes import router
+from translator import projects
+from translator.agents import tasks
+from translator.api.routes.projects import router
+from translator.api.runs import RunManager
+from translator.document import edits, proposals
+from translator.document import state as st
+from translator.models import structured
 from translator.projects import ProjectStore
-from translator.runs import RunManager
 
 
 def _reply(text: str) -> LlmResponse:
@@ -54,7 +56,7 @@ SEGS = {
 
 async def _ops_session(task: dict, **state):
     sessions, artifacts = InMemorySessionService(), InMemoryArtifactService()
-    runner = Runner(app=App(name="t", root_agent=ops.ops_workflow), session_service=sessions, artifact_service=artifacts)
+    runner = Runner(app=App(name="t", root_agent=tasks.ops_workflow), session_service=sessions, artifact_service=artifacts)
     s = await sessions.create_session(app_name="t", user_id="u", state={
         "doc:status": "ready", "doc:seg_ids": list(SEGS), "doc:source_lang": "German", "doc:target_lang": "English",
         "doc:versions": [], "doc:task": task, **{st.seg_key(k): v for k, v in SEGS.items()}, **state})
@@ -102,7 +104,7 @@ def test_stage_alternatives_and_accept_a_choice():
 # --------------------------------------------------------------------------- #
 
 
-def test_rewrite_with_alternatives_skips_locked_and_drops_broken_codes(monkeypatch):
+def test_rewrite_with_alternatives_skips_locked_segments(monkeypatch):
     prompts_seen = []
 
     def fake(callback_context, llm_request):
@@ -111,14 +113,10 @@ def test_rewrite_with_alternatives_skips_locked_and_drops_broken_codes(monkeypat
         ids = re.findall(r'<pair id="([^"]+)">', text)
         out = []
         for sid in ids:
-            if sid == "p2.4":
-                out.append(f'<alt seg="{sid}" note="formal">The <g id="1">time limit</g> expires.</alt>')
-                out.append(f'<alt seg="{sid}" note="broken">The time limit expires.</alt>')  # lost its code
-            else:
-                out += [f'<alt seg="{sid}" note="formal">Formal {sid}</alt>', f'<alt seg="{sid}" note="concise">Concise {sid}</alt>']
+            out += [f'<alt seg="{sid}" note="formal">Formal {sid}</alt>', f'<alt seg="{sid}" note="concise">Concise {sid}</alt>']
         return _reply("\n".join(out))
 
-    monkeypatch.setattr(ops.rewriter, "before_model_callback", fake)
+    monkeypatch.setattr(tasks.rewriter, "before_model_callback", fake)
 
     async def main():
         task = {"kind": "alternatives", "segment_ids": ["p1.1", "p2.4", "p2.5"], "instruction": "more formal", "n": 3}
@@ -128,9 +126,7 @@ def test_rewrite_with_alternatives_skips_locked_and_drops_broken_codes(monkeypat
         assert all('<pair id="p2.5">' not in t for t in prompts_seen)  # locked: not even sent
         changes = {c["segment_id"]: c for c in s.state["doc:proposal"]["changes"]}
         assert [a["text"] for a in changes["p1.1"]["alternatives"]] == ["Formal p1.1", "Concise p1.1"]
-        assert changes["p2.4"]["after"] == 'The <g id="1">time limit</g> expires.' and "alternatives" not in changes["p2.4"]
         assert s.state["doc:proposal"]["notes"] == ["Rewrite: more formal"] and s.state["doc:task"] is None
-        assert any("1 option dropped: broken formatting codes" in t for t in _said(events))
         assert st.get_segment(s.state, "p1.1")["target"] == "The plant is accepted."  # nothing applied
 
     asyncio.run(main())
@@ -138,14 +134,14 @@ def test_rewrite_with_alternatives_skips_locked_and_drops_broken_codes(monkeypat
 
 @pytest.mark.structured
 def test_retranslate_one_result_with_json(monkeypatch):
-    monkeypatch.setattr(structured, "enabled", lambda role: True)
+    monkeypatch.setattr(structured, "enabled", lambda step: True)
 
     def fake(callback_context, llm_request):
         structured.inject_schema(callback_context, llm_request)
         assert llm_request.config.response_schema["title"] == "alternatives"
         return _reply(json.dumps({"segments": [{"id": "p1.1", "alternatives": [{"text": "The plant has been accepted.", "note": ""}]}]}))
 
-    monkeypatch.setattr(ops.rewriter, "before_model_callback", fake)
+    monkeypatch.setattr(tasks.rewriter, "before_model_callback", fake)
 
     async def main():
         sessions, _, runner, s = await _ops_session({"kind": "retranslate", "segment_ids": ["p1.1"], "instruction": "present perfect", "n": 1})
@@ -175,7 +171,7 @@ def test_consistency_uses_confirmed_translations_asks_the_model_and_applies_term
         assert 'Termbase rule: Kabelpritsche → cable tray; never "cable bridge"' in text
         return _reply('<seg id="p1.2">The cable tray is earthed.</seg>')
 
-    monkeypatch.setattr(ops.consistency_fixer, "before_model_callback", fake)
+    monkeypatch.setattr(tasks.consistency_fixer, "before_model_callback", fake)
 
     async def main():
         sessions, _, runner, s = await _ops_session({"kind": "consistency"}, **{"doc:project_id": pid})
@@ -207,24 +203,22 @@ def test_consistency_with_nothing_to_do():
 # --------------------------------------------------------------------------- #
 
 
-def test_comments_add_resolve_delete_and_export_notes():
+def test_comments_add_resolve_and_delete():
     async def main():
         sessions = InMemorySessionService()
         s = await sessions.create_session(app_name="t", user_id="u", state={
             "doc:status": "ready", "doc:seg_ids": ["p1.1"], "doc:versions": [], st.seg_key("p1.1"): SEGS["p1.1"]})
-        seg = await segments.add_comment(sessions, s, "p1.1", "  Client prefers 'installation'  ", "reviewer")
+        seg = await edits.add_comment(sessions, s, "p1.1", "  Client prefers 'installation'  ", "reviewer")
         [c] = seg["comments"]
         assert (c["role"], c["text"], c["resolved"]) == ("reviewer", "Client prefers 'installation'", False)
-        with pytest.raises(segments.EditConflict):
-            await segments.add_comment(sessions, s, "p1.1", "  ")
-        seg = await segments.update_comment(sessions, s, "p1.1", c["id"], resolved=True)
+        with pytest.raises(edits.EditConflict):
+            await edits.add_comment(sessions, s, "p1.1", "  ")
+        seg = await edits.update_comment(sessions, s, "p1.1", c["id"], resolved=True)
         assert seg["comments"][0]["resolved"] and seg["target"] == "The plant is accepted."  # text untouched
-        notes = exports._notes(s.state)
-        assert notes["p1.1"] == ["Comment (reviewer, resolved): Client prefers 'installation'"]
-        seg = await segments.update_comment(sessions, s, "p1.1", c["id"], delete=True)
+        seg = await edits.update_comment(sessions, s, "p1.1", c["id"], delete=True)
         assert seg["comments"] == []
         with pytest.raises(KeyError):
-            await segments.update_comment(sessions, s, "p1.1", "nope", resolved=True)
+            await edits.update_comment(sessions, s, "p1.1", "nope", resolved=True)
 
     asyncio.run(main())
 
@@ -276,8 +270,7 @@ def test_project_api_is_english_only():
     pid = client.post("/api/projects", json={"name": "Acme", "source_lang": "German"}).json()["id"]
     client.post(f"/api/projects/{pid}/terms", json={"source": "Abnahme", "target": "acceptance"})
     assert client.get(f"/api/projects/{pid}/terms").json()[0]["target"] == "acceptance"
-    r = client.get(f"/api/projects/{pid}/export", params={"format": "tbx"})
-    assert r.status_code == 200 and b'xml:lang="en"' in r.content and "de-en" in r.headers["content-disposition"]
+    assert "target_lang" not in client.get(f"/api/projects/{pid}").json()  # every project translates into English
 
 
 # --------------------------------------------------------------------------- #

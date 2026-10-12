@@ -1,0 +1,47 @@
+[
+ {
+  "source": "设备验收报告——北区变电站",
+  "target": "Equipment Acceptance Report – North District Substation",
+  "origin": "yanshou-baogao.pdf (confirmed)"
+ },
+ {
+  "source": "日期：2026年3月14日 ｜ 项目编号：UW-2291",
+  "target": "Date: 14 March 2026 | Project No.: UW-2291",
+  "origin": "yanshou-baogao.pdf (confirmed)"
+ },
+ {
+  "source": "一、验收范围",
+  "target": "1. Scope of Acceptance",
+  "origin": "yanshou-baogao.pdf (confirmed)"
+ },
+ {
+  "source": "本次验收范围为110千伏开关设备的更新改造，包括二次系统。施工按照工程量清单第4.2.7项执行。承包方已完整移交全部试验报告。",
+  "target": "The scope of this acceptance covers the renovation of the 110 kV switchgear, including the secondary systems. The works were carried out in accordance with item 4.2.7 of the bill of quantities. The Contractor has handed over all test reports in full.",
+  "origin": "yanshou-baogao.pdf (confirmed)"
+ },
+ {
+  "source": "二、发现的缺陷",
+  "target": "2. Defects Identified",
+  "origin": "yanshou-baogao.pdf (confirmed)"
+ },
+ {
+  "source": "| 序号 | 描述 | 整改期限 |\n|---|---|---|\n| 1 | 地下室电缆桥架未接地 | 2026年4月30日 |\n| 2 | 出线间隔标识不完整 | 2026年4月15日 |\n| 3 | UPS直流母线遗留工作 | 2026年4月30日 |",
+  "target": "| No. | Description | Rectification deadline |\n|---|---|---|\n| 1 | Cable tray in the basement not earthed | 30 April 2026 |\n| 2 | Labelling of the outgoing feeder bays incomplete | 15 April 2026 |\n| 3 | Outstanding work on the UPS DC busbar | 30 April 2026 |",
+  "origin": "yanshou-baogao.pdf (confirmed)"
+ },
+ {
+  "source": "图1：地下室设备概览",
+  "target": "Figure 1: Overview of the basement equipment",
+  "origin": "yanshou-baogao.pdf (confirmed)"
+ },
+ {
+  "source": "三、结论",
+  "target": "3. Conclusion",
+  "origin": "yanshou-baogao.pdf (confirmed)"
+ },
+ {
+  "source": "设备在上述缺陷整改完成前有条件验收。复查定于第18周进行。在此之前，保留结算金额5%的质量保证金。停送电操作须由电网调度中心统一下令。",
+  "target": "The equipment is granted conditional acceptance pending rectification of the above defects. A re-inspection is scheduled for week 18. Until then, retention money of 5% of the settlement amount will be withheld. De-energisation and re-energisation may only be ordered centrally by the network control centre.",
+  "origin": "yanshou-baogao.pdf (confirmed)"
+ }
+]

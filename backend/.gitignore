@@ -12,3 +12,4 @@ wheels/
 # local
 data/
 .env
+config/models.yaml

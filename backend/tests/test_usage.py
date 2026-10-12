@@ -1,7 +1,7 @@
 from google.adk.events import Event
 from google.genai import types
 
-from translator import usage
+from translator.api import usage
 
 
 def _ev(author: str, model: str, prompt: int, completion: int) -> Event:

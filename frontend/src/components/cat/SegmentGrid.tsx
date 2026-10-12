@@ -19,11 +19,9 @@ import {
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { api } from "@/lib/api";
 import type { DocumentState, Proposal, ProposalChange, QaIssue, Role, Segment, SegmentStatus, StatusCounts, TaskKind, Term, TmMatch } from "@/lib/types";
-import { codeList, hasCodes } from "@/lib/codes";
-import { CodeText } from "../CodeText";
-import { DiffText } from "../Diff";
-import { changeKey, type ProposalPick } from "../proposalPick";
-import { qeStyle } from "../QualityView";
+import { DiffText } from "../document/Diff";
+import { changeKey, type ProposalPick } from "../chat/proposalPick";
+import { qeStyle } from "../document/QualityView";
 import { FindReplace } from "./FindReplace";
 import { TermCard, TermText, TmPanel } from "./TmPanel";
 import { issuesBySegment, type QaState } from "./useQa";
@@ -95,7 +93,6 @@ const ORIGIN_LABEL: Record<string, string> = {
   copy: "Copy",
   tm_exact: "TM 100%",
   tm_fuzzy: "TM fuzzy",
-  xliff: "XLIFF",
 };
 
 const originLabel = (seg: Segment) =>
@@ -213,24 +210,6 @@ export function SegmentGrid({
   const insertMatch = (seg: Segment, target: string) => {
     setDrafts((d) => ({ ...d, [seg.id]: target }));
     refs.current.get(seg.id)?.focus();
-  };
-
-  /** Put a code at the caret; a <g> pair wraps the selected words. */
-  const insertCode = (seg: Segment, id: string, kind: "g" | "x") => {
-    const el = refs.current.get(seg.id);
-    const value = draftsRef.current[seg.id] ?? seg.target ?? "";
-    const start = el?.selectionStart ?? value.length;
-    const end = el?.selectionEnd ?? start;
-    const open = kind === "g" ? `<g id="${id}">` : `<x id="${id}"/>`;
-    const inner = kind === "g" ? value.slice(start, end) : "";
-    const close = kind === "g" ? "</g>" : "";
-    const next = value.slice(0, start) + open + inner + close + value.slice(kind === "g" ? end : start);
-    setDrafts((d) => ({ ...d, [seg.id]: next }));
-    requestAnimationFrame(() => {
-      const caret = start + open.length + inner.length + (inner ? close.length : 0);
-      el?.focus();
-      el?.setSelectionRange(caret, caret);
-    });
   };
 
   const c = useMemo(() => counts(doc.segments), [doc.segments]);
@@ -596,11 +575,6 @@ export function SegmentGrid({
                 {(seg.kind === "header" || seg.kind === "footer") && (
                   <span className="block text-[9px] tracking-wide text-muted uppercase">{seg.kind}</span>
                 )}
-                {seg.where && seg.where !== "Body" && (
-                  <span className="mt-0.5 block font-sans text-[9px] leading-tight break-words text-muted" title={seg.where}>
-                    {seg.where}
-                  </span>
-                )}
               </button>
               </div>
               <div className="text-sm whitespace-pre-wrap text-muted">
@@ -608,22 +582,11 @@ export function SegmentGrid({
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={api.figureUrl(sessionId, seg.image ?? "")} alt="" className="mb-1 max-h-24 rounded border border-border" />
                 )}
-                {hasCodes(seg.source) ? (
-                  <CodeText
-                    text={seg.source}
-                    labels={seg.codes}
-                    mode="tags"
-                    renderText={(t) => (
-                      <TermText text={t} terms={terms} onHover={(term, el) => setHover(term && el ? { term, rect: el.getBoundingClientRect() } : null)} />
-                    )}
-                  />
-                ) : (
-                  <TermText
-                    text={seg.source}
-                    terms={terms}
-                    onHover={(term, el) => setHover(term && el ? { term, rect: el.getBoundingClientRect() } : null)}
-                  />
-                )}
+                <TermText
+                  text={seg.source}
+                  terms={terms}
+                  onHover={(term, el) => setHover(term && el ? { term, rect: el.getBoundingClientRect() } : null)}
+                />
               </div>
               <AutoTextarea
                 setRef={(el) => {
@@ -706,22 +669,6 @@ export function SegmentGrid({
               </div>
               {proposed.has(seg.id) && (
                 <ProposedChange change={proposed.get(seg.id)!} pick={pick} disabled={!!deciding} />
-              )}
-              {active === seg.id && canEdit && hasCodes(seg.source) && (
-                <div className="col-span-4 -mt-1 mb-1 ml-[76px] flex flex-wrap items-center gap-1 text-[11px] text-muted">
-                  Codes from the source — click to insert at the cursor (a span wraps the selected words):
-                  {codeList(seg.source).map((c) => (
-                    <button
-                      key={`${c.kind}${c.id}`}
-                      onMouseDown={(e) => e.preventDefault()} // keep the selection in the target box
-                      onClick={() => insertCode(seg, c.id, c.kind)}
-                      className="rounded bg-accent-soft px-1.5 py-0.5 font-mono text-[10px] text-accent hover:bg-accent hover:text-white"
-                      title={seg.codes?.[c.id]}
-                    >
-                      {c.kind === "g" ? `${c.id}…${c.id}` : c.id} {seg.codes?.[c.id] ?? ""}
-                    </button>
-                  ))}
-                </div>
               )}
               {issues.length > 0 && (
                 // Always visible: what's wrong with this segment, not just a count.

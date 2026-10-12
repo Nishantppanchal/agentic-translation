@@ -1,0 +1,18 @@
+# Which model (an id from models.yaml) does each step.
+# A step can also be a mapping: {model: <id>, extra_body: {...}, temperature: 0.1} — extra_body is added to the
+# model's own, e.g. {thinking_token_budget: 2000} to cap a reasoning model's thinking on vLLM (the server needs
+# --reasoning-parser; one without it gets the call again uncapped).
+
+default: claude-haiku        # every step not listed below
+
+steps:
+  ocr: qwen-flash            # reads each page image (and the text inside pictures, and pages read again in the chat)
+  ocr_check: qwen-flash      # compares the reading with the page image
+  # analyse:                 # brief, key terms and the questions before translating
+  # translate:
+  review: qwen-flash         # a second model reviewing the translation
+  # refine:                  # fixes what the review found
+  # polish:                  # consistency fixes before Ready (and the consistency task)
+  # rewrite:                 # tasks: rewrite with an instruction, alternatives
+  # editor:                  # the chat
+  lqa: qwen-flash            # independent quality scoring (MQM)

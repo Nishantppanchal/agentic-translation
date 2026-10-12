@@ -13,9 +13,9 @@ from google.adk.models import LlmResponse
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from translator import source_review
-from translator import state as st
-from translator.agents import editor_tools, pipeline
+from translator.agents import editor_tools, pipeline, workers
+from translator.document import source_check
+from translator.document import state as st
 
 from .fakes import fake_ocr
 from .test_flow import _reply
@@ -60,7 +60,7 @@ async def _start(pdf: Path):
 @pytest.mark.source_check
 def test_a_scan_stops_after_reading_and_continue_translates(monkeypatch):
     fake_ocr(monkeypatch, PAGE)
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
 
     async def main():
         sessions, runner, sid, events = await _start(SAMPLES / "wartungsbericht-scanned.pdf")
@@ -74,13 +74,13 @@ def test_a_scan_stops_after_reading_and_continue_translates(monkeypatch):
             async for _ in runner.run_async(user_id="u", session_id=sid, new_message=resume):
                 pass
         s = await sessions.get_session(app_name=APP, user_id="u", session_id=sid)
-        assert s.state[source_review.CHECKED] is True
+        assert s.state[source_check.CHECKED] is True
 
     asyncio.run(main())
 
 
 def _state(status: str = "awaiting_source_check") -> dict:
-    from translator.documents import segments_from_pages
+    from translator.document.pages import segments_from_pages
 
     segs = segments_from_pages([(1, PAGE)])
     return {**{st.seg_key(s["id"]): st.normalize(s) for s in segs}, "doc:seg_ids": [s["id"] for s in segs],
@@ -93,9 +93,9 @@ def test_the_chat_proposes_a_page_fix_and_accepting_splits_the_page_again():
     assert editor_tools.get_page_source(1, ctx)["markdown"] == PAGE
     result = editor_tools.propose_page_source(1, FIXED, "Joined the paragraph; the stamp on its own line.", ctx)
     assert result["status"] == "proposed" and "word_changes" not in result  # structure only: no word changed
-    fix = state[source_review.FIXES]["1"]
+    fix = state[source_check.FIXES]["1"]
     assert fix["before"] == PAGE and fix["after"] == FIXED and fix["origin"] == "editor"
-    state.update(source_review.resegment(state, 1, fix["after"]))
+    state.update(source_check.resegment(state, 1, fix["after"]))
     sources = [s["source"] for s in st.get_segments(state)]
     assert "Die Kabeltrasse im Kellergeschoss wurde am 14.03.2026 begangen. Die Erdung der Kabelpritsche fehlt weiterhin." in sources
     assert "GEPRÜFT 14.03.2026 K. Albrecht" in sources
@@ -113,7 +113,7 @@ def test_page_fixes_only_during_the_source_check():
 
 
 def test_reading_a_page_again_with_an_instruction(monkeypatch):
-    from translator import llm
+    from translator.models import llm
 
     seen = {}
 
@@ -127,14 +127,14 @@ def test_reading_a_page_again_with_an_instruction(monkeypatch):
     state = _state()
     pdf = (SAMPLES / "wartungsbericht-scanned.pdf").read_bytes()
     result = asyncio.run(editor_tools.reread_page(1, "Two columns: left first. The stamp is separate.", Ctx(state, pdf)))
-    assert result["status"] == "proposed" and state[source_review.FIXES]["1"]["origin"] == "reread"
+    assert result["status"] == "proposed" and state[source_check.FIXES]["1"]["origin"] == "reread"
     assert seen["image"] and "Two columns: left first." in seen["text"] and "<earlier_reading>" in seen["text"]
 
 
 def test_reading_a_page_again_leaves_the_models_thinking_out(monkeypatch):
     """A reasoning model's thinking comes back as thought parts (OpenRouter's `reasoning`, vLLM's reasoning
     parser): it isn't part of the page."""
-    from translator import llm
+    from translator.models import llm
 
     class FakeModel:
         async def generate_content_async(self, request):
@@ -146,11 +146,11 @@ def test_reading_a_page_again_leaves_the_models_thinking_out(monkeypatch):
     state = _state()
     pdf = (SAMPLES / "wartungsbericht-scanned.pdf").read_bytes()
     asyncio.run(editor_tools.reread_page(1, "Read it again.", Ctx(state, pdf)))
-    assert state[source_review.FIXES]["1"]["after"] == FIXED
+    assert state[source_check.FIXES]["1"]["after"] == FIXED
 
 
 def test_markup_isnt_a_word_change_but_a_dropped_picture_is():
-    from translator.source_review import word_changes
+    from translator.document.source_check import word_changes
 
     before = "Kopf\n\n# Titel\n\n[[FIGURE 1]]\n\nText."
     assert word_changes(before, "[[HEADER]] Kopf\n\n## Titel\n\n[[FIGURE 1]]\n\nText.") == []
@@ -160,7 +160,7 @@ def test_markup_isnt_a_word_change_but_a_dropped_picture_is():
 
 
 def test_columns_stitched_the_wrong_way_round_keep_every_word_but_are_quoted_as_moved():
-    from translator.source_review import moved_text, word_changes
+    from translator.document.source_check import moved_text, word_changes
 
     left = "Die Kabelpritsche verläuft auf einer Länge von etwa 48 m entlang der Nordwand."
     right = "Der Mangel ist sicherheitsrelevant, weil bei einem Isolationsfehler Spannung anstehen kann."
@@ -181,4 +181,4 @@ def test_a_page_fix_that_moves_text_tells_the_editor_to_have_the_order_checked()
     paragraphs = FIXED.split("\n\n")
     result = editor_tools.propose_page_source(1, "\n\n".join(paragraphs[::-1]), "reordered", Ctx(state))
     assert result["status"] == "proposed" and result["moved"] and "order" in result["moved_note"]
-    assert state[source_review.FIXES]["1"]["moved"] == result["moved"]
+    assert state[source_check.FIXES]["1"]["moved"] == result["moved"]

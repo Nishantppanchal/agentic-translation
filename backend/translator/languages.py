@@ -25,7 +25,7 @@ LANGUAGES = [
     "Chinese (Traditional)",
 ]
 
-# BCP-47 codes (document language tags; XLIFF/TMX/TBX later).
+# BCP-47 codes (document language tags).
 LANG_CODES = {
     "English": "en", "Spanish": "es", "French": "fr", "German": "de", "Italian": "it", "Portuguese": "pt",
     "Dutch": "nl", "Polish": "pl", "Swedish": "sv", "Turkish": "tr", "Russian": "ru", "Ukrainian": "uk",

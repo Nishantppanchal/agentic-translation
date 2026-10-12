@@ -12,8 +12,8 @@ from pathlib import Path
 
 import pytest
 
-from translator import dictionary
 from translator.config import get_settings
+from translator.integrations import dictionary
 
 SERVER = Path(__file__).resolve().parents[2] / "dictionary-server" / "server.py"
 _spec = importlib.util.spec_from_file_location("dummy_dictionary", SERVER)
@@ -57,7 +57,7 @@ def test_terms_are_looked_up_in_one_call_and_cached(dictionary_server):
 
 def test_a_failing_dictionary_never_blocks(dictionary_server, monkeypatch, caplog):
     monkeypatch.setattr(get_settings(), "dictionary_api_key", "wrong")
-    with caplog.at_level(logging.WARNING, logger="translator.dictionary"):
+    with caplog.at_level(logging.WARNING, logger="translator.integrations.dictionary"):
         assert asyncio.run(dictionary.lookup(["ASI"], "fr")) == {}
     assert "HTTP 401" in caplog.text and "missing or wrong API key" in caplog.text and "wrong" not in caplog.text.split("HTTP 401")[0]
     with socket.socket() as sock:  # nothing listening
@@ -73,7 +73,7 @@ def test_without_a_dictionary_nothing_is_called(monkeypatch):
 
 
 def test_a_dictionary_translation_the_analysis_missed_becomes_an_option():
-    from translator.agents.pipeline import _add_dictionary_options
+    from translator.agents.steps.analyse import _add_dictionary_options
 
     term = {"term": "réception avec réserves", "guess": "acceptance subject to reservations",
             "options": [{"target": "acceptance subject to reservations", "note": ""}],

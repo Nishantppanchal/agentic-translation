@@ -1,5 +1,5 @@
 """Projects: the SQLite store (termbase, TM scoring), the TM pass in the pipeline, TM write-back on
-human confirmation, termbase write-through, TMX/TBX/CSV exchange, and the project API."""
+human confirmation, termbase write-through, and the project API."""
 
 from __future__ import annotations
 
@@ -16,13 +16,14 @@ from google.adk.artifacts import InMemoryArtifactService
 from google.adk.models import LlmResponse
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
+from translator.api.routes.projects import router
 
-from translator import projects, segments
-from translator import state as st
-from translator.agents import pipeline
-from translator.filters import exchange
-from translator.project_routes import router
+from translator import projects
+from translator.agents import pipeline, steps, workers
+from translator.document import edits
+from translator.document import state as st
 from translator.projects import ProjectStore
+
 from .fakes import fake_ocr
 
 
@@ -153,9 +154,9 @@ def test_pipeline_reuses_exact_matches_and_shows_fuzzy_ones(store, monkeypatch):
         return _reply("\n".join(f'<seg id="{sid}">EN {src}</seg>' for sid, src in segs))
 
     fake_ocr(monkeypatch, PAGE)
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    monkeypatch.setattr(pipeline.translator, "before_model_callback", fake_translate)
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
+    monkeypatch.setattr(workers.translator, "before_model_callback", fake_translate)
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
 
     async def main():
         sessions, artifacts = InMemorySessionService(), InMemoryArtifactService()
@@ -185,7 +186,7 @@ def test_pipeline_reuses_exact_matches_and_shows_fuzzy_ones(store, monkeypatch):
         assert s.state["doc:tm_stats"] == {"context": 1, "exact": 1, "fuzzy": 1, "words": 11}
         # With auto-confirm off, the 101% match is reused but left for a person to confirm.
         store.update_project(pid, auto_confirm_context=False)
-        delta, _, _ = pipeline._tm_pass(s.state, [{**segs[k], "target": None, "status": "new", "origin": None} for k in ("p1.1", "p1.2")])
+        delta, _, _ = steps.translate._tm_pass(s.state, [{**segs[k], "target": None, "status": "new", "origin": None} for k in ("p1.1", "p1.2")])
         assert delta[st.seg_key("p1.2")]["status"] == "draft" and delta[st.seg_key("p1.2")]["match"] == 101
         store.update_project(pid, auto_confirm_context=True)
         # Project style guide and only the relevant terms, with the forbidden variant.
@@ -194,7 +195,7 @@ def test_pipeline_reuses_exact_matches_and_shows_fuzzy_ones(store, monkeypatch):
         assert "Schaltschrank" not in prompt
 
         # A person confirms p1.4 → it is written to the TM with its context; the next lookup is 101%.
-        await segments.edit_segment(sessions, s, "p1.4", target="A follow-up inspection takes place on 12.05.", confirm=True)
+        await edits.edit_segment(sessions, s, "p1.4", target="A follow-up inspection takes place on 12.05.", confirm=True)
         [m] = store.lookup(pid, segs["p1.4"]["source"], segs["p1.3"]["source"], limit=1)
         assert (m["score"], m["target"]) == (101, "A follow-up inspection takes place on 12.05.")
         # Unconfirmed drafts never reach the TM.
@@ -217,92 +218,6 @@ def test_no_project_means_no_project_prompt_sections(store):
 # --------------------------------------------------------------------------- #
 
 
-def test_tmx_export_is_plain_text_and_plain_units_keep_heading_markup():
-    from translator.text import plain, with_markup_of
-
-    data = exchange.tmx_export([{"source": "## 3. Ergebnis", "target": "## 3. Result"},
-                                {"source": "Die **Anlage** ist abgenommen.", "target": "The **plant** is accepted."}], "de", "en")
-    units, _ = exchange.tmx_import(data, "de", "en")
-    assert [(u["source"], u["target"]) for u in units] == [("3. Ergebnis", "3. Result"), ("Die Anlage ist abgenommen.", "The plant is accepted.")]
-    assert plain("- eins\n- zwei") == "eins\nzwei" and plain("2 * 3 * 4") == "2 * 3 * 4"
-    assert with_markup_of("## 3. Ergebnis", "3. Result") == "## 3. Result"
-    assert with_markup_of("Ergebnis", "Result") == "Result" and with_markup_of("# A", "# B") == "# B"
-
-
-def test_tmx_round_trip_with_region_codes_and_inline_markup():
-    units = [{"source": "Die Anlage <ist> abgenommen & frei.", "target": "The plant is accepted & released.", "origin": "a.pdf#p1.2"}]
-    data = exchange.tmx_export(units, "de", "en")
-    back, warnings = exchange.tmx_import(data, "de", "en")
-    assert back == units and warnings == []
-
-    trados = b"""<?xml version="1.0"?><tmx version="1.4"><header srclang="de-DE"/><body>
-      <tu><tuv xml:lang="de-DE"><seg>Druck <bpt i="1">&lt;b&gt;</bpt>10 bar<ept i="1">&lt;/b&gt;</ept> pr\xc3\xbcfen</seg></tuv>
-          <tuv xml:lang="en-GB"><seg>Check pressure <bpt i="1">&lt;b&gt;</bpt>10 bar<ept i="1">&lt;/b&gt;</ept></seg></tuv></tu>
-      <tu><tuv xml:lang="fr-FR"><seg>Bonjour</seg></tuv><tuv xml:lang="en-GB"><seg>Hello</seg></tuv></tu>
-    </body></tmx>"""
-    back, warnings = exchange.tmx_import(trados, "de", "en")
-    assert back == [{"source": "Druck 10 bar prüfen", "target": "Check pressure 10 bar", "origin": "tmx import"}]
-    assert warnings == ["1 unit(s) skipped: missing de or en"]
-
-
-def test_xml_imports_do_not_expand_entities():
-    xxe = b"""<?xml version="1.0"?><!DOCTYPE tmx [<!ENTITY x SYSTEM "file:///etc/passwd">]>
-    <tmx version="1.4"><body><tu><tuv xml:lang="de"><seg>&x;</seg></tuv><tuv xml:lang="en"><seg>ok</seg></tuv></tu></body></tmx>"""
-    units, warnings = exchange.tmx_import(xxe, "de", "en")
-    assert units == [] and warnings  # nothing read from the file system
-    bomb = b"""<?xml version="1.0"?><!DOCTYPE martif [<!ENTITY a "aaaaaaaaaa"><!ENTITY b "&a;&a;&a;&a;&a;&a;&a;&a;&a;&a;">]>
-    <martif><text><body><termEntry><langSet xml:lang="de"><tig><term>&b;</term></tig></langSet></termEntry></body></text></martif>"""
-    entries, _ = exchange.tbx_import(bomb, "de", "en")
-    assert all("aaaa" not in e["source"] for e in entries)
-
-
-def test_tbx_round_trip_keeps_forbidden_terms_and_notes():
-    terms = [{"source": "Kabelpritsche", "target": "cable tray", "note": "metal tray", "forbidden": ["cable bridge"]},
-             {"source": "Abnahme", "target": "", "note": "formal acceptance", "forbidden": []}]
-    data = exchange.tbx_export(terms, "de", "en")
-    assert b'xmlns="urn:iso:std:iso:30042:ed-2"' in data and b"deprecatedTerm-admn-sts" in data
-    back, warnings = exchange.tbx_import(data, "de-DE", "en-US")
-    assert back == terms and warnings == []
-
-
-def test_tbx_v2_martif_import():
-    data = """<?xml version="1.0" encoding="UTF-8"?>
-    <martif type="TBX" xml:lang="en"><text><body>
-      <termEntry id="1"><descrip type="definition">Netzstation</descrip>
-        <langSet xml:lang="de"><tig><term>Ortsnetzstation</term></tig></langSet>
-        <langSet xml:lang="en"><tig><term>secondary substation</term></tig>
-          <ntig><termGrp><term>local substation</term><termNote type="administrativeStatus">deprecatedTerm-admn-sts</termNote></termGrp></ntig>
-        </langSet></termEntry>
-      <termEntry id="2"><langSet xml:lang="fr"><tig><term>poste</term></tig></langSet></termEntry>
-    </body></text></martif>""".encode()
-    entries, _ = exchange.tbx_import(data, "de", "en")
-    assert entries == [{"source": "Ortsnetzstation", "target": "secondary substation", "note": "Netzstation",
-                        "forbidden": ["local substation"]}]
-
-
-@pytest.mark.parametrize("data, expected", [
-    ("Deutsch;English;Note\nKabelpritsche;cable tray;metal tray\n".encode(),
-     [{"source": "Kabelpritsche", "target": "cable tray", "note": "metal tray", "forbidden": []}]),
-    ("source,target,forbidden\nAbnahme,acceptance,approval|takeover\n".encode("cp1252"),
-     [{"source": "Abnahme", "target": "acceptance", "note": "", "forbidden": ["approval", "takeover"]}]),
-    ("﻿en\tde\ncable tray\tKabelpritsche\n".encode(),  # columns in the other order, named by code
-     [{"source": "Kabelpritsche", "target": "cable tray", "note": "", "forbidden": []}]),
-    ("Mängel,defects\nFrist,deadline\n".encode("cp1252"),  # no header row
-     [{"source": "Mängel", "target": "defects", "note": "", "forbidden": []},
-      {"source": "Frist", "target": "deadline", "note": "", "forbidden": []}]),
-])
-def test_csv_glossary_import(data, expected):
-    entries, _ = exchange.csv_import(data, "de", "en", "German", "English")
-    assert entries == expected
-
-
-def test_csv_export_opens_in_excel_and_reimports():
-    terms = [{"source": "Prüfung", "target": "test", "note": "", "forbidden": ["exam"]}]
-    data = exchange.csv_export(terms)
-    assert data.startswith("﻿".encode())
-    assert exchange.csv_import(data, "de", "en")[0] == terms
-
-
 # --------------------------------------------------------------------------- #
 # API
 # --------------------------------------------------------------------------- #
@@ -315,7 +230,7 @@ def client(store):
     return TestClient(app)
 
 
-def test_project_api_crud_import_export(client, store):
+def test_project_api_crud(client, store):
     p = client.post("/api/projects", json={"name": "Acme DE→EN", "source_lang": "German", "target_lang": "English"}).json()
     pid = p["id"]
     assert client.get("/api/projects").json()[0]["id"] == pid
@@ -327,34 +242,19 @@ def test_project_api_crud_import_export(client, store):
     assert client.patch(f"/api/projects/{pid}/terms/{t['id']}", json={"source": "Frist"}).status_code == 409  # duplicate
     assert client.patch(f"/api/projects/{pid}/terms/{t['id']}", json={"forbidden": ["approval"]}).json()["forbidden"] == ["approval"]
 
-    csv_data = "German;English\nAbnahme;acceptance\nMängel;defects\n".encode()
-    report = client.post(f"/api/projects/{pid}/import", files={"file": ("terms.csv", csv_data)}).json()
-    assert report == {"kind": "terms", "added": 1, "updated": 1, "warnings": []}
-    assert client.get(f"/api/projects/{pid}/terms").json()[0]["forbidden"] == ["approval"]  # merge kept it
-
-    tmx = exchange.tmx_export([{"source": "Satz eins.", "target": "Sentence one."}, {"source": "Satz zwei.", "target": "Sentence two."}], "de", "en")
-    report = client.post(f"/api/projects/{pid}/import", files={"file": ("memory.tmx", tmx)}).json()
-    assert (report["kind"], report["added"], report["updated"]) == ("tm", 2, 0)
+    client.post(f"/api/projects/{pid}/terms", json={"source": "Mängel", "target": "defects"})
+    assert client.get(f"/api/projects/{pid}/terms").json()[0]["forbidden"] == ["approval"]
+    units = [{"source": "Satz eins.", "target": "Sentence one."}, {"source": "Satz zwei.", "target": "Sentence two."},
+             {"source": " ", "target": "skipped: no source"}]
+    assert client.post(f"/api/projects/{pid}/tm", json=units).json() == {"added": 2, "updated": 0}
+    assert client.post(f"/api/projects/{pid}/tm", json=units[:1]).json() == {"added": 0, "updated": 1}
     tm = client.get(f"/api/projects/{pid}/tm", params={"q": "zwei"}).json()
     assert tm["total"] == 2 and [u["target"] for u in tm["units"]] == ["Sentence two."]
     client.delete(f"/api/projects/{pid}/tm/{tm['units'][0]['id']}")
     assert client.get(f"/api/projects/{pid}").json()["tm_units"] == 1
 
-    r = client.get(f"/api/projects/{pid}/export", params={"format": "tmx"})
-    assert r.status_code == 200 and "filename*=UTF-8''Acme%20DE_EN.de-en.tmx" in r.headers["content-disposition"]
-    assert exchange.tmx_import(r.content, "de", "en")[0][0]["target"] == "Sentence one."
-    r = client.get(f"/api/projects/{pid}/export", params={"format": "tbx"})
-    assert {e["source"] for e in exchange.tbx_import(r.content, "de", "en")[0]} == {"Abnahme", "Frist", "Mängel"}
-
-    assert client.post(f"/api/projects/{pid}/import", files={"file": ("x.tmx", b"<not xml")}).status_code == 400
-    assert client.post(f"/api/projects/{pid}/import", files={"file": ("x.docx", b"PK")}).status_code == 400
     assert client.delete(f"/api/projects/{pid}").json() == {"ok": True}
     assert client.get(f"/api/projects/{pid}").status_code == 404
-
-
-def test_exchange_needs_project_languages(client):
-    pid = client.post("/api/projects", json={"name": "No languages"}).json()["id"]
-    assert client.get(f"/api/projects/{pid}/export", params={"format": "tmx"}).status_code == 409
 
 
 def test_only_one_by_one_confirmation_fills_the_tm(store):
@@ -374,15 +274,15 @@ def test_only_one_by_one_confirmation_fills_the_tm(store):
         s = await sessions.create_session(app_name="t", user_id="u", state={
             "doc:status": "ready", "doc:seg_ids": list(segs), "doc:versions": [], "doc:project_id": pid,
             **{st.seg_key(k): v for k, v in segs.items()}})
-        assert await segments.confirm_segments(sessions, s) == ["p1.1", "p1.2"]  # only what the AI check passed
+        assert await edits.confirm_segments(sessions, s) == ["p1.1", "p1.2"]  # only what the AI check passed
         assert store.units(pid) == []  # bulk: not in the TM
         s = await sessions.get_session(app_name="t", user_id="u", session_id=s.id)
-        await segments.edit_segment(sessions, s, "p1.3", target="The third sentence.", confirm=True)
+        await edits.edit_segment(sessions, s, "p1.3", target="The third sentence.", confirm=True)
         assert store.lookup(pid, "Dritter Satz im Bericht.", "Zweiter Satz im Bericht.")[0]["score"] == 101
         assert [u["source"] for u in store.units(pid)] == ["Dritter Satz im Bericht."]
 
         store.delete_project(pid)
         s = await sessions.get_session(app_name="t", user_id="u", session_id=s.id)
-        await segments.edit_segment(sessions, s, "p1.3", target="The 3rd sentence.", confirm=True)  # no error
+        await edits.edit_segment(sessions, s, "p1.3", target="The 3rd sentence.", confirm=True)  # no error
 
     asyncio.run(main())

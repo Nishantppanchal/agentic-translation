@@ -2,12 +2,12 @@
 
 import { PanelRightOpen } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArtifactPanel, type Tab } from "@/components/ArtifactPanel";
-import { Chat } from "@/components/Chat";
-import { useProposalPick } from "@/components/proposalPick";
-import { ProjectCreate, ProjectView } from "@/components/ProjectView";
-import { Sidebar } from "@/components/Sidebar";
-import { UploadPanel } from "@/components/UploadPanel";
+import { ArtifactPanel, type Tab } from "@/components/document/ArtifactPanel";
+import { Chat } from "@/components/chat/Chat";
+import { useProposalPick } from "@/components/chat/proposalPick";
+import { ProjectCreate, ProjectView } from "@/components/projects/ProjectView";
+import { Sidebar } from "@/components/shell/Sidebar";
+import { UploadPanel } from "@/components/shell/UploadPanel";
 import { api, projectsApi, subscribe } from "@/lib/api";
 import type { Answer, Progress, Project, QaIssue, SessionDetail, SessionSummary, StreamEvent, TimelineItem } from "@/lib/types";
 

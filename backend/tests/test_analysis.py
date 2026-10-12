@@ -18,12 +18,14 @@ from google.adk.models import LlmResponse
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from translator import projects, qa
-from translator import state as st
-from translator.agents import pipeline
-from translator.agents.ops import consistency_fixer
-from translator.formats import parse_terms
-from translator.timeline import pending_interrupt
+from translator import projects
+from translator.agents import pipeline, steps, workers
+from translator.agents.workers import consistency_fixer
+from translator.api.timeline import pending_interrupt
+from translator.document import state as st
+from translator.models.replies import parse_terms
+from translator.quality import qa
+
 from .fakes import fake_ocr
 
 APP = "translator"
@@ -94,11 +96,11 @@ def calls(monkeypatch) -> Calls:
         return _reply("\n".join(out))
 
     fake_ocr(monkeypatch, ocr)
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", check)
-    monkeypatch.setattr(pipeline.analyst, "before_model_callback", analyse)
-    monkeypatch.setattr(pipeline.translator, "before_model_callback", translate)
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
-    monkeypatch.setattr(pipeline.refiner, "before_model_callback", lambda *_: _reply(""))
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", check)
+    monkeypatch.setattr(workers.analyst, "before_model_callback", analyse)
+    monkeypatch.setattr(workers.translator, "before_model_callback", translate)
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
+    monkeypatch.setattr(workers.refiner, "before_model_callback", lambda *_: _reply(""))
     return c
 
 
@@ -148,7 +150,7 @@ def test_analysis_asks_before_translating_and_answers_shape_the_first_draft(call
         assert s.state["doc:termbase"] == {"Abnahmeprotokoll": "Acceptance report"}  # the clear term is fixed
         assert [k["term"] for k in s.state["doc:key_terms"]] == ["Abnahmeprotokoll", "Kabelpritsche"]
         interrupt = pending_interrupt(s.events)
-        assert interrupt == pipeline.ASK_INTERRUPT and interrupt == next(
+        assert interrupt == steps.analyse.ASK_INTERRUPT and interrupt == next(
             fc.id for ev in events for fc in ev.get_function_calls() if fc.name == "adk_request_input")
 
         # The person picks another option: the first draft uses it — no re-translation pass.
@@ -199,13 +201,13 @@ def test_analysis_off_goes_straight_to_translation(calls):
 
 @pytest.mark.analysis
 def test_a_failed_analysis_is_shown_and_translation_goes_on(calls, monkeypatch):
-    from translator.llm import EndpointError
+    from translator.models.llm import EndpointError
 
     def too_long(*_):
         raise EndpointError("translate model Qwen/Qwen3-32B at http://gpu:8100/v1: HTTP 400 ContextWindowExceededError: "
                             "This model's maximum context length is 32768 tokens.")
 
-    monkeypatch.setattr(pipeline.analyst, "before_model_callback", too_long)
+    monkeypatch.setattr(workers.analyst, "before_model_callback", too_long)
 
     async def main():
         sessions, _, runner, session = await _setup(_pdf("Abnahmeprotokoll", "Ergebnis"))
@@ -219,20 +221,20 @@ def test_a_failed_analysis_is_shown_and_translation_goes_on(calls, monkeypatch):
 
 
 def test_a_failed_run_reports_the_servers_error(calls, monkeypatch):
-    from translator.llm import EndpointError, error_text
+    from translator.models.llm import EndpointError, error_text
 
     message = "translate model Qwen/Qwen3-32B at http://gpu:8100/v1: InternalServerError: Cannot connect to host gpu:8100"
 
     def down(*_):
         raise EndpointError(message)
 
-    monkeypatch.setattr(pipeline.translator, "before_model_callback", down)
+    monkeypatch.setattr(workers.translator, "before_model_callback", down)
 
     async def main():
         _, _, runner, session = await _setup(_pdf("Abnahmeprotokoll", "Ergebnis"))
         with pytest.raises(Exception) as err:
             await _run(runner, session.id, types.Content(role="user", parts=[types.Part(text="Translate")]))
-        assert error_text(err.value) == message  # what the app shows (runs.py): the server's error as is
+        assert error_text(err.value) == message  # what the app shows (api/runs.py): the server's error as is
 
     asyncio.run(main())
 
@@ -254,15 +256,15 @@ def test_ocr_check_is_skipped_only_when_the_text_layer_says_the_same(calls):
 def test_layer_agreement_ignores_layout_but_not_words():
     md = "# Prüfbericht\n\n| Nr. | Frist |\n|---|---|\n| 1 | 30.04.2026 |\n\nDie Mängel sind zu besei-\ntigen."
     layer = "Prüfbericht\nNr.\nFrist\n1\n30.04.2026\nDie Mängel sind zu besei-\ntigen."
-    assert pipeline.layer_agreement(md, layer) == 100
-    assert pipeline.layer_agreement(md, layer.replace("30.04", "30.07")) < 100
-    assert pipeline.layer_agreement(md, layer.replace("Mängel", "Mangel")) < 100
-    assert pipeline.layer_agreement("ﬁnal", "final") == 100  # ligature in the text layer
-    assert pipeline.layer_agreement(md, "") == 0
+    assert steps.read.layer_agreement(md, layer) == 100
+    assert steps.read.layer_agreement(md, layer.replace("30.04", "30.07")) < 100
+    assert steps.read.layer_agreement(md, layer.replace("Mängel", "Mangel")) < 100
+    assert steps.read.layer_agreement("ﬁnal", "final") == 100  # ligature in the text layer
+    assert steps.read.layer_agreement(md, "") == 0
     # Numbered headings are content on both sides; a hyphen between letters may be a line-end break.
-    assert pipeline.layer_agreement("## 1. Gegenstand\n\nDie USV-Anlage", "1. Gegenstand\nDie USV-\nAnlage") == 100
-    assert pipeline.layer_agreement("## 1. Gegenstand", "Gegenstand") < 100
-    assert pipeline.layer_agreement("Temperatur −20 °C", "Temperatur 20 °C") < 100  # a minus sign still counts
+    assert steps.read.layer_agreement("## 1. Gegenstand\n\nDie USV-Anlage", "1. Gegenstand\nDie USV-\nAnlage") == 100
+    assert steps.read.layer_agreement("## 1. Gegenstand", "Gegenstand") < 100
+    assert steps.read.layer_agreement("Temperatur −20 °C", "Temperatur 20 °C") < 100  # a minus sign still counts
 
 
 def test_retry_reuses_ocr_of_pages_already_read(calls):
@@ -298,7 +300,7 @@ def test_polish_unifies_repeated_sentences_before_handing_over(calls, monkeypatc
         ids = re.findall(r'<pair id="([^"]+)">', _prompt(llm_request))
         return _reply("\n".join(f'<seg id="{i}">The defects must be remedied.</seg>' for i in ids))
 
-    monkeypatch.setattr(pipeline.translator, "before_model_callback", translate)
+    monkeypatch.setattr(workers.translator, "before_model_callback", translate)
     monkeypatch.setattr(consistency_fixer, "before_model_callback", fix)
     same = "Die Mängel sind zu beseitigen."
     fake_ocr(monkeypatch, lambda page: f"# Titel {page.number}\n\n{same}")
@@ -350,7 +352,7 @@ def test_pending_interrupt_matches_calls_and_answers_by_count():
 
 @pytest.mark.analysis
 def test_reviewer_does_not_re_ask_decided_terms(calls, monkeypatch):
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda *_: _reply(
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", lambda *_: _reply(
         '<term source="Abnahmeprotokoll" guess="acceptance certificate" segs="p1.1">record or certificate?</term>\n'
         '<term source="Kabelpritsche" guess="cable tray" segs="p1.2">answered already</term>\n'
         '<term source="geerdet" guess="bonded to earth" alt="earthed" segs="p1.2">earthed or bonded?</term>'))
@@ -371,9 +373,9 @@ def test_reviewer_does_not_re_ask_decided_terms(calls, monkeypatch):
 
 def test_reviewer_questions_that_only_confirm_are_dropped():
     batch = [{"id": "p1.2", "target": "The <g id=\"1\">main earthing grid</g> was tested."}]
-    assert pipeline._already_used({"guess": "main earthing grid", "segment_ids": ["p1.2"]}, batch)
-    assert not pipeline._already_used({"guess": "contact resistance", "segment_ids": ["p1.2"]}, batch)
-    assert not pipeline._already_used({"guess": "", "segment_ids": ["p1.2"]}, batch)
+    assert steps.review.already_used({"guess": "main earthing grid", "segment_ids": ["p1.2"]}, batch)
+    assert not steps.review.already_used({"guess": "contact resistance", "segment_ids": ["p1.2"]}, batch)
+    assert not steps.review.already_used({"guess": "", "segment_ids": ["p1.2"]}, batch)
 
 
 
@@ -412,8 +414,8 @@ def test_tm_exact_matches_are_only_refined_for_major_issues():
     segs = [{"id": "p1.1", "origin": "tm_exact"}, {"id": "p1.2", "origin": "mt"}]
     issues = [{"segment_id": "p1.1", "severity": "minor"}, {"segment_id": "p1.1", "severity": "major"},
               {"segment_id": "p1.2", "severity": "minor"}]
-    assert pipeline.issues_to_fix(issues, segs, 1) == issues[1:]
-    assert pipeline.issues_to_fix(issues, segs, 2) == [issues[1]]
+    assert steps.review.issues_to_fix(issues, segs, 1) == issues[1:]
+    assert steps.review.issues_to_fix(issues, segs, 2) == [issues[1]]
 
 
 
@@ -421,11 +423,11 @@ def test_tm_exact_matches_are_only_refined_for_major_issues():
 def test_reviewer_questions_the_refiner_already_applied_are_closed(calls, monkeypatch):
     """The reviewer asks "use 'bonded to earth'?" and reports the issue; the refiner applies it. By the end the
     question asks nothing any more: it is closed instead of shown to the person."""
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda cc, req: _reply(
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", lambda cc, req: _reply(
         '<issue seg="p1.2" severity="minor" category="terminology">earthed → bonded to earth</issue>\n'
         '<term source="geerdet" guess="bonded to earth" alt="earthed" segs="p1.2">earthed or bonded?</term>'
         if "not earthed" in _prompt(req) else "<none/>"))
-    monkeypatch.setattr(pipeline.refiner, "before_model_callback",
+    monkeypatch.setattr(workers.refiner, "before_model_callback",
                         lambda *_: _reply('<seg id="p1.2">The cable tray is not bonded to earth.</seg>'))
 
     async def main():
@@ -446,8 +448,8 @@ def test_reviewer_questions_the_refiner_already_applied_are_closed(calls, monkey
 
 @pytest.mark.analysis
 def test_questions_carry_the_dictionarys_entries(calls, monkeypatch):
-    from translator import dictionary
     from translator.config import get_settings
+    from translator.integrations import dictionary
 
     monkeypatch.setattr(get_settings(), "dictionary_url", "http://dictionary.test/lookup")
     asked: list[tuple] = []

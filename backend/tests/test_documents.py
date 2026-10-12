@@ -1,6 +1,6 @@
 """Segmentation across page breaks."""
 
-from translator.documents import segments_from_pages
+from translator.document.pages import segments_from_pages
 
 
 def _segs(*pages: str) -> list[dict]:

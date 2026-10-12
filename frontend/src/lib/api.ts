@@ -2,9 +2,6 @@ import type {
   Answer,
   AppConfig,
   ExportFormat,
-  ImportReport,
-  LayoutReport,
-  OfficeLayout,
   Project,
   QaReport,
   ReplaceMatch,
@@ -20,7 +17,6 @@ import type {
   TmMatch,
   TmUnit,
   Usage,
-  XliffImportReport,
 } from "./types";
 
 export const API_URL = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
@@ -134,12 +130,6 @@ export const api = {
       json<{ changed: string[]; version: number | null; locked: number }>(r),
     ),
 
-  importXliff: (id: string, file: File) => {
-    const form = new FormData();
-    form.append("file", file);
-    return fetch(`${API_URL}/api/sessions/${id}/import/xliff`, { method: "POST", body: form }).then((r) => json<XliffImportReport>(r));
-  },
-
   runLqa: (id: string) => fetch(`${API_URL}/api/sessions/${id}/lqa`, send("POST")).then((r) => json<{ ok: boolean; model: string }>(r)),
 
   saveVersion: (id: string) =>
@@ -186,21 +176,11 @@ export const api = {
 
   figureUrl: (id: string, name: string) => `${API_URL}/api/sessions/${id}/figures/${name}`,
 
-  exportUrl: (id: string, version?: number, field: "target" | "source" = "target", format = "md") =>
+  exportUrl: (id: string, version?: number, field: "target" | "source" = "target", format: ExportFormat["id"] = "md") =>
     `${API_URL}/api/sessions/${id}/export?format=${format}&field=${field}${version ? `&version=${version}` : ""}`,
 
   exportFormats: (id: string) =>
     fetch(`${API_URL}/api/sessions/${id}/export/formats`).then((r) => json<ExportFormat[]>(r)),
-
-  officeLayout: (id: string) => fetch(`${API_URL}/api/sessions/${id}/preview/office`).then((r) => json<OfficeLayout>(r)),
-
-  previewReport: (id: string, version?: number) =>
-    fetch(`${API_URL}/api/sessions/${id}/preview/report${version ? `?version=${version}` : ""}`).then((r) =>
-      json<LayoutReport>(r),
-    ),
-
-  previewPageUrl: (id: string, page: number, version?: number) =>
-    `${API_URL}/api/sessions/${id}/preview/pages/${page}${version ? `?version=${version}` : ""}`,
 };
 
 type ProjectFields = Partial<Pick<Project, "name" | "source_lang" | "instructions" | "auto_confirm_context" | "lqa_threshold">>;
@@ -228,13 +208,6 @@ export const projectsApi = {
     ),
   deleteUnit: (pid: string, unitId: number) =>
     fetch(`${API_URL}/api/projects/${pid}/tm/${unitId}`, send("DELETE")).then((r) => json<{ ok: boolean }>(r)),
-
-  importFile: (pid: string, file: File) => {
-    const form = new FormData();
-    form.append("file", file);
-    return fetch(`${API_URL}/api/projects/${pid}/import`, { method: "POST", body: form }).then((r) => json<ImportReport>(r));
-  },
-  exportUrl: (pid: string, format: "tmx" | "tbx" | "csv") => `${API_URL}/api/projects/${pid}/export?format=${format}`,
 };
 
 /**

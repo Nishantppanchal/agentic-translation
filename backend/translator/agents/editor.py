@@ -13,10 +13,11 @@ from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.genai import types
 
-from .. import projects, prompts
-from .. import state as st
-from ..config import get_settings
-from ..llm import build_model
+from .. import projects
+from ..document import state as st
+from ..models.config import step_model
+from ..models.llm import build_model
+from . import prompts
 from .editor_tools import EDITOR_TOOLS
 
 EDITOR_NAME = "editor"
@@ -112,5 +113,5 @@ editor_agent = LlmAgent(
     tools=EDITOR_TOOLS,
     include_contents="none",
     after_agent_callback=note_proposal_request,
-    generate_content_config=types.GenerateContentConfig(temperature=get_settings().temperature),
+    generate_content_config=types.GenerateContentConfig(temperature=step_model("editor").temperature),
 )

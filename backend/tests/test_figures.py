@@ -14,10 +14,10 @@ from google.adk.artifacts import InMemoryArtifactService
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from translator import state as st
-from translator.agents import pipeline
+from translator.agents import pipeline, workers
 from translator.config import get_settings
-from translator.documents import assemble_markdown, load_pages, place_figure_marker
+from translator.document import state as st
+from translator.document.pages import assemble_markdown, load_pages, place_figure_marker
 
 from .fakes import fake_ocr
 from .test_flow import _reply, fake_review, fake_translate
@@ -53,7 +53,7 @@ def _pdf(scanned: bool = False) -> bytes:
 def fake_models(monkeypatch):
     # The reading: the paragraph, the picture (with the text inside it) and the next paragraph.
     fake_ocr(monkeypatch, f"{INTRO}\n\n[[FIGURE 1]]\n\n{OUTRO}", legends={1: "Schaltschrank"})
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
 
     def translate_no_terms(callback_context, llm_request):
         out = fake_translate(callback_context, llm_request).content.parts[0].text
@@ -63,8 +63,8 @@ def fake_models(monkeypatch):
         out = out.replace("Die Abnahme erfolgt nach Abschluss aller Restarbeiten an der Anlage.", "Acceptance follows completion of all remaining work on the plant.")
         return _reply(out.replace("Schaltschrank", "control cabinet"))
 
-    monkeypatch.setattr(pipeline.translator, "before_model_callback", translate_no_terms)
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", fake_review)
+    monkeypatch.setattr(workers.translator, "before_model_callback", translate_no_terms)
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", fake_review)
 
 
 def test_pdf_embedded_image_is_detected_exactly():
@@ -94,7 +94,7 @@ async def _run(pdf: bytes):
 @pytest.mark.parametrize("scanned", [False, True])
 def test_figures_are_kept_in_place_with_translated_legend(scanned, monkeypatch):
     if scanned:  # no embedded picture on a scan: PP-DocLayoutV3 finds it (the diagram at 150–450 × 150–350 pt)
-        from translator import layout
+        from translator.ocr import layout
 
         async def boxes(png, tool_context=None):
             return [tuple(v * 150 / 72 for v in (150, 150, 450, 350))]

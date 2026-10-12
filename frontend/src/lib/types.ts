@@ -33,10 +33,8 @@ export interface SessionSummary {
   format?: DocFormat | null;
 }
 
-/** How the document was read: OCR (pdf, image), plain text, or directly from the file with inline codes. */
-export type DocFormat = "pdf" | "image" | "text" | "docx" | "pptx" | "xlsx" | "xliff";
-export const DIRECT_FORMATS: DocFormat[] = ["docx", "pptx", "xlsx", "xliff"];
-export const UNIT_LABEL: Partial<Record<DocFormat, string>> = { docx: "Part", pptx: "Slide", xlsx: "Sheet", xliff: "File" };
+/** How the document was read: OCR (pdf, image) or as plain text / Markdown. */
+export type DocFormat = "pdf" | "image" | "text";
 
 export interface Project {
   id: string;
@@ -78,13 +76,6 @@ export interface TmMatch {
   origin: string;
 }
 
-export interface ImportReport {
-  kind: "tm" | "terms";
-  added: number;
-  updated: number;
-  warnings: string[];
-}
-
 export interface TmStats {
   context: number;
   exact: number;
@@ -122,8 +113,6 @@ export interface Segment {
   id: string;
   page: number;
   kind: "heading" | "paragraph" | "list" | "table" | "code" | "figure" | "header" | "footer";
-  where?: string; // Office/XLIFF: "Table 2", "Slide 3 · Title", "Prices!B4"
-  codes?: Record<string, string>; // inline code id → what it is ("bold", "link", "tab", "field"…)
   source: string;
   target: string | null;
   translatable: boolean;
@@ -134,7 +123,7 @@ export interface Segment {
   status: SegmentStatus;
   ai_check?: "passed" | "issues" | null; // the AI reviewer's verdict — not a human status
   locked: boolean;
-  origin: "mt" | "agent" | "human" | "copy" | "tm_exact" | "tm_fuzzy" | "xliff" | null;
+  origin: "mt" | "agent" | "human" | "copy" | "tm_exact" | "tm_fuzzy" | null;
   match?: number | null; // translation-memory match % the segment started from
   qe?: number | null; // AI quality estimate 0-100 from the last review or LQA of this text
   updated_at: number | null;
@@ -294,7 +283,6 @@ export interface ProposalChange {
   before: string;
   after: string;
   alternatives?: { text: string; note: string }[]; // pick one when accepting (default: the first)
-  status?: SegmentStatus; // XLIFF imports carry the other tool's status
 }
 
 export interface SegmentComment {
@@ -377,30 +365,12 @@ export type StreamEvent =
   | { type: "error"; message: string };
 
 export interface ExportFormat {
-  id: "original" | "pdf" | "docx" | "html" | "md" | "bilingual" | "xliff" | "xliff12";
+  id: "docx" | "md";
   label: string;
   group: string;
   ext: string;
   available: boolean;
-  note?: string; // e.g. "2 tracked changes accepted"
-}
-
-export type LayoutStatus = "fit" | "shrunk" | "overflow" | "unaligned";
-
-export interface LayoutBox {
-  page: number;
-  rect: [number, number, number, number];
-  width: number;
-  height: number;
-  status: LayoutStatus;
-}
-
-export interface LayoutReport {
-  version: number;
-  pages: number;
-  summary: Record<LayoutStatus, number> & { by_position?: number };
-  // matched "position": placed between its aligned neighbours (OCR couldn't read the line well)
-  segments: Record<string, { status: LayoutStatus; scale: number | null; boxes: LayoutBox[]; matched?: "position" }>;
+  note?: string; // a caveat shown under the format
 }
 
 export interface AppConfig {
@@ -409,65 +379,3 @@ export interface AppConfig {
   target_lang: string; // always English
   dictionary?: boolean; // a dictionary service is set up (DICTIONARY_URL)
 }
-
-export interface XliffImportReport {
-  changes: number;
-  unchanged: number;
-  unknown: string[];
-  source_changed: string[];
-  locked: string[];
-  kept_confirmed: string[];
-  codes: string[];
-}
-
-/** An Excel or PowerPoint file as laid out (`/preview/office`): text linked to segments by id. */
-export interface SheetCell {
-  r: number;
-  c: number;
-  ref: string;
-  kind: "text" | "number" | "date" | "bool";
-  value: string;
-  seg?: string | null;
-  formula?: string;
-  bold?: boolean;
-  fill?: string;
-  align?: "left" | "center" | "right";
-  wrap?: boolean;
-}
-
-export interface SheetData {
-  name: string;
-  rows: number;
-  cols: number;
-  cells: SheetCell[];
-  widths: Record<string, number>; // column number → px
-  merged: [number, number, number, number][]; // [r1, c1, r2, c2]
-  truncated: boolean;
-}
-
-export interface SlideParagraph {
-  seg: string | null;
-  text: string;
-  level: number;
-  bold: boolean;
-  size: number | null; // pt
-  align: "left" | "center" | "right" | null;
-}
-
-export interface SlideShape {
-  x: number; // fractions of the slide
-  y: number;
-  w: number;
-  h: number;
-  placeholder: string | null;
-  fill: string | null;
-  kind: "text" | "table" | "picture";
-  paragraphs?: SlideParagraph[];
-  bullets?: boolean;
-  rows?: SlideParagraph[][][];
-  image?: string;
-}
-
-export type OfficeLayout =
-  | { format: "xlsx"; sheets: SheetData[] }
-  | { format: "pptx"; width_pt: number; height_pt: number; slides: { number: number; shapes: SlideShape[]; notes: SlideParagraph[] }[] };

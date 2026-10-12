@@ -6,20 +6,28 @@ import pytest
 # keys and headers stay out of every test). LiteLLM would otherwise load .env itself on import.
 os.environ["TRANSLATOR_ENV_FILE"] = ""
 os.environ["LITELLM_MODE"] = "PRODUCTION"
+# Models: tests/config, where every step's model is a port nothing listens on — never a developer's models.yaml.
+os.environ["MODELS_FILE"] = os.path.join(os.path.dirname(__file__), "config", "models.yaml")
+os.environ["PIPELINE_FILE"] = os.path.join(os.path.dirname(__file__), "config", "pipeline.yaml")
 
-from translator import layout, projects, structured  # noqa: E402
-from translator.agents import pipeline  # noqa: E402
+from translator import projects
+from translator.agents import workers
 from translator.agents.editor import editor_agent  # noqa: E402
-from translator.agents.lqa import lqa_reviewer  # noqa: E402
-from translator.agents.ops import consistency_fixer, rewriter  # noqa: E402
+from translator.agents.workers import (  # noqa: E402
+    consistency_fixer,
+    lqa_reviewer,  # noqa: E402
+    rewriter,
+)
+from translator.models import structured  # noqa: E402
+from translator.ocr import layout
 
 WORKERS = [
-    pipeline.analyst,
-    pipeline.ocr_reader,
-    pipeline.ocr_checker,
-    pipeline.translator,
-    pipeline.reviewer,
-    pipeline.refiner,
+    workers.analyst,
+    workers.ocr_reader,
+    workers.ocr_checker,
+    workers.translator,
+    workers.reviewer,
+    workers.refiner,
     editor_agent,
     lqa_reviewer,
     rewriter,
@@ -29,8 +37,8 @@ WORKERS = [
 
 @pytest.fixture(autouse=True)
 def no_real_models(monkeypatch):
-    """Every agent fails loudly unless the test fakes it, and provider keys and endpoint headers are removed,
-    so a test can never make a real (billed) model call."""
+    """Every agent fails loudly unless the test fakes it, and provider keys and headers are removed from the
+    environment, so a test can never make a real (billed) model call."""
     for key in list(os.environ):
         if key.endswith(("_API_KEY", "_HEADERS")):
             monkeypatch.delenv(key)
@@ -48,10 +56,10 @@ def no_real_models(monkeypatch):
 @pytest.fixture(autouse=True)
 def source_check_off_by_default(request, monkeypatch):
     """PDFs and images pause for the source check after reading: tests opt in with the `source_check` marker."""
-    from translator import source_review
+    from translator.document import source_check
 
     if "source_check" not in request.keywords:
-        monkeypatch.setattr(source_review, "needs_check", lambda state: False)
+        monkeypatch.setattr(source_check, "needs_check", lambda state: False)
 
 
 @pytest.fixture(autouse=True)
@@ -66,7 +74,7 @@ def isolated_project_store():
 def tag_format_by_default(request, monkeypatch):
     """Fakes reply in the tag format unless a test opts into structured (JSON) output; never probe models."""
     if "structured" not in request.keywords:
-        monkeypatch.setattr(structured, "enabled", lambda role: False)
+        monkeypatch.setattr(structured, "enabled", lambda step: False)
 
 
 @pytest.fixture(autouse=True)

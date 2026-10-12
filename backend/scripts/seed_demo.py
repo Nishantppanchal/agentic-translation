@@ -11,6 +11,8 @@ See "Demo" in the README and docs/TESTING.md for what to try.
 from __future__ import annotations
 
 import argparse
+import csv
+import json
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -28,7 +30,8 @@ class Project:
     name: str
     source_lang: str
     style_guide: str
-    imports: list[Path]
+    termbase: Path  # CSV: source;English;Note;Forbidden (variants separated by |)
+    memory: Path  # JSON: [{source, target, origin}]
     uploads: list[Path]
     notes: list[tuple[Path, str]]
 
@@ -44,14 +47,13 @@ Keep document and item codes unchanged (UW-2291, BA-17, LV position 4.2.7, DIN V
 Always follow the termbase; never use its forbidden variants.
 British spelling (earthing, organisation, metre). Dates as 31 May 2026. Decimal point (0.08 Ω).
 """,
-        imports=[DEMO / "termbase.csv", DEMO / "memory.tmx"],
-        uploads=[SAMPLES / "nachbegehung.pdf", SAMPLES / "pruefbericht.docx"],
+        termbase=DEMO / "termbase.csv",
+        memory=DEMO / "memory.json",
+        uploads=[SAMPLES / "nachbegehung.pdf"],
         notes=[
             (SAMPLES / "nachbegehung.pdf", "repeats abnahmeprotokoll.pdf → translation-memory matches"),
-            (SAMPLES / "pruefbericht.docx", "Word round trip; then import the vendor file below"),
-            (DEMO / "pruefbericht.vendor.en.xlf", 'a "vendor" translation with planted errors'),
             (SAMPLES / "vertragsauszug.pdf", "AG/AN defined only on page 2, legal terms → questions up front"),
-            (SAMPLES / "abnahmeprotokoll-scanned.pdf", "a scan → layout-preserving PDF (needs the layout server)"),
+            (SAMPLES / "review" / "pruefvermerk-zweispaltig-scanned.pdf", "two columns and a stamp → fix the OCR in the source check"),
         ],
     ),
     Project(
@@ -65,15 +67,12 @@ Always follow the termbase; never use its forbidden variants. Contract parties a
 "the Contractor" — never "Party A" / "Party B".
 British spelling (earthing, organisation, metre). Dates as 20 May 2026. Amounts as CNY 12,500.00.
 """,
-        imports=[DEMO / "zh" / "termbase.csv", DEMO / "zh" / "memory.tmx"],
-        uploads=[SAMPLES / "fucha-baogao.pdf", SAMPLES / "jiance-baogao.docx"],
+        termbase=DEMO / "zh" / "termbase.csv",
+        memory=DEMO / "zh" / "memory.json",
+        uploads=[SAMPLES / "fucha-baogao.pdf"],
         notes=[
             (SAMPLES / "fucha-baogao.pdf", "repeats yanshou-baogao.pdf → TM matches; 三措一案 defined on page 2"),
-            (SAMPLES / "jiance-baogao.docx", "Word round trip with tracked changes; then import the vendor file below"),
-            (DEMO / "zh" / "jiance-baogao.vendor.en.xlf", 'a "vendor" translation with planted errors'),
-            (SAMPLES / "anquan-peixun.pptx", "五防 / 两票三制 used on slide 1, explained later → questions"),
-            (SAMPLES / "quexian-qingdan.xlsx", "status texts used inside COUNTIF formulas"),
-            (SAMPLES / "fucha-baogao-scanned.pdf", "a Chinese scan → layout-preserving PDF (needs the layout server)"),
+            (SAMPLES / "review" / "jianli-tongzhi-shuanglan-scanned.pdf", "two columns and a seal → fix the OCR in the source check"),
         ],
     ),
 ]
@@ -93,16 +92,15 @@ def seed(api: httpx.Client, p: Project, reset: bool, upload: bool) -> None:
         print(f"Created the project “{p.name}”: {p.source_lang} → English.")
 
     pid = project["id"]
-    for path in p.imports:
-        if not path.exists():
-            print(f"  ! {path.relative_to(ROOT)} is missing (run scripts/make_samples.py)")
-            continue
-        with path.open("rb") as f:
-            r = api.post(f"/api/projects/{pid}/import", files={"file": (path.name, f)})
-        r.raise_for_status()
-        rep = r.json()
-        what = "terms" if rep["kind"] == "terms" else "translation-memory units"
-        print(f"  {path.name}: {rep['added']} {what} added, {rep['updated']} updated" + "".join(f"\n    ! {w}" for w in rep["warnings"]))
+    with p.termbase.open(encoding="utf-8") as f:
+        rows = list(csv.reader(f, delimiter=";"))[1:]
+    for source, target, note, forbidden in (r + [""] * (4 - len(r)) for r in rows if r and r[0].strip()):
+        api.post(f"/api/projects/{pid}/terms", json={"source": source, "target": target, "note": note,
+                                                     "forbidden": [x for x in forbidden.split("|") if x]}).raise_for_status()
+    print(f"  {p.termbase.name}: {len(rows)} terms")
+    units = json.loads(p.memory.read_text(encoding="utf-8"))
+    rep = api.post(f"/api/projects/{pid}/tm", json=units).json()
+    print(f"  {p.memory.name}: {rep['added']} translation-memory units added, {rep['updated']} updated")
 
     if upload:
         for path in p.uploads:

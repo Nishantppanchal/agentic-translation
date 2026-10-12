@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from translator import layout
 from translator.config import get_settings
+from translator.ocr import layout
 
 
 def test_the_model_folder_is_passed_to_the_layout_server_as_an_absolute_path(monkeypatch, tmp_path):

@@ -21,7 +21,7 @@ def _prompt(llm_request) -> str:
 def fake_ocr(monkeypatch, read: str | Callable | Iterator, legends: dict[int, str] | None = None) -> list[str]:
     """Replace the OCR agent. `read`: the page markdown (every page), a function of the page (`page.number`), or
     an iterator of pages. `legends[n]`: the text inside the n-th picture read (in order). Returns the prompts."""
-    from translator.agents import pipeline
+    from translator.agents import workers
 
     prompts: list[str] = []
     pictures = iter(range(1, 1000))
@@ -36,5 +36,5 @@ def fake_ocr(monkeypatch, read: str | Callable | Iterator, legends: dict[int, st
             return _reply(next(read))
         return _reply(read(SimpleNamespace(number=number)) if callable(read) else read)
 
-    monkeypatch.setattr(pipeline.ocr_reader, "before_model_callback", callback)
+    monkeypatch.setattr(workers.ocr_reader, "before_model_callback", callback)
     return prompts

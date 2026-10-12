@@ -28,10 +28,8 @@ from rapidfuzz import fuzz, process
 from rapidfuzz.distance import Levenshtein
 
 from .config import TARGET_LANG, get_settings
-from .documents import NO_SPACE_CHARS
-from .filters.align import norm
-from .filters.inline import strip as strip_codes
-from .text import contains_term
+from .document.pages import NO_SPACE_CHARS
+from .text import contains_term, norm
 
 FUZZY_MIN = 75
 _NO_SPACE = re.compile(f"[{NO_SPACE_CHARS}]")
@@ -239,14 +237,14 @@ class ProjectStore:
         return self.add_units(pid, [unit])[0] == 1
 
     def add_units(self, pid: str, units: list[dict]) -> tuple[int, int]:
-        """Bulk insert/update in one transaction (TMX imports). → (added, updated)."""
+        """Bulk insert/update in one transaction. → (added, updated)."""
         added = updated = 0
         now = time.time()
         with self._lock:
             self._db.execute("begin")
             try:
                 for u in units:
-                    key, prev = norm(strip_codes(u["source"])), norm(strip_codes(u.get("prev_source") or ""))
+                    key, prev = norm(u["source"]), norm(u.get("prev_source") or "")
                     if not key or not (u.get("target") or "").strip():
                         continue
                     exists = self._db.execute(
@@ -279,11 +277,11 @@ class ProjectStore:
 
     def lookup(self, pid: str, source: str, prev_source: str = "", limit: int = 5) -> list[dict]:
         """Best TM matches for a segment: [{id, score, source, target, origin}], best first."""
-        key = norm(strip_codes(source))
+        key = norm(source)
         if not key:
             return []
         keys, rows = self._candidates(pid)
-        prev = norm(strip_codes(prev_source))
+        prev = norm(prev_source)
         found: dict[int, dict] = {}
         for i, k in enumerate(keys):
             if k == key:
@@ -291,17 +289,17 @@ class ProjectStore:
                 score = 101 if prev and r["prev_key"] == prev else 100
                 if score > found.get(r["id"], {}).get("score", 0):
                     found[r["id"]] = {"id": r["id"], "score": score, "source": r["source"], "target": r["target"], "origin": r["origin"]}
-        words = _tokens(strip_codes(source))
+        words = _tokens(source)
         for _, _, i in process.extract(key, keys, scorer=fuzz.ratio, limit=20, score_cutoff=60):
             r = rows[i]
             if r["id"] in found:
                 continue
-            score = min(99, round(100 * Levenshtein.normalized_similarity(words, _tokens(strip_codes(r["source"])))))
+            score = min(99, round(100 * Levenshtein.normalized_similarity(words, _tokens(r["source"]))))
             if score >= FUZZY_MIN:
                 found[r["id"]] = {"id": r["id"], "score": score, "source": r["source"], "target": r["target"], "origin": r["origin"]}
         best: dict[str, dict] = {}  # one entry per distinct source (prefer the higher score)
         for m in sorted(found.values(), key=lambda m: -m["score"]):
-            best.setdefault(norm(strip_codes(m["source"])), m)
+            best.setdefault(norm(m["source"]), m)
         return list(best.values())[:limit]
 
     def concordance(self, pid: str, query: str, limit: int = 30) -> list[dict]:
@@ -375,7 +373,7 @@ def instructions_for(state) -> str:
 
 def glossary_for(state, sources: list[str], doc_glossary: dict | None = None) -> str:
     """Document glossary (clarifications) + the project termbase entries that occur in `sources`."""
-    from . import state as st  # local: state imports nothing from here, but keep the module graph flat
+    from .document import state as st  # local: state imports nothing from here, but keep the module graph flat
 
     doc = doc_glossary if doc_glossary is not None else state.get("doc:glossary") or {}
     base = st.glossary_text({"doc:glossary": doc})

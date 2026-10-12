@@ -1,7 +1,7 @@
 from types import SimpleNamespace
 
-from translator import state as st
 from translator.agents.editor_tools import get_segments, replace_in_translation, set_glossary_term, update_segment
+from translator.document import state as st
 
 
 def _ctx():

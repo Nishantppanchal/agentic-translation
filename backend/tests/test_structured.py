@@ -16,12 +16,12 @@ from google.adk.models import LlmRequest
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from translator import prompts, structured
-from translator import state as st
-from translator.agents import pipeline
+from translator.agents import pipeline, prompts, workers
+from translator.document import state as st
+from translator.models import structured
 
-from .test_flow import _prompt, _reply
 from .fakes import fake_ocr
+from .test_flow import _prompt, _reply
 
 pytestmark = pytest.mark.structured
 
@@ -116,10 +116,10 @@ def test_workflow_with_structured_output(monkeypatch):
     monkeypatch.setattr(structured, "enabled", lambda role: True)
     pages = iter(["# Abnahmeprotokoll\n\nDie Kabelpritsche ist nicht geerdet.", "## Ergebnis\n\nDie Anlage wird unter Vorbehalt der Mängel abgenommen."])
     fake_ocr(monkeypatch, pages)
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    monkeypatch.setattr(pipeline.translator, "before_model_callback", _with_schema(_translate))
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", _with_schema(_review))
-    monkeypatch.setattr(pipeline.refiner, "before_model_callback", _with_schema(_refine))
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
+    monkeypatch.setattr(workers.translator, "before_model_callback", _with_schema(_translate))
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", _with_schema(_review))
+    monkeypatch.setattr(workers.refiner, "before_model_callback", _with_schema(_refine))
 
     async def main():
         sessions, artifacts = InMemorySessionService(), InMemoryArtifactService()

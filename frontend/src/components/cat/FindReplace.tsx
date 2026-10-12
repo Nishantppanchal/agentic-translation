@@ -4,7 +4,7 @@ import { CaseSensitive, Loader2, Regex, WholeWord, X } from "lucide-react";
 import { useState } from "react";
 import { api } from "@/lib/api";
 import type { ReplaceMatch, ReplaceOptions } from "@/lib/types";
-import { DiffText } from "../Diff";
+import { DiffText } from "../document/Diff";
 
 /**
  * Find & replace in the translations: preview every change as a diff, untick what you don't want,

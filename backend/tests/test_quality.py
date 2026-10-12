@@ -13,12 +13,12 @@ from google.adk.artifacts import InMemoryArtifactService
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from translator import qa
-from translator import state as st
-from translator.agents import pipeline
+from translator.agents import pipeline, workers
+from translator.document import state as st
+from translator.quality import qa
 
-from .test_flow import _prompt, _reply
 from .fakes import fake_ocr
+from .test_flow import _prompt, _reply
 
 # --------------------------------------------------------------------------- #
 # Unit checks
@@ -145,12 +145,12 @@ def run_doc(monkeypatch):
     CALLS.clear()
     page = iter([PAGE_1, PAGE_2])
     fake_ocr(monkeypatch, page)
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))  # reviewer sees nothing wrong
-    monkeypatch.setattr(pipeline.refiner, "before_model_callback", _refine)
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))  # reviewer sees nothing wrong
+    monkeypatch.setattr(workers.refiner, "before_model_callback", _refine)
 
     async def run(mode: str) -> dict:
-        monkeypatch.setattr(pipeline.translator, "before_model_callback", _translate(mode))
+        monkeypatch.setattr(workers.translator, "before_model_callback", _translate(mode))
         sessions, artifacts = InMemorySessionService(), InMemoryArtifactService()
         runner = Runner(app=App(name="t", root_agent=pipeline.ingest_workflow), session_service=sessions, artifact_service=artifacts)
         s = await sessions.create_session(app_name="t", user_id="u", state={

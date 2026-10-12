@@ -15,14 +15,14 @@ from google.adk.artifacts import InMemoryArtifactService
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from translator import state as st
-from translator.agents import pipeline
+from translator.agents import pipeline, workers
 from translator.agents.editor_tools import replace_in_translation
-from translator.documents import Page, load_pages, segments_from_pages, split_blocks
-from translator.downloads import content_disposition
+from translator.api.downloads import content_disposition
+from translator.document import state as st
+from translator.document.pages import Page, load_pages, segments_from_pages, split_blocks
 
-from .test_flow import _prompt, _reply
 from .fakes import fake_ocr
+from .test_flow import _prompt, _reply
 
 SAMPLES = Path(__file__).resolve().parents[2] / "samples"
 ZH_PDF = SAMPLES / "yanshou-baogao.pdf"
@@ -150,9 +150,9 @@ def fake_translate(callback_context, llm_request):
 def fake_models(monkeypatch):
     TRANSLATE_PROMPTS.clear()
     fake_ocr(monkeypatch, ZH_PAGE, legends={1: ZH_LEGEND})
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    monkeypatch.setattr(pipeline.translator, "before_model_callback", fake_translate)
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
+    monkeypatch.setattr(workers.translator, "before_model_callback", fake_translate)
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
 
 
 def test_chinese_document_to_english():

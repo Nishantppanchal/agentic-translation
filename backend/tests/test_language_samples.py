@@ -5,12 +5,11 @@ from pathlib import Path
 
 import pytest
 
-from translator.documents import load_pages
+from translator.document.pages import load_pages
 from translator.languages import LANGUAGES, lang_code
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "scripts"))
 from make_language_samples import LANGS, OUT, source_texts  # noqa: E402
-
 from make_samples import norm  # noqa: E402
 
 

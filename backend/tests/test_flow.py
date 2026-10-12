@@ -20,11 +20,13 @@ from google.adk.models import LlmResponse
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from translator import projects, proposals
-from translator import state as st
-from translator.agents import pipeline
+from translator import projects
+from translator.agents import pipeline, workers
 from translator.agents.editor import editor_agent
-from translator.timeline import history
+from translator.api.timeline import history
+from translator.document import proposals
+from translator.document import state as st
+
 from .fakes import fake_ocr
 
 APP = "translator"
@@ -110,10 +112,10 @@ class FakeEditor:
 @pytest.fixture(autouse=True)
 def fake_models(monkeypatch):
     fake_ocr(monkeypatch, read_page)
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", fake_ocr_check)
-    monkeypatch.setattr(pipeline.translator, "before_model_callback", fake_translate)
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", fake_review)
-    monkeypatch.setattr(pipeline.refiner, "before_model_callback", fake_refine)
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", fake_ocr_check)
+    monkeypatch.setattr(workers.translator, "before_model_callback", fake_translate)
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", fake_review)
+    monkeypatch.setattr(workers.refiner, "before_model_callback", fake_refine)
     monkeypatch.setattr(editor_agent, "before_model_callback", FakeEditor())
 
 
@@ -265,9 +267,9 @@ def test_noop_refine_skips_second_review(monkeypatch):
         reviews.append(1)
         return fake_review(callback_context, llm_request)
 
-    monkeypatch.setattr(pipeline.translator, "before_model_callback", translate_no_terms)
-    monkeypatch.setattr(pipeline.refiner, "before_model_callback", echo_refine)
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", counting_review)
+    monkeypatch.setattr(workers.translator, "before_model_callback", translate_no_terms)
+    monkeypatch.setattr(workers.refiner, "before_model_callback", echo_refine)
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", counting_review)
 
     async def main():
         sessions, artifacts = InMemorySessionService(), InMemoryArtifactService()

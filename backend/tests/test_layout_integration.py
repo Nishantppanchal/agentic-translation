@@ -11,14 +11,14 @@ import pytest
 from google.adk import Runner
 from google.adk.apps import App
 from google.adk.artifacts import InMemoryArtifactService
+from google.adk.models import LlmResponse
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from translator import layout
-from translator import state as st
-from translator.agents import pipeline
+from translator.agents import pipeline, workers
 from translator.agents.editor import editor_agent
-from google.adk.models import LlmResponse
+from translator.document import state as st
+from translator.ocr import layout
 
 from .fakes import fake_ocr
 from .test_flow import _prompt, _reply
@@ -32,14 +32,14 @@ def fake_llms(monkeypatch):
     # The vision OCR writes [[FIGURE 1]] where PP-DocLayoutV3 found the picture (outlined in red on the page).
     fake_ocr(monkeypatch, "# Wartungsbericht\n\nIntro text here.\n\n[[FIGURE 1]]\n\nAbb. 1: Anlagenübersicht\n\nOutro text.",
              legends={1: "Schaltschrank"})
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
     def translate(callback_context, llm_request):
         segs = re.findall(r'<seg id="([^"]+)">', _prompt(llm_request))
         return _reply("\n".join(f'<seg id="{sid}">English text {sid}</seg>' for sid in segs))
 
-    monkeypatch.setattr(pipeline.translator, "before_model_callback", translate)
-    monkeypatch.setattr(pipeline.refiner, "before_model_callback", translate)  # QA flags on the fake text ask for a fix
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
+    monkeypatch.setattr(workers.translator, "before_model_callback", translate)
+    monkeypatch.setattr(workers.refiner, "before_model_callback", translate)  # QA flags on the fake text ask for a fix
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", lambda *_: _reply("<none/>"))
 
     def editor(callback_context, llm_request):
         if any(p.function_response for c in llm_request.contents for p in c.parts or []):

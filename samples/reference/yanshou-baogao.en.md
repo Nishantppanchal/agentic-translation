@@ -34,5 +34,5 @@ The equipment is granted conditional acceptance pending rectification of the abo
 
 ## Translator's notes
 
-- These translations are exactly the units of `samples/demo/zh/memory.tmx`.
+- These translations are exactly the units of `samples/demo/zh/memory.json`.
 - **质量保证金** (termbase) = retention money; **电网调度中心** (termbase) = network control centre.

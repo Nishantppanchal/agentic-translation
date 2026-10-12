@@ -8,8 +8,10 @@ import pytest
 from google.adk.artifacts import InMemoryArtifactService
 from google.adk.sessions import InMemorySessionService
 
-from translator import projects, qa, replace, segments
-from translator import state as st
+from translator import projects
+from translator.document import edits, find_replace
+from translator.document import state as st
+from translator.quality import qa
 
 
 def _seg(source: str, target: str | None, sid: str = "p1.1", kind: str = "paragraph", **extra) -> dict:
@@ -72,8 +74,6 @@ def test_terminology(source, target, expected):
     ("| a | b |\n|---|---|\n| 1 | 2 |", "| a |\n|---|\n| 1 |", "table", ["error"]),
     ("- eins\n- zwei", "- one, two", "list", ["warning"]),
     ("Die **Anlage** ist fertig.", "The plant is ready.", "paragraph", ["warning"]),
-    ('Klicken Sie <g id="1">hier</g><x id="2"/>.', 'Click <g id="1">here</g><x id="2"/>.', "paragraph", []),
-    ('Klicken Sie <g id="1">hier</g><x id="2"/>.', 'Click <g id="1">here</g>.', "paragraph", ["error"]),
 ])
 def test_markup(source, target, kind, expected):
     assert [sev for sev, _ in _issues("markup", _seg(source, target, kind=kind))] == expected
@@ -168,16 +168,16 @@ def test_forced_review_issues_are_errors_only_and_respect_ignores():
     ("验收", "检验", {"whole_word": True}, "本次验收合格", "本次检验合格"),  # CJK: no word boundaries
 ])
 def test_find_and_replace_preview(find, repl, opts, target, expected):
-    pattern = replace.compile_find(find, **{k: v for k, v in opts.items() if k != "regex"}, regex=opts.get("regex", False))
-    [m], locked = replace.matches([_seg("x", target)], pattern, repl, regex=opts.get("regex", False))
+    pattern = find_replace.compile_find(find, **{k: v for k, v in opts.items() if k != "regex"}, regex=opts.get("regex", False))
+    [m], locked = find_replace.matches([_seg("x", target)], pattern, repl, regex=opts.get("regex", False))
     assert m["after"] == expected and locked == 0
 
 
 def test_bad_patterns_are_reported():
-    with pytest.raises(replace.ReplaceError):
-        replace.compile_find("(unclosed", regex=True)
-    with pytest.raises(replace.ReplaceError):
-        replace.matches([_seg("x", "a b")], replace.compile_find("(a) (b)", regex=True), r"\3", regex=True)
+    with pytest.raises(find_replace.ReplaceError):
+        find_replace.compile_find("(unclosed", regex=True)
+    with pytest.raises(find_replace.ReplaceError):
+        find_replace.matches([_seg("x", "a b")], find_replace.compile_find("(a) (b)", regex=True), r"\3", regex=True)
 
 
 def test_replace_applies_as_human_edits_in_one_version_and_skips_locked():
@@ -195,11 +195,11 @@ def test_replace_applies_as_human_edits_in_one_version_and_skips_locked():
                 {"segment_id": "p1.2", "field": "target", "before": "The plant is old.", "after": "agent text"},
                 {"segment_id": "p1.4", "field": "target", "before": "No match here.", "after": "agent text 2"}]},
             **{st.seg_key(k): v for k, v in segs.items()}})
-        pattern = replace.compile_find("plant")
-        preview, locked = replace.matches(st.get_segments(s.state), pattern, "installation", scope="unconfirmed")
+        pattern = find_replace.compile_find("plant")
+        preview, locked = find_replace.matches(st.get_segments(s.state), pattern, "installation", scope="unconfirmed")
         assert [m["segment_id"] for m in preview] == ["p1.2"] and locked == 1  # confirmed out of scope, locked skipped
 
-        result = await segments.replace_in_targets(sessions, artifacts, s, "plant", "installation", ids=["p1.1", "p1.2"])
+        result = await edits.replace_in_targets(sessions, artifacts, s, "plant", "installation", ids=["p1.1", "p1.2"])
         assert result == {"changed": ["p1.1", "p1.2"], "version": 1, "locked": 1}
         s = await sessions.get_session(app_name="t", user_id="u", session_id=s.id)
         p11, p12 = (st.normalize(st.get_segment(s.state, k)) for k in ("p1.1", "p1.2"))

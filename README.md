@@ -3,16 +3,16 @@
 Upload a document in any language, get a reviewed **English** translation as a versioned artifact, then keep refining it by chatting. Every change is diffable.
 
 **The full feature reference is [docs/FEATURES.md](docs/FEATURES.md).** In short:
-- **Formats:** PDF (text layer or scanned), images, Word, PowerPoint, Excel, XLIFF 2.0 / 1.2 and text. Office and XLIFF files come back in their own format, with formatting kept as inline codes.
+- **Formats:** PDF (text layer or scanned), images (PNG, JPG, WebP) and text (.txt, .md).
 - **Agentic pipeline:** OCR with verification → **a source check** (fix the reading by chatting, before anything is translated) → **whole-document analysis** (brief and key terms fixed up front) → **questions before translating**, explained in plain English with English options and a recommendation, so they can be answered without knowing the source language → translation page by page with carried context → review ⇄ refine by a second model → consistency polish.
-- **Projects:** a style guide, a termbase with forbidden variants and a translation memory (101% / 100% / fuzzy). TMX, TBX and CSV exchange.
+- **Projects:** a style guide, a termbase with forbidden variants and a translation memory (101% / 100% / fuzzy) with concordance search.
 - **Segment editor:** a CAT-style grid with human-only statuses, keyboard shortcuts, a TM panel, term highlighting, comments, locks and versions.
 - **Chat and tasks:** a chat editor (also explains source passages in plain English) and one-click tasks (rewrite, alternatives, consistency fixer). Agents only ever *propose*; you accept or reject, in the chat or right in the segment grid.
 - **Quality:** automatic QA checks, find & replace, and MQM-based LQA scoring with a review queue.
-- **Output:** a layout-preserving PDF (for PDFs with a text layer), reflowed Word, HTML and Markdown, a bilingual review table, and XLIFF. A vendor's XLIFF can be imported back as a proposal.
-- **Operations:** a step bar for runs, a run queue, retries on rate limits, a token chip, and a self-hosted vLLM endpoint per role (custom headers and request fields, errors logged with the server's message).
+- **Output:** a Word document (DOCX, reflowed: headings, lists, tables, figures, running header and footer with page-number fields) and Markdown (a zip with the figures when there are any).
+- **Operations:** a step bar for runs, a run queue, retries on rate limits, a token chip, and models set in two YAML files: any OpenAI-compatible server for each step (custom headers and request fields, headers passed on from the API request, errors logged with the server's message).
 
-Sample documents (German and Chinese in every format, plus a one-page report in 21 more languages, from Spanish to Thai, Arabic and Japanese) are described in [samples/SAMPLES.md](samples/SAMPLES.md); a hands-on test script is in [docs/TESTING.md](docs/TESTING.md).
+Sample documents (German and Chinese PDFs and scans, plus a one-page report in 21 more languages, from Spanish to Thai, Arabic and Japanese) are described in [samples/SAMPLES.md](samples/SAMPLES.md); a hands-on test script is in [docs/TESTING.md](docs/TESTING.md).
 
 Built on **Google ADK 2.x** (`Workflow` graph + `LlmAgent`), FastAPI and Next.js. Pages are read by a **vision LLM** (e.g. Qwen3-VL); **PP-DocLayoutV3**, served through an **MCP tool**, finds the pictures on each page.
 
@@ -23,27 +23,26 @@ Next.js UI ── REST + SSE ──► FastAPI ──► ADK Runners ──► s
  sidebar · project pages      │                         projects.db (projects, termbase, TM)
  chat · step bar · questions  │
  proposals · next steps       ├─ ingest Workflow (once per upload)
- document panel: segments,    │    START → route_source ─┬─► ocr → check_source ─┬─► analyse → ask → translate → clarify → review ─┬─(refine)→ refine → review
-   document, quality,         │                          └─► extract ────────────┘                                                └─(done)──→ polish → finalize
+ document panel: segments,    │    START → ocr → check_source → analyse → ask → translate → clarify → review ─┬─(refine)→ refine → review
+   document, quality,         │                                                                               └─(done)──→ polish → finalize
    history, source & notes    ├─ ops Workflow (tasks: rewrite, alternatives, consistency, LQA)
                               └─ editor LlmAgent (each chat turn; tools stage a proposal)
 ```
 
 | Node / agent | What it does |
 |---|---|
-| `route_source` | PDFs, images and text go to `ocr`. Word, PowerPoint, Excel and XLIFF files go to `extract`, which reads segments with inline codes straight from the file, warns about tracked changes, and notes cell texts used in Excel formulas (the translated workbook updates those formulas to the translation). |
-| `ocr` | Fans out over pages (`ctx.run_node`, concurrency-capped). **`ocr_reader`**, on the `OCR` vision model, transcribes each page into markdown, with the pictures outlined in red and numbered on the page image so it writes `[[FIGURE n]]` in their place; the text inside each picture is read from its crop. Then **`ocr_checker`**, on the `OCR_CHECK` vision model, compares the page with the image (and the PDF text layer), and its corrections go through a guard (`ocr_guard.py`): small fixes inside a word, or ones the text layer confirms, are applied; changed numbers, other words and added or dropped text are listed as *possible misreadings* for a person instead (on scans, changes to Chinese, Japanese and Korean characters too, since one character can be another word). The check is skipped when the reading is the same text as the PDF's own text layer on a page without pictures (`OCR_CHECK=auto`). Each page's result is cached as an artifact, so **Retry** doesn't read pages again. |
+| `ocr` | Fans out over pages (`ctx.run_node`, concurrency-capped); text files are read as they are. **`ocr_reader`**, on the `ocr` step's vision model, transcribes each page into markdown, with the pictures outlined in red and numbered on the page image so it writes `[[FIGURE n]]` in their place; the text inside each picture is read from its crop. Then **`ocr_checker`**, on the `ocr_check` step's vision model, compares the page with the image (and the PDF text layer), and its corrections go through a guard (`ocr/guard.py`): small fixes inside a word, or ones the text layer confirms, are applied; changed numbers, other words and added or dropped text are listed as *possible misreadings* for a person instead (on scans, changes to Chinese, Japanese and Korean characters too, since one character can be another word). The check is skipped when the reading is the same text as the PDF's own text layer on a page without pictures (`OCR_CHECK=auto`). Each page's result is cached as an artifact, so **Retry** doesn't read pages again. |
 | `ocr` → figures | Figures are the PDF's embedded images plus the pictures, charts and seals PP-DocLayoutV3 finds (the layout server's `detect_layout` MCP tool, see below); without the layout server, the embedded images only. Each is cropped from the page, `[[FIGURE n]]` sits where it appears, and the text read inside it is kept as the figure's translatable legend. In PDFs with real text, the marker is moved right before the text printed below the picture. |
-| `check_source` | **Human-in-the-loop, before anything is translated:** every PDF and image **pauses** after reading (status `awaiting_source_check`). You compare the reading with the page images and describe problems in the chat; the editor proposes a **page fix** (the page's source as OCR markdown, before/after, with the words it adds or removes and the passages it moves), which you accept or reject. Accepting re-splits the page into segments. **Continue to translation** resumes the workflow; undecided page fixes are dropped. Office, XLIFF and text files don't pause. |
+| `check_source` | **Human-in-the-loop, before anything is translated:** every PDF and image **pauses** after reading (status `awaiting_source_check`). You compare the reading with the page images and describe problems in the chat; the editor proposes a **page fix** (the page's source as OCR markdown, before/after, with the words it adds or removes and the passages it moves), which you accept or reject. Accepting re-splits the page into segments. **Continue to translation** resumes the workflow; undecided page fixes are dropped. Text files don't pause. |
 | `analyse` | Reads the **whole document** before translating (`analyst`, in parts of `ANALYSIS_CHUNK_CHARS`): writes the brief up front, including abbreviations and defined terms wherever they are defined, and lists up to `ANALYSIS_MAX_TERMS` key terms with a plain-English meaning and English options. Clear terms go straight into the running termbase; terms whose options differ in meaning (at most `MAX_QUESTIONS`) become questions. Terms already in the glossary or project termbase are skipped. If the analysis fails, translation goes ahead as before. |
 | `ask` | **Human-in-the-loop, before translating:** if the analysis has questions, the workflow **pauses** once. Each question carries the meaning, the sentence (source and English gist), 2–3 English options with notes, and the recommendation (preselected). An answer is a glossary entry, so the first draft already uses it, and a project term: **approved** if the person chose it, **proposed** (a suggestion, not enforced) if they just accepted the recommendation. A skipped question keeps the recommendation for this document only. |
-| `translate` | Runs the **TM pass** first: 101% and 100% matches are filled in with no model call, and fuzzy matches become references in the prompt. Then it translates **page by page, in order** (segment `p3.2` = page 3, block 2; for Office files a "page" is a Word part of about 2,500 characters, a slide or a sheet). A page over `PAGE_MAX_CHARS` is split into parts. Each call carries the document brief, the previous text (`CARRY_CONTEXT_CHARS` of source and translation), the running termbase, the project's matching terms and the style guide. `translator` returns the segments, term choices to keep (these go into the running termbase), terms it is unsure about and the updated brief, as schema JSON or tags. Saves **v1**. |
+| `translate` | Runs the **TM pass** first: 101% and 100% matches are filled in with no model call, and fuzzy matches become references in the prompt. Then it translates **page by page, in order** (segment `p3.2` = page 3, block 2). A page over `PAGE_MAX_CHARS` is split into parts. Each call carries the document brief, the previous text (`CARRY_CONTEXT_CHARS` of source and translation), the running termbase, the project's matching terms and the style guide. `translator` returns the segments, term choices to keep (these go into the running termbase), terms it is unsure about and the updated brief, as schema JSON or tags. Saves **v1**. |
 | `clarify` | Pauses again only for terms the translator still couldn't resolve (at most `MAX_QUESTIONS_PER_BATCH` per page; terms the analysis decided aren't asked twice). Answers go into the glossary, the affected segments are re-translated, and a version is saved. |
-| `review` / `refine` | Flags and QA errors become forced issues. `reviewer` lists issues per page with an MQM category and severity (minor/major/critical) and a QE score per segment, sees the document brief, and also checks consistency with the termbase. It may challenge a termbase choice it thinks is wrong rather than enforce it. The `refine` route sends the flagged segments to `refiner`. The loop repeats up to `REVIEW_MAX_ROUNDS`, and stops early if a refine pass changes nothing. Set `REVIEW_MODEL` to a different model than the translator for a second opinion. 100% TM matches are only refined for major issues, never for style. Terms the reviewer finds unclear become non-blocking question cards — only when it recommends something different from the translation, and closed if the refiner applies it anyway. |
+| `review` / `refine` | Flags and QA errors become forced issues. `reviewer` lists issues per page with an MQM category and severity (minor/major/critical) and a QE score per segment, sees the document brief, and also checks consistency with the termbase. It may challenge a termbase choice it thinks is wrong rather than enforce it. The `refine` route sends the flagged segments to `refiner`. The loop repeats up to `REVIEW_MAX_ROUNDS`, and stops early if a refine pass changes nothing. Point the `review` step (`config/pipeline.yaml`) at a different model than `translate` for a second opinion. 100% TM matches are only refined for major issues, never for style. Terms the reviewer finds unclear become non-blocking question cards — only when it recommends something different from the translation, and closed if the refiner applies it anyway. |
 | `polish` | The consistency fixer on the AI draft: one translation per repeated sentence (a person's confirmed translation wins) and the termbase applied, directly (on a finished document the same fixer only proposes). |
 | `finalize` | Saves the reviewed version and marks the document ready; the UI shows next-step buttons. |
 | `ops` | Tasks started from the UI (`POST …/tasks`): `dispatch` routes to `rewrite` (an instruction, or n alternatives per segment), `consistency` (groups found without a model; a person's confirmed translation wins with no model call) or `assess` (LQA). Rewrites and fixes are staged as a proposal. |
-| `editor` | Chat agent with tools: `search_segments`, `get_segments`, `update_segment`, `propose_alternatives`, `replace_in_translation` (case-insensitive and case-preserving), `set_glossary_term`, `run_qa_checks`, `add_comment`, `resolve_question`, `ask_user_about_term`, `fix_source_segment` (one segment, after the source check; not for Office/XLIFF), `inspect_page_layout` (runs PP-DocLayout on a source page and compares the result with that page's segments). During the source check: `get_page_source` (a page's source as OCR markdown), `propose_page_source` (the editor rewrites the page's structure itself) and `reread_page` (the vision model reads the page image again, with an instruction taken from what you said); these two stage a **page fix** per page, which you accept or reject. Edit tools **stage** changes in `doc:proposal` instead of applying them. Reads return the proposed text, so follow-up turns can refine a pending proposal. `POST …/proposal/accept` applies it as a new version; `…/reject` discards it. |
+| `editor` | Chat agent with tools: `search_segments`, `get_segments`, `update_segment`, `propose_alternatives`, `replace_in_translation` (case-insensitive and case-preserving), `set_glossary_term`, `run_qa_checks`, `add_comment`, `resolve_question`, `ask_user_about_term`, `fix_source_segment` (one segment, after the source check), `inspect_page_layout` (runs PP-DocLayout on a source page and compares the result with that page's segments). During the source check: `get_page_source` (a page's source as OCR markdown), `propose_page_source` (the editor rewrites the page's structure itself) and `reread_page` (the vision model reads the page image again, with an instruction taken from what you said); these two stage a **page fix** per page, which you accept or reject. Edit tools **stage** changes in `doc:proposal` instead of applying them. Reads return the proposed text, so follow-up turns can refine a pending proposal. `POST …/proposal/accept` applies it as a new version; `…/reject` discards it. |
 
 **Where things are stored:**
 - **Project database** (`data/projects.db`, SQLite in WAL mode): projects, termbase and TM, shared across documents. ADK state is per-document and has no indexes, so it can't hold a TM. A document links to its project through `doc:project_id`; a deleted project leaves old documents working, without project data.
@@ -53,6 +52,33 @@ Next.js UI ── REST + SSE ──► FastAPI ──► ADK Runners ──► s
 **Glossary vs termbase.** The *glossary* is what you confirmed: clarify answers and accepted glossary proposals. It always wins. The *termbase* holds the translator's own choices from earlier pages, which keeps later pages consistent. Those choices are unverified, so a wrong early choice can repeat on later pages. Terms the translator flagged as uncertain are never added. A glossary entry for the same term replaces the termbase entry. Review the termbase in **Checks & glossary**; each row has a **Change** action that drafts the chat request to fix it everywhere.
 
 The editor runs with `include_contents='none'`. Its instruction is built from the document, the glossary and a compact transcript of the chat, so the pipeline's bulky outputs never reach its context.
+
+## Code layout
+
+```
+backend/
+  config/            models.example.yaml (copy to models.yaml) · pipeline.yaml
+  translator/
+    config.py        settings from .env (non-model)
+    languages.py · text.py · projects.py (project store: projects, termbase, translation memory)
+    models/          config.py (models.yaml / pipeline.yaml) · llm.py (calls, errors, request_headers) · structured.py (JSON schemas) · replies.py (tag-format parsers)
+    document/        pages.py (PDF/image/text pages, figures, markdown → segments) · state.py · edits.py (human edits, comments, confirm) · proposals.py · versions.py · source_check.py · find_replace.py
+    ocr/             layout.py (PP-DocLayoutV3 MCP client) · guard.py (which OCR-check fixes are safe)
+    quality/         qa.py · lqa.py (MQM scoring)
+    exports/         __init__.py (DOCX / Markdown downloads) · docx.py
+    integrations/    dictionary.py
+    agents/          pipeline.py (the workflow graph) · steps/ (read, analyse, questions, translate, review, finish) · workers.py (every single-turn LLM agent and its step) · common.py · prompts.py · editor.py + editor_tools.py (chat) · tasks.py · lqa.py
+    api/             main.py (app, middleware incl. header forwarding) · services.py (stores, runners, helpers) · routes/ (meta, documents, chat, segments, source_check, projects) · runs.py · timeline.py · usage.py · downloads.py
+  tests/             tests/config/ points every model at a port nothing listens on (tests never call a real model)
+  scripts/           sample generators · seed_demo.py (demo projects with termbase and translation memory)
+frontend/src/
+  app/page.tsx       the workbench: sidebar, chat, document panel
+  components/        chat/ (chat, questions, proposals, source check, step bar) · document/ (document panel, quality, diffs,
+                     downloads) · cat/ (segment grid, find & replace, TM panel, usage) · projects/ · shell/ (sidebar, upload)
+  lib/               api.ts (backend calls) · types.ts
+layout-server/       PP-DocLayoutV3 as an MCP tool (its own environment)
+dictionary-server/   a dummy dictionary API for development
+```
 
 ## Layout server (PP-DocLayoutV3 as an MCP tool)
 
@@ -80,16 +106,14 @@ one. See [dictionary-server/README.md](dictionary-server/README.md).
 
 ## Running it
 
-**Requirements:** [uv](https://docs.astral.sh/uv/), Node 20+, and a [vLLM](https://docs.vllm.ai) server with a vision- and tool-capable model. The default config expects Qwen3-VL on port 8100 (the backend uses 8000):
+**Requirements:** [uv](https://docs.astral.sh/uv/), Node 20+, and models on any OpenAI-compatible server: your own [vLLM](https://docs.vllm.ai) or SGLang servers, or a hosted service such as OpenRouter. The OCR steps need a **vision** model and the chat editor needs **tool calling** (see [Models](#models)). The example config uses OpenRouter; the backend uses port 8000.
 
 ```bash
-# model server (GPU machine)
-vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8100 --enable-auto-tool-choice --tool-call-parser hermes
-
 # backend
 cd backend
-cp .env.example .env        # then set MODEL / MODEL_API_BASE to your server (see "Choosing models")
 uv sync
+cp config/models.example.yaml config/models.yaml   # the models (see "Models")
+cp .env.example .env                               # then put the API key in .env (OPENROUTER_API_KEY for the example)
 uv run uvicorn translator.api:app --port 8000
 
 # frontend (second terminal)
@@ -100,49 +124,87 @@ npm run dev                 # http://localhost:3000
 
 Sample PDFs in `samples/`, each with an image-only `-scanned.pdf` copy:
 - German: `abnahmeprotokoll.pdf` (an acceptance report with a table) and `wartungsbericht.pdf` (a maintenance report with a labelled diagram).
-- Office (German): `pruefbericht.docx` (bold and italic terms, a link, a table, a page-number footer, a footnote and two tracked changes), `unterweisung.pptx` (three slides with speaker notes) and `maengelliste.xlsx` (shared strings, rich text, and a `COUNTIF` formula that compares against a status text).
 - Chinese: `yanshou-baogao.pdf` (an acceptance report with a table and a diagram labelled in Chinese).
 - Source check: `review/pruefvermerk-zweispaltig-scanned.pdf` (German) and `review/jianli-tongzhi-shuanglan-scanned.pdf` (Chinese) are two-column scans with a paragraph running across the column break and a red stamp or seal over the text, for fixing the reading in the chat before translating.
 - TM demo: `nachbegehung.pdf` is a follow-up inspection of the same substation, with a running header and a "Seite x von 2" footer. Several paragraphs repeat `abnahmeprotokoll.pdf` word for word, and one differs by a single word. Translate `abnahmeprotokoll.pdf` in a project, confirm it in the Segments tab, then translate `nachbegehung.pdf` in the same project: the exact matches are reused without a model call, and the fuzzy ones are offered to the translator.
 
 Languages written without spaces (Chinese, Japanese, Thai, …) are handled throughout: find/replace matches inside sentences, Chinese text counts double toward the "has a text layer" check, and downloads with non-ASCII names use an RFC 5987 filename.
 
-### Choosing models
+## Models
 
-Every role calls a vLLM server directly: no router or hosted aggregator in between. Each role can use its own server, and each endpoint takes a URL, the served model name, an API key, extra HTTP headers and extra request fields:
+Models are set in two YAML files in `backend/config/`. `backend/.env` holds only the secrets they refer to, plus the non-model settings.
 
-| Setting | Meaning |
-|---|---|
-| `MODEL` | the served model name, exactly as `GET <api base>/models` lists it |
-| `MODEL_API_BASE` | the server's `/v1` URL |
-| `MODEL_API_KEY` | vLLM's `--api-key`, if set (sent as `Authorization: Bearer …`) |
-| `MODEL_HEADERS` | extra HTTP headers on every request, as a JSON object, e.g. a gateway or proxy token |
-| `MODEL_EXTRA_BODY` | extra request fields vLLM accepts, as a JSON object, e.g. sampling options |
+- **`models.yaml`** lists the models. Copy it from `models.example.yaml` (committed); `models.yaml` is git-ignored, so a key or an internal server address typed into it is never committed. Each model has:
+  - `id`: what `pipeline.yaml` refers to;
+  - `model_name`: the name the server knows the model by;
+  - `url`: any OpenAI-compatible base URL (vLLM, SGLang, OpenRouter, Ollama, LM Studio…);
+  - `api_key`: sent as `Authorization: Bearer …`;
+  - optional: `headers` (added to `defaults.headers`; the same name wins), `extra_body` (extra request fields, e.g. `chat_template_kwargs`), `timeout`, `retries`, `temperature`, and `structured_output` (`true`: JSON-schema answers; `false`: a tag format).
 
-Every role (`OCR`, `OCR_CHECK`, `TRANSLATE`, `REVIEW`, `EDITOR`, `LQA`) uses these unless it sets its own `<ROLE>_MODEL`, `_API_BASE`, `_API_KEY`, `_HEADERS` or `_EXTRA_BODY`; each one left unset is inherited. A role's own headers or extra body replace the default ones (they aren't merged), and `{}` sends none. `LQA_*` falls back to the review endpoint; point it at a different model for an independent quality score.
+  `defaults` apply to every model; a model's own values win.
+- **`pipeline.yaml`** (committed; only ids, no secrets) says which model does each step: a `default`, plus `steps`.
+- **`${NAME}`** in either file is an environment variable from `backend/.env`; `${NAME:-}` may be unset. `MODELS_FILE` and `PIPELINE_FILE` in `.env` point at other files.
 
-```bash
-# One server for everything
-MODEL=Qwen/Qwen3-VL-8B-Instruct
-MODEL_API_BASE=http://gpu-1:8100/v1
-MODEL_HEADERS={"X-Gateway-Token": "..."}
+```yaml
+# config/models.yaml
+defaults:                 # every model gets these; a model's own values win
+  headers: {}             # sent with every request to every model, e.g. X-Gateway-Token: ${GATEWAY_TOKEN}
+  forward_headers: []     # headers of the API request that starts a run, passed on to all its model calls, e.g. [X-Request-Id, X-Tenant-Id]
+  timeout: 180            # seconds per call
+  retries: 5
+  temperature: 0.2
+models:
+  - id: qwen-flash
+    model_name: qwen/qwen3.8-flash
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+  - id: claude-haiku
+    model_name: anthropic/claude-haiku-5.5
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
 
-# A larger text model on a second server for translation and review (headers inherited)
-TRANSLATE_MODEL=Qwen/Qwen3-32B
-TRANSLATE_API_BASE=http://gpu-2:8100/v1
-REVIEW_MODEL=Qwen/Qwen3-32B
-REVIEW_API_BASE=http://gpu-2:8100/v1
+# config/pipeline.yaml
+default: claude-haiku     # every step not listed below
+steps:
+  ocr: qwen-flash
+  ocr_check: qwen-flash
+  review: qwen-flash
+  lqa: qwen-flash
 ```
 
-- **Reviewer thinking:** a reasoning model can think for minutes before a short review, so the reviewer's and LQA's hidden thinking is capped at `REVIEW_REASONING_TOKENS` (2000; 0 = no cap). It's sent as vLLM's `thinking_token_budget`, which needs `--reasoning-parser` (e.g. `qwen3`) on that server. vLLM refuses the budget from a server without one; that role's call is then sent again without it, and the cap is dropped for that role.
-- **Errors:** a failed call is logged as `vLLM error — <role> model <name> at <url>: HTTP <status> <type>: <the server's message>`, and a run that stops shows the same text. The analysis and the final consistency pass never stop a run: if their call fails, the chat says so with the same error (for a context-length error, with a pointer to `ANALYSIS_CHUNK_CHARS`) and translation goes on. The log never includes keys, header values or credentials in the URL.
-- **Retries:** calls retry with exponential backoff on rate limits and API errors (`MODEL_RETRIES`, default 5) and time out after `MODEL_TIMEOUT` (180 s) instead of hanging on a stalled connection.
-- **Hosted services:** any OpenAI-compatible service works the same way as vLLM — e.g. OpenRouter: set the role's `_API_BASE=https://openrouter.ai/api/v1`, `_MODEL` to the model id (`qwen/qwen3-vl-8b-instruct`) and `_API_KEY`. Nothing in the app is specific to one provider.
+| Step | What it does | Needs |
+|---|---|---|
+| `ocr` | Reads each page image, the text inside pictures, and pages read again in the source check | vision |
+| `ocr_check` | Compares the reading with the page image | vision |
+| `analyse` | Brief, key terms and the questions before translating | |
+| `translate` | The translation, page by page | |
+| `review` | A second model reviewing the translation; ideally a different model than `translate` | |
+| `refine` | Fixes what the review found | |
+| `polish` | Consistency fixes before Ready, and the consistency task | |
+| `rewrite` | Tasks: rewrite with an instruction, alternatives | |
+| `editor` | The chat (it also makes the source check's page fixes) | tool calling |
+| `lqa` | Independent quality scoring (MQM) | |
 
-Model requirements:
-- `OCR` (reads the pages, and the text inside pictures) and `OCR_CHECK` (checks the reading) need a **vision** model.
-- The editor needs **tool calling** (it also makes the page fixes of the source check).
-- Pipeline agents reply in schema-constrained JSON (vLLM's guided decoding, `STRUCTURED_OUTPUT=auto`). With `STRUCTURED_OUTPUT=off` they use simple tag formats (`<seg id="…">`) instead, which small models also handle reliably.
+A step can also be a mapping: `{model: <id>, extra_body: {...}, temperature: ...}`. Its `extra_body` is added to the model's, e.g. `review: {model: <id>, extra_body: {thinking_token_budget: 2000}}` caps a reasoning model's hidden thinking on vLLM. The server needs `--reasoning-parser` (e.g. `qwen3`); a server without one gets the call again without the budget.
+
+**Your own vLLM servers:** add each model with its `url`, `model_name` and `api_key` in `models.yaml`, then point the steps at it in `pipeline.yaml`:
+
+```yaml
+# models.yaml — the server: vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8100 --api-key … --enable-auto-tool-choice --tool-call-parser hermes
+  - id: qwen-vl
+    model_name: Qwen/Qwen3-VL-8B-Instruct     # as GET <url>/models lists it
+    url: http://gpu-1:8100/v1
+    api_key: ${VLLM_API_KEY:-}
+
+# pipeline.yaml
+default: qwen-vl
+```
+
+- **Headers:** every model request gets headers from three places, later ones winning: `defaults.headers`, the model's own `headers`, and the run's headers. `defaults.forward_headers` copies the named headers of the API request that started the run; integration code can add more with `translator.models.llm.request_headers({...})` (a context manager; runs started inside it keep them). Only the named headers are forwarded, never the caller's other headers (e.g. their `Authorization`).
+- **Mistakes in the files** are reported when the backend starts, with the file and what's wrong: an unknown model id, a step without a model and no `default`, a misspelt field, a `${NAME}` that isn't set, or a missing `models.yaml` ("copy models.example.yaml to models.yaml").
+- **Errors:** a failed call is logged as `vLLM error — <step> model <name> at <url>: <server message>`, and a run that stops shows the same text. The analysis and the final consistency pass never stop a run: if their call fails, the chat says so with the same error (for a context-length error, with a pointer to `ANALYSIS_CHUNK_CHARS`) and translation goes on. The log never includes keys, header values or credentials in the URL.
+- **Retries:** calls retry with exponential backoff on rate limits and API errors (`retries`, default 5) and time out after `timeout` (180 s) instead of hanging on a stalled connection.
+- **Structured output:** pipeline agents reply in JSON that follows a schema (vLLM's guided decoding). A model with `structured_output: false` gets simple tag formats (`<seg id="…">`) instead, which small models also handle reliably.
 
 ## Tests
 
@@ -150,7 +212,7 @@ Model requirements:
 cd backend && uv run pytest
 ```
 
-`tests/test_analysis.py` covers the workflow upgrades: the whole-document analysis pausing for questions before any translation (options, meaning, gist; the answer shapes the first draft and becomes an approved project term), skipped questions keeping the recommendation, the translator and reviewer not re-asking decided terms, the OCR check skipped only for identical text (a changed digit, word or minus sign still checks), per-page OCR reused on retry, the consistency polish, and paused-run detection when interrupt ids repeat. `tests/test_source_check.py` covers the source check: a scan stops after reading and **Continue** translates it, a page fix the chat proposes re-splits the page when accepted, a fix that changes words says so (markup isn't a word change, a dropped picture is), page fixes only during the source check, and reading a page again with an instruction. `tests/test_ops.py` covers alternatives in proposals (with a choice when accepting), the rewrite task (locked segments skipped, broken-code options dropped, JSON mode), the consistency task (confirmed translations win without a model call, same-source and termbase groups), comments, migrating a multilingual database to English only, the English-only project API, and the run queue. `tests/test_office.py` covers Word/PowerPoint/Excel: writing the source back reads the same; pseudo-translation keeps bold and italic, links, fields (instruction kept, result translated), content controls, both text-box copies, footnotes, notes, rich text, formulas and numbers; tracked changes accepted; code repair; stale paragraphs skipped; autofit; target language; formula-literal warnings. `tests/test_xliff.py` covers XLIFF export structure, an export → import no-op, the import rules, XLIFF as an input with write-back of the original code attributes, a Word file through the whole pipeline (escaped tags repaired, original-format and XLIFF exports, code-safe edits, an XLIFF proposal accepted), and TM matches whose codes differ. `tests/test_qa.py` has a table of cases for each QA check, plus ignore fingerprints, forced review issues and find & replace (preview, case, regex, CJK, locked segments, one version). `tests/test_lqa.py` covers MQM arithmetic, word counts, tolerant parsing, the LQA run in tag and JSON modes, and a pipeline run where a dropped date is forced through review and fixed. `tests/test_projects.py` covers the project store (TM scoring for 101/100/fuzzy and CJK, term matching, merging), the pipeline's TM pass against a seeded memory (exact matches skip the model, fuzzy ones reach the prompt), TM write-back on human confirmation, TMX/TBX/CSV round trips, XXE and entity-expansion safety, and the project API. `tests/test_chinese.py` covers Chinese segmentation, text layers, find/replace without spaces, download names, and a full Chinese → English run (figure placement, clarify, termbase). `tests/test_layout_integration.py` runs the real PP-DocLayout MCP server; it is opt-in (`RUN_LAYOUT_TESTS=1 uv run pytest`).
+`tests/test_analysis.py` covers the workflow upgrades: the whole-document analysis pausing for questions before any translation (options, meaning, gist; the answer shapes the first draft and becomes an approved project term), skipped questions keeping the recommendation, the translator and reviewer not re-asking decided terms, the OCR check skipped only for identical text (a changed digit, word or minus sign still checks), per-page OCR reused on retry, the consistency polish, and paused-run detection when interrupt ids repeat. `tests/test_source_check.py` covers the source check: a scan stops after reading and **Continue** translates it, a page fix the chat proposes re-splits the page when accepted, a fix that changes words says so (markup isn't a word change, a dropped picture is), page fixes only during the source check, and reading a page again with an instruction. `tests/test_ops.py` covers alternatives in proposals (with a choice when accepting), the rewrite task (locked segments skipped, JSON mode), the consistency task (confirmed translations win without a model call, same-source and termbase groups), comments, migrating a multilingual database to English only, the English-only project API, and the run queue. `tests/test_llm.py` covers the model files: each step calls the model `pipeline.yaml` gives it, secrets come from the environment, a wrong config says which file and what, a missing `models.yaml` points to the example, the shipped example and `pipeline.yaml` are valid, configured and forwarded headers reach every model request, the thinking budget with and without a reasoning parser, and error messages without credentials. `tests/test_exports.py` covers the Word download (structure, language, figures, East Asian font, running header and footer with page-number fields) and the Markdown zip with figures. `tests/test_qa.py` has a table of cases for each QA check, plus ignore fingerprints, forced review issues and find & replace (preview, case, regex, CJK, locked segments, one version). `tests/test_lqa.py` covers MQM arithmetic, word counts, tolerant parsing, the LQA run in tag and JSON modes, and a pipeline run where a dropped date is forced through review and fixed. `tests/test_projects.py` covers the project store (TM scoring for 101/100/fuzzy and CJK, term matching, merging), the pipeline's TM pass against a seeded memory (exact matches skip the model, fuzzy ones reach the prompt), TM write-back on human confirmation (one by one only), adding TM units in bulk, and the project API. `tests/test_chinese.py` covers Chinese segmentation, text layers, find/replace without spaces, download names, and a full Chinese → English run (figure placement, clarify, termbase). `tests/test_layout_integration.py` runs the real PP-DocLayout MCP server; it is opt-in (`RUN_LAYOUT_TESTS=1 uv run pytest`).
 
 `tests/test_flow.py` runs the real workflow and editor against a scripted fake model. It covers:
 - OCR fan-out with a checker correction
@@ -163,12 +225,14 @@ cd backend && uv run pytest
 
 It needs no network access and finishes in about 2 seconds.
 
+The tests read their models from `tests/config/`, which points every step at a port nothing listens on, so they never call a real model (or read your `models.yaml`).
+
 ## API
 
 | Method | Path | |
 |---|---|---|
-| `GET` | `/api/config` | models per role, languages |
-| `GET` / `POST` | `/api/sessions` | list / upload a document to translate into English: PDF, image, TXT/MD, DOCX, PPTX, XLSX or XLIFF 2.0/1.2 (multipart: `file`, `source_lang`, optional `project_id`, which sets the source language); upload starts the ingest workflow |
+| `GET` | `/api/config` | the model of each step, languages, whether a dictionary is set up |
+| `GET` / `POST` | `/api/sessions` | list / upload a document to translate into English: PDF, image (PNG, JPG, WebP), TXT or MD (multipart: `file`, `source_lang`, optional `project_id`, which sets the source language); upload starts the ingest workflow |
 | `GET` / `DELETE` | `/api/sessions/{id}` | summary + document state (including `source_fixes`, the pending page fixes) + chat timeline |
 | `GET` | `/api/sessions/{id}/stream` | SSE for the active run; replays its buffered events, so you can reconnect at any time |
 | `POST` | `/api/sessions/{id}/clarifications` | `{answers: {q1: {"target": "cable tray", "note": ""}, q2: null}}`: resumes the paused workflow (`target` = the English term to use, `note` = an explanation; `null` = keep the recommendation) |
@@ -197,19 +261,15 @@ It needs no network access and finishes in about 2 seconds.
 | `GET` | `/api/sessions/{id}/versions/{n}` | translation snapshot `{segment_id: text}` |
 | `GET` | `/api/sessions/{id}/pages/{n}` | rendered page image |
 | `GET` | `/api/sessions/{id}/figures/{name}` | cropped figure image |
-| `GET` | `/api/sessions/{id}/export?format=original\|pdf\|docx\|html\|md\|bilingual\|xliff\|xliff12&version=&field=` | download a version. `original` is the translated Word/PowerPoint/Excel/XLIFF file; `pdf` is the original layout (PDFs with a text layer; rendered once per version and cached); `md` is a zip when the document has figures; `xliff` / `xliff12` are XLIFF 2.0 / 1.2 |
-| `POST` | `/api/sessions/{id}/import/xliff` | a returned XLIFF 2.0 or 1.2 → a proposal, plus a report (changes, unchanged, unknown, source changed, locked, kept confirmed, codes) |
-| `GET` | `/api/sessions/{id}/export/formats` | which formats this document supports (the layout PDF needs a PDF with a text layer) |
-| `GET` | `/api/sessions/{id}/preview/report?version=` | layout result per segment: `fit\|shrunk\|overflow\|unaligned`, plus boxes |
-| `GET` | `/api/sessions/{id}/preview/pages/{n}?version=` | a page of the translated PDF as PNG |
+| `GET` | `/api/sessions/{id}/export?format=docx\|md&version=&field=` | download a version: `docx` is the Word document (reflowed); `md` is Markdown, a zip when the document has figures |
+| `GET` | `/api/sessions/{id}/export/formats` | the download formats |
 | `GET` / `POST` | `/api/projects` | list / create `{name, source_lang, instructions, auto_confirm_context, lqa_threshold}` (the target is always English) |
 | `GET` / `PATCH` / `DELETE` | `/api/projects/{pid}` | with counts of documents, terms and TM units; `PATCH` takes the same fields as create; deleting removes the termbase and TM and keeps the documents |
 | `GET` / `POST` | `/api/projects/{pid}/terms` | list / add a term (an existing source is merged) |
 | `PATCH` / `DELETE` | `/api/projects/{pid}/terms/{tid}` | edit (replaces fields; 409 on a duplicate source) / delete |
 | `GET` | `/api/projects/{pid}/tm?q=` | concordance search (most recent units without `q`) |
+| `POST` | `/api/projects/{pid}/tm` | `[{source, target, origin?}]`: add TM units (a unit with the same source is updated). Returns `{added, updated}`. Used by the demo seeder; an integration point |
 | `DELETE` | `/api/projects/{pid}/tm/{uid}` | delete a TM unit |
-| `POST` | `/api/projects/{pid}/import` | `.tmx` → TM; `.tbx` / `.csv` → termbase. Returns `{kind, added, updated, warnings}` |
-| `GET` | `/api/projects/{pid}/export?format=tmx\|tbx\|csv` | download the TM or termbase |
 
 ## Demo
 
@@ -221,35 +281,29 @@ uv run python scripts/make_samples.py              # (re)generate the Chinese an
 uv run python scripts/seed_demo.py --reset --upload
 ```
 
-This creates two projects, each with a style guide, a termbase with forbidden variants and a translation memory, and uploads two documents into each:
-- **Acme Energie – Umspannwerk Nord** (German → English): `nachbegehung.pdf` and `pruefbericht.docx`.
-- **北区变电站改造 – UW-2291** (Chinese → English): `fucha-baogao.pdf` and `jiance-baogao.docx`.
+This creates two projects, each with a style guide, a termbase with forbidden variants and a translation memory, uploads one document into each, and lists more files to try:
+- **Acme Energie – Umspannwerk Nord** (German → English): `nachbegehung.pdf`.
+- **北区变电站改造 – UW-2291** (Chinese → English): `fucha-baogao.pdf`.
 
-Every PDF stops after reading for the source check (step 8): press **Continue to translation** to go on.
+Every PDF stops after reading for the source check (step 6): press **Continue to translation** to go on.
 
-1. **Questions before translating.** Upload `samples/vertragsauszug.pdf` (German) or `samples/anquan-peixun.pptx` (Chinese) into its project.
+1. **Questions before translating.** Upload `samples/vertragsauszug.pdf` into the German project, or open `fucha-baogao.pdf` in the Chinese one.
    - The step bar shows Read → (Check →) Analyse; the analysis reads the whole document first (the brief already knows what AG/AN or 三措一案 mean, though they are only defined later).
    - The questions explain each term in plain English, show the sentence in English, and preselect a recommendation. **Accept all recommendations & continue**, or pick another option.
    - The first draft already uses your answers (no re-translation pass). Terms you chose become approved project terms; recommendations you just accepted are saved as proposed (approve them in the Termbase tab).
 2. **Translation memory.** Open `nachbegehung.pdf` or `fucha-baogao.pdf`: the chat reports segments reused with no model call and fuzzy matches adapted; in **Segments**, a fuzzy match shows its diff and Alt+1 inserts it. Confirm a few segments with ⌘/Ctrl+Enter: they go into the TM.
 3. **Explain.** In **Segments**, click **explain** on any row: the agent says what the source means in plain English and whether the translation carries it (no edits). **Summarise** above the chat input does the same for the whole document.
-4. **Word round trip.** Open `pruefbericht.docx` / `jiance-baogao.docx`: tracked changes are noted, formatting shows as tags; download the translated Word file.
-5. **Vendor review.** Download menu → **Import a returned XLIFF…** → `samples/demo/pruefbericht.vendor.en.xlf` (or `samples/demo/zh/jiance-baogao.vendor.en.xlf`).
-   - The changes arrive as a proposal, in the chat and **inline in the Segments grid** (untick what you don't want; one change is refused because the vendor dropped a code).
-   - Accept: **Quality** shows the planted errors; **Run LQA** fails the document.
-6. **Agents fix it.** Next steps → **Fix N QA errors** (the editor proposes fixes), and **Apply termbase** above the chat input (consistency task). Accept; QA is clean; run LQA again.
-7. **Alternatives.** Tick two segments → **3 alternatives** → pick one per segment (in the grid or the chat) and accept.
-8. **Fix the OCR before translating.** Upload `samples/review/pruefvermerk-zweispaltig-scanned.pdf` (German) or `samples/review/jianli-tongzhi-shuanglan-scanned.pdf` (Chinese): after reading, the run stops at **Check** with *Check the source before translating*.
+4. **Quality, and agents fix it.** **Quality** lists the QA issues; **Run LQA** scores the document. Next steps → **Fix N QA errors** (the editor proposes fixes), and **Apply termbase** above the chat input (consistency task). Accept; run LQA again.
+5. **Alternatives.** Tick two segments → **3 alternatives** → pick one per segment (in the grid or the chat) and accept.
+6. **Fix the OCR before translating.** Upload `samples/review/pruefvermerk-zweispaltig-scanned.pdf` (German) or `samples/review/jianli-tongzhi-shuanglan-scanned.pdf` (Chinese): after reading, the run stops at **Check** with *Check the source before translating*.
    - Compare the reading with **Source & notes → Page images & OCR**: the paragraph running across the column break, the running header, the red stamp or seal.
    - Say what's wrong in plain words, e.g. *"Section 3 (Messwerte) got split in two at the column break: it ends with "Fehlerstrom-" and goes on with "Schutzeinrichtung wurde…" — it is one paragraph. The running header also appears twice at the top; keep only the header line. And the red stamp over section 4 is missing: it says "GEPRÜFT 14.03.2026 · Bauleitung UW-2291" — add it as its own line after section 4."* The chat proposes a page fix: before/after, plus the words it adds or removes and the passages it moves.
    - Check the word list and any moved passages against the page image, **Accept**, then **Continue to translation**. Prompts that worked are in [docs/TESTING.md](docs/TESTING.md).
-9. **Exchange.** Download XLIFF 2.0 / 1.2 and the project's TMX/TBX. The chip in the header shows the tokens used per step.
-
-Regenerate the German vendor file after changing `pruefbericht.docx`: `uv run python scripts/make_vendor_xliff.py ../samples/pruefbericht.docx ../samples/demo/pruefbericht.vendor.en.xlf` (the Chinese one comes from `make_samples.py`).
+7. **Download.** Download menu → the Word document (reflowed, with the running header and footer) or Markdown. The chip in the header shows the tokens used per step.
 
 ## Known limitations / next steps
 
-- Layout-preserving PDFs need a text layer: scans and page images get the reflowed formats, the review table and XLIFF, not a translated PDF in the original layout. Text inside images (diagram labels) keeps its original language in the PDF, and its translation appears as a legend in the reflowed exports. Re-typeset text uses Noto Sans (plus a CJK fallback), not the document's original font.
+- Downloads are reflowed (Word, Markdown): the original page layout isn't reproduced.
 - Figures keep their original pixels: text inside an image is translated as a legend, not redrawn into the picture. Figures are the picture, chart and seal blocks PP-DocLayoutV3 finds (plus pictures embedded in the PDF).
 - English is the only target language (the multilingual projects of M6 were removed on purpose).
 - One run per document at a time. Runs live in the API process: they survive browser disconnects but not a server restart. An interrupted document shows a **Retry** button, which restarts ingest but reuses the pages already read (OCR is cached per page). A paused question step does survive a restart, because it is stored in the session DB.
@@ -257,6 +311,5 @@ Regenerate the German vendor file after changing `pruefbericht.docx`: `uv run py
 - Questions before translating come from the analysis; terms the translator still can't resolve pause once more after the draft. Terms flagged during review or chat don't pause anything: they appear as cards that you answer through the editor, which proposes the resulting edits for your approval.
 - The analysis reads up to `ANALYSIS_CHUNK_CHARS` (40,000) characters per call; longer documents are analysed in parts, each seeing the brief so far.
 - Translation runs pages in order, so it has no cross-page parallelism. With a single small GPU at `MAX_CONCURRENCY=1` that costs nothing; with spare capacity, long documents are slower than with the old parallel batches. OCR and review still run in parallel.
-- Office: PowerPoint charts and SmartArt, Word comments, and Excel comments and chart titles aren't translated yet. A Word span inside a hyperlink takes the link's formatting. XLIFF 1.2 is generic: Trados SDLXLIFF confirmation levels (`sdl:conf`) and memoQ's own status attributes aren't read. The XLIFF output hasn't been validated against the OASIS schemas.
 - LQA scores are per 1000 source words, so on very short documents a single error swings the score a lot (one major error in 100 words = 50 points).
 - No auth; everything runs as a single local user.

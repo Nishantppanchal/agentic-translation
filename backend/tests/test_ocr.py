@@ -13,8 +13,8 @@ from google.adk.artifacts import InMemoryArtifactService
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from translator import state as st
-from translator.agents import pipeline
+from translator.agents import pipeline, steps, workers
+from translator.document import state as st
 
 from .test_figures import INTRO, OUTRO, _pdf
 from .test_flow import _prompt, _reply
@@ -50,8 +50,8 @@ def test_a_document_read_by_the_vision_llm(monkeypatch):
         prompts.append(text)
         return _reply(HEBREW)
 
-    monkeypatch.setattr(pipeline.ocr_reader, "before_model_callback", vision)
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
+    monkeypatch.setattr(workers.ocr_reader, "before_model_callback", vision)
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
 
     async def main():
         s, _, events = await _read((SAMPLES / "languages" / "acceptance-he-scanned.pdf").read_bytes())
@@ -76,8 +76,8 @@ def test_the_vision_engine_keeps_pictures_and_reads_their_text(monkeypatch):
         assert "outlined in red" in text  # the picture is marked on the page
         return _reply(f"{INTRO}\n\n[[FIGURE 1]]\n\n{OUTRO}")
 
-    monkeypatch.setattr(pipeline.ocr_reader, "before_model_callback", vision)
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
+    monkeypatch.setattr(workers.ocr_reader, "before_model_callback", vision)
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
 
     async def main():
         s, artifacts, _ = await _read(_pdf())
@@ -91,9 +91,9 @@ def test_the_vision_engine_keeps_pictures_and_reads_their_text(monkeypatch):
 
 def test_the_check_is_guarded(monkeypatch):
     """A one-letter fix is applied, a rewording only listed."""
-    monkeypatch.setattr(pipeline.ocr_reader, "before_model_callback",
+    monkeypatch.setattr(workers.ocr_reader, "before_model_callback",
                         lambda *_: _reply("Die Mängel sind zu beseitigen. Die Kabelprische ist nicht geerdet."))
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply(
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply(
         "<verdict>fixed</verdict>\n<issues>\n- …\n</issues>\n<markdown>\n"
         "Die Mängel sind umgehend zu beheben. Die Kabelpritsche ist nicht geerdet.\n</markdown>"))
 
@@ -107,7 +107,7 @@ def test_the_check_is_guarded(monkeypatch):
 
 
 def test_a_page_is_read_again_only_when_its_settings_change():
-    from translator.documents import load_pages
+    from translator.document.pages import load_pages
 
     [page] = load_pages((SAMPLES / "wartungsbericht-scanned.pdf").read_bytes(), "w.pdf")
-    assert re.match(r"^[0-9a-f]{40}$", pipeline._ocr_signature(page))
+    assert re.match(r"^[0-9a-f]{40}$", steps.read._ocr_signature(page))

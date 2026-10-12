@@ -16,11 +16,15 @@ from google.adk.models import LlmResponse
 from google.adk.sessions import InMemorySessionService
 from google.genai import types
 
-from translator import lqa, projects, structured
-from translator import state as st
-from translator.agents import pipeline
-from translator.agents.lqa import lqa_reviewer, lqa_workflow
-from translator.formats import parse_issues, parse_scores
+from translator import projects
+from translator.agents import pipeline, workers
+from translator.agents.lqa import lqa_workflow
+from translator.agents.workers import lqa_reviewer
+from translator.document import state as st
+from translator.models import structured
+from translator.models.replies import parse_issues, parse_scores
+from translator.quality import lqa
+
 from .fakes import fake_ocr
 
 
@@ -195,10 +199,10 @@ def test_review_forces_qa_errors_and_records_scores(monkeypatch):
     pdf = pymupdf.open()
     pdf.new_page().insert_text((72, 72), "Bericht")
     fake_ocr(monkeypatch, page)
-    monkeypatch.setattr(pipeline.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
-    monkeypatch.setattr(pipeline.translator, "before_model_callback", fake_translate)
-    monkeypatch.setattr(pipeline.reviewer, "before_model_callback", fake_review)
-    monkeypatch.setattr(pipeline.refiner, "before_model_callback", fake_refine)
+    monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
+    monkeypatch.setattr(workers.translator, "before_model_callback", fake_translate)
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", fake_review)
+    monkeypatch.setattr(workers.refiner, "before_model_callback", fake_refine)
 
     async def main():
         sessions, artifacts = InMemorySessionService(), InMemoryArtifactService()

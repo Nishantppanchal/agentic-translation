@@ -1,7 +1,7 @@
 from google.adk.events import Event
 from google.genai import types
 
-from translator.timeline import stream_events
+from translator.api.timeline import stream_events
 
 
 def _chunk(text: str, **kw) -> Event:

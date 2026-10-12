@@ -1,0 +1,36 @@
+# The models the pipeline can use. Copy this file to models.yaml (which git ignores) and edit it there.
+# config/pipeline.yaml says which model (by id) does each step.
+#
+# Any OpenAI-compatible chat-completions server works: vLLM, SGLang, OpenRouter, Ollama, LM Studio, …
+# ${NAME} is the environment variable NAME — put keys and tokens in backend/.env and refer to them here, so this
+# file never holds a secret. ${NAME:-} is one that may be unset.
+
+defaults:                    # every model gets these; a model's own values win
+  headers: {}                # sent with every request to every model, e.g.  X-Gateway-Token: ${GATEWAY_TOKEN}
+  forward_headers: []        # headers of the API request that starts a run, passed on to all its model calls,
+                             # e.g. [X-Request-Id, X-Tenant-Id]
+  timeout: 180               # seconds per call (a stalled call is retried)
+  retries: 5                 # per call, on rate limits and server errors
+  temperature: 0.2
+
+models:
+  - id: qwen-flash                        # what pipeline.yaml refers to
+    model_name: qwen/qwen3.8-flash        # the name the server knows the model by
+    url: https://openrouter.ai/api/v1     # the server's OpenAI-compatible base URL
+    api_key: ${OPENROUTER_API_KEY}        # sent as "Authorization: Bearer …"
+
+  - id: claude-haiku
+    model_name: anthropic/claude-haiku-5.5
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+
+  # A model on your own vLLM server (`vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8100 --api-key …`):
+  # - id: qwen-vl
+  #   model_name: Qwen/Qwen3-VL-8B-Instruct   # as GET <url>/models lists it
+  #   url: http://gpu-1:8100/v1
+  #   api_key: ${VLLM_API_KEY:-}
+  #   headers:                                 # added to defaults.headers (the same name: this one wins)
+  #     CF-Access-Client-Id: ${CF_ACCESS_ID}
+  #   extra_body:                              # extra request fields the server accepts
+  #     chat_template_kwargs: {enable_thinking: false}
+  #   structured_output: true                  # JSON-schema answers (false: a tag format instead)

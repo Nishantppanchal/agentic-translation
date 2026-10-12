@@ -7,16 +7,16 @@ GmbH (甲方); Contractor: Albrecht Elektrotechnik GmbH (乙方, site manager K.
 
 - **English references** for every Chinese sample, the German contract and the two source-check scans are in `reference/<sample>.en.md`.
   Each ends with translator's notes on the planted terms.
-- **Generators.** `backend/scripts/make_samples.py` regenerates every file marked *new* below, byte for byte:
+- **Generators.** `backend/scripts/make_samples.py` regenerates, byte for byte, `fucha-baogao.pdf` and
+  `vertragsauszug.pdf` (with their `-scanned.pdf` copies), `demo/zh/termbase.csv`, `demo/zh/memory.json` and the
+  references of `yanshou-baogao`, `fucha-baogao` and `vertragsauszug`:
   `cd backend && uv run python scripts/make_samples.py` (it does not write this file).
   `backend/scripts/make_language_samples.py` writes `languages/` (the acceptance report in 21 more languages, see
   [Other languages](#other-languages)); `backend/scripts/make_review_samples.py` writes `review/` (the
   [source-check scans](#source-check)) and their English references. The older samples were
-  made by one-off scripts outside the repo; `demo/pruefbericht.vendor.en.xlf` comes from
-  `backend/scripts/make_vendor_xliff.py`.
-- **How the numbers below were computed.** Segment ids and counts come from `translator.filters.office.extract`.
-  QA results come from `translator.qa.run` with the project termbase. TM scores use the current lookup in
-  `translator/projects.py`: the key is normalised (NFKC, case-folded, punctuation and spaces removed); the fuzzy
+  made by one-off scripts outside the repo.
+- **How the numbers below were computed.** QA results come from `translator.quality.qa.run` with the project
+  termbase. TM scores use the current lookup in `translator/projects.py`: the key is normalised (NFKC, case-folded, punctuation and spaces removed); the fuzzy
   score is Levenshtein similarity over words, or over characters for Chinese. PDF segment ids depend on the OCR
   model's markdown, so PDF traps are given by content and page.
 - **Benign QA warnings.** A correct translation still gets a few warnings:
@@ -34,47 +34,42 @@ GmbH (甲方); Contractor: Albrecht Elektrotechnik GmbH (乙方, site manager K.
 | `abnahmeprotokoll.pdf` (+ `-scanned.pdf`) | de | PDF, text layer / scan | 2 pp. | Acceptance report; source of the German TM | existing |
 | `nachbegehung.pdf` | de | PDF | 2 pp. | TM leverage (exact + fuzzy), header/footer | existing |
 | `wartungsbericht.pdf` (+ `-scanned.pdf`) | de | PDF | 1 p. | Raster diagram with German labels | existing |
-| `pruefbericht.docx` | de | Word | 21 seg. | Office round trip, inline codes, tracked changes, vendor XLIFF | existing |
-| `unterweisung.pptx` | de | PowerPoint | 12 seg. | Slides and speaker notes | existing |
-| `maengelliste.xlsx` | de | Excel | 18 seg. | Shared strings, rich text, COUNTIF literal | existing |
 | `yanshou-baogao.pdf` (+ `-scanned.pdf`) | zh | PDF | 1 p. | Chinese acceptance report; source of the Chinese TM | existing |
 | `fucha-baogao.pdf` (+ `-scanned.pdf`) | zh | PDF | 2 pp. | Forward definition, cross-page paragraph, TM leverage, questions | **new** |
-| `jiance-baogao.docx` | zh | Word | 50 seg. | Codes, tracked changes, repeated sentence, Chinese vendor XLIFF | **new** |
-| `anquan-peixun.pptx` | zh | PowerPoint | 26 seg. | Terms defined on later slides, shrink-on-overflow | **new** |
-| `quexian-qingdan.xlsx` | zh | Excel | 31 seg. | Shared strings, rich text, formulas over status texts, real dates | **new** |
 | `vertragsauszug.pdf` (+ `-scanned.pdf`) | de | PDF | 2 pp. | AG/AN defined late, VOB/B legal terms, repeated clause | **new** |
-| `demo/termbase.csv`, `demo/memory.tmx` | de→en | CSV, TMX | 12 + 12 | German project termbase and TM | existing |
-| `demo/pruefbericht.vendor.en.xlf` | de→en | XLIFF 2.0 | 21 units | Vendor file with planted errors | existing |
-| `demo/zh/termbase.csv`, `demo/zh/memory.tmx` | zh→en | CSV, TMX | 15 + 9 | Chinese project termbase and TM | **new** |
-| `demo/zh/jiance-baogao.vendor.en.xlf` | zh→en | XLIFF 2.0 | 50 units | Chinese vendor file with planted errors | **new** |
-| `reference/*.en.md` | en | Markdown | 9 files | English references (`acceptance-report.en.md` fits every file in `languages/`) | **new** |
+| `demo/termbase.csv`, `demo/memory.json` | de→en | CSV, JSON | 12 + 12 | German project termbase and TM | existing |
+| `demo/zh/termbase.csv`, `demo/zh/memory.json` | zh→en | CSV, JSON | 15 + 9 | Chinese project termbase and TM | **new** |
+| `reference/*.en.md` | en | Markdown | 6 files | English references (`acceptance-report.en.md` fits every file in `languages/`) | **new** |
 | `languages/acceptance-<code>.pdf` (+ `-scanned.pdf`) | 21 languages | PDF, text layer / scan | 1 p. | The same acceptance report in every other source language: OCR per script, right-to-left, captions, local legal terms and abbreviations | **new** |
 | `review/pruefvermerk-zweispaltig-scanned.pdf` | de | PDF, scan | 1 p. | Source check: two columns, a paragraph across the column break, a stamp over the text | **new** |
 | `review/jianli-tongzhi-shuanglan-scanned.pdf` | zh | PDF, scan | 1 p. | Source check: two columns, a paragraph across the column break, a seal over the text | **new** |
 
 ### Trap matrix (new samples)
 
-| Trap | fucha-baogao.pdf | jiance-baogao.docx | anquan-peixun.pptx | quexian-qingdan.xlsx | vertragsauszug.pdf |
-|---|---|---|---|---|---|
-| Ambiguous terms to ask about | 消缺, 运维单位, 保电 | 运维单位, 消缺 | 保电 (运维单位) | 运维方, 消缺 | Behinderungsanzeige, Bedenkenanzeige |
-| Used before it is defined | 三措一案 (p. 1 → p. 2) | – | 五防, 两票三制 (slide 1 → 3, 4) | – | AG, AN (p. 1 → Annex 1, p. 2) |
-| Repeated segment | 乙方应在整改完成后5个工作日内… (p. 1, p. 2) | 测试条件：… (p1.10, p1.28) | 严禁擅自解除防误闭锁装置。 (p3.8, p4.7) | shared strings ×3 | § 4 (3) = § 5 (3) |
-| Paragraph across a page break | 第3项缺陷涉及UPS直流母线… | – | – | – | § 7 (1) |
-| Running header + page footer | yes (第 n 页 共 2 页) | header + PAGE field | – | – | yes (Seite n von 2) |
-| TM matches (zh / de memory) | 5 exact, 2 fuzzy | 1 exact (三、结论) | none | none | none |
-| Vendor XLIFF | – | 6 planted errors | – | – | – |
+| Trap | fucha-baogao.pdf | vertragsauszug.pdf |
+|---|---|---|
+| Ambiguous terms to ask about | 消缺, 运维单位, 保电 | Behinderungsanzeige, Bedenkenanzeige |
+| Used before it is defined | 三措一案 (p. 1 → p. 2) | AG, AN (p. 1 → Annex 1, p. 2) |
+| Repeated segment | 乙方应在整改完成后5个工作日内… (p. 1, p. 2) | § 4 (3) = § 5 (3) |
+| Paragraph across a page break | 第3项缺陷涉及UPS直流母线… | § 7 (1) |
+| Running header + page footer | yes (第 n 页 共 2 页) | yes (Seite n von 2) |
+| TM matches (zh / de memory) | 5 exact, 2 fuzzy | none |
 
 ### Setting up the projects
 
-`backend/scripts/seed_demo.py` creates both demo projects through the API, each translated into English:
-- **Acme Energie – Umspannwerk Nord** (German): `demo/termbase.csv` and `demo/memory.tmx`;
+`backend/scripts/seed_demo.py` creates both demo projects through the API, each translated into English. It adds
+the termbase rows through the terms API and the memory through `POST /api/projects/{pid}/tm`:
+- **Acme Energie – Umspannwerk Nord** (German): `demo/termbase.csv` and `demo/memory.json`;
 - **北区变电站改造 – UW-2291** (Chinese (Simplified)): `demo/zh/termbase.csv` (15 terms, `Chinese;English;Note;Forbidden`,
-  semicolon-separated, forbidden variants separated by `|`) and `demo/zh/memory.tmx` (9 units).
+  semicolon-separated, forbidden variants separated by `|`) and `demo/zh/memory.json` (9 units).
+
+`memory.json` is a JSON list of `{source, target, origin}`. With `--upload` the script uploads `nachbegehung.pdf`
+(German) and `fucha-baogao.pdf` (Chinese); it also lists more files to try, such as the source-check scans.
 
 ```bash
 cd backend
 uv run python scripts/seed_demo.py --reset            # both projects
-uv run python scripts/seed_demo.py --only zh --upload # just the Chinese one, and upload fucha-baogao.pdf + jiance-baogao.docx
+uv run python scripts/seed_demo.py --only zh --upload # just the Chinese one, and upload fucha-baogao.pdf
 ```
 
 ---
@@ -273,7 +268,7 @@ layer). Reference: `reference/fucha-baogao.en.md`.
    page 1 (after the findings) and page 2 (after the new conclusion). Expected: identical translations. If they
    differ, the QA consistency check warns.
 
-6. **TM leverage** against `demo/zh/memory.tmx`. Sources are exactly the strings of `yanshou-baogao.pdf`.
+6. **TM leverage** against `demo/zh/memory.json`. Sources are exactly the strings of `yanshou-baogao.pdf`.
 
    | Segment (source) | Match | TM unit / note |
    |---|---|---|
@@ -287,7 +282,7 @@ layer). Reference: `reference/fucha-baogao.en.md`.
    | 缺陷复查报告——北区变电站 (title) | 69 %: no match | below the 75 % threshold |
    | 一、复查范围 | 67 %: no match | |
 
-   The TMX has no context, so expect 100 % rather than 101 %. Expected: the 5 exact matches are reused without
+   The memory has no context, so expect 100 % rather than 101 %. Expected: the 5 exact matches are reused without
    a model call, and the 2 fuzzy ones are offered to the translator and adapted.
 
 7. **Numbers, dates, times and amounts** for QA:
@@ -300,164 +295,6 @@ layer). Reference: `reference/fucha-baogao.en.md`.
 
 **Expected QA on a correct translation:** 0 errors. Warnings: the heading numbers 1.–5. (benign), and
 possibly a length warning on the short date line.
-
----
-
-### `jiance-baogao.docx`: Chinese, Word
-
-**Summary.** 接地及绝缘电阻检测报告 (earthing and insulation resistance test report) of 18 May 2026. The
-Contractor tested:
-- the main earth grid: 0.42 Ω, which meets 0.5 Ω;
-- earthing continuity: basement cable tray 0.08 Ω pass, UPS cabinet 0.35 Ω fail;
-- insulation of the 110 kV switchgear phases A/B/C: 2500/2300/2400 MΩ, all pass.
-
-The UPS cabinet must be fixed and retested by 15 June 2026. Reference: `reference/jiance-baogao.en.md`.
-
-**Extraction** (`office.extract`): 50 segments, all translatable;
-`{'pages': 2, 'tracked_changes': 2, 'with_codes': 4, 'in_formulas': 0}`. Key segments:
-
-| Id | Where | Source (abridged) | What it tests |
-|---|---|---|---|
-| p1.1 | Footer | `第 <x id="1"/>1<x id="2"/> 页` | live PAGE field (field + field end codes) |
-| p1.2 | Header | 北区变电站改造工程 · UW-2291 · 内部资料 | header |
-| p1.3 | Body, Heading 1 | 接地及绝缘电阻检测报告 | heading style |
-| p1.4 | Body | 受甲方委托，乙方于2026年5月18日…的`<g id="1">主接地网</g>`…0.42 Ω，`<g id="2">满足设计值0.5 Ω的要求</g>`。 | bold term (g1), italic phrase (g2), 甲方/乙方, date, numbers |
-| p1.5 | Heading 2 | 一、检测依据 | |
-| p1.6 | Body | 检测按照经审批的`<g id="1">检测方案</g>`及DL/T 475—2017执行。`<x id="2"/>` | hyperlink (g1, to example.com), footnote mark (x2) |
-| p1.7 | Body | 检测前，运维单位已按操作票完成相关倒闸操作… | 运维单位 (ask), 倒闸操作 (termbase) |
-| p1.10, p1.28 | Body | 测试条件：天气晴，环境温度25 ℃，相对湿度45%。 | repeated sentence |
-| p1.11–p1.26 | Table 1 | 测量位置/实测值/标准要求/结论; 主接地网 0.42 Ω ≤0.5 Ω 合格; 地下室电缆桥架 0.08 Ω; UPS屏柜 0.35 Ω (p1.24) 不合格 | table cells |
-| p1.29–p1.44 | Table 2 | the same headers; 110 kV开关柜A/B/C相 2500/2300/2400 MΩ ≥1000 MΩ 合格 | table cells |
-| p1.45 | Heading 2 | 三、结论 | TM exact match (“3. Conclusion”, from the yanshou memory) |
-| p1.46 | Body | UPS屏柜接地导通电阻超标，判定为不合格。乙方须于2026年6月15日前完成消缺并复测。 | tracked changes: deletion 尽快 and insertion 于2026年6月15日前, read as accepted; 消缺 (ask) |
-| p1.47 | Body | 其余检测项目均合格，相关设备具备投运条件。 | |
-| p1.48, p1.49 | Body | 检测人员：赵磊 / 审核：王建国 | |
-| p2.1 | Footnote 1 | `<x id="1"/>`DL/T 475—2017《接地装置特性参数测量导则》。 | footnote text (footnote number code) |
-
-**Traps and expected behaviour.**
-
-- **Questions:**
-  - **运维单位** (p1.7) and **消缺** (p1.46) should be asked; same reasoning as `fucha-baogao.pdf`.
-  - 操作票 may come up (switching order vs. operation ticket).
-  - Termbase terms (甲方, 乙方, 北区变电站, 电缆桥架, 接地, 倒闸操作, 绝缘电阻) must not be asked.
-- **Tracked changes:** the chat notes 2 tracked changes. The source to translate contains 于2026年6月15日前
-  and not 尽快. The translated Word file has no revision marks (`tracked_changes_accepted: 2` on write).
-- **Consistency groups** (QA checks sources of 3+ characters):
-  - p1.10 = p1.28;
-  - p1.11 = p1.29, p1.12 = p1.30, p1.13 = p1.31;
-  - p1.21 = p1.25 (≤0.2 Ω);
-  - p1.35 = p1.39 = p1.43 (≥1000 MΩ).
-- **Inline codes:** bold, italic, link and footnote mark must survive into the translation and the exported
-  Word file. So must the PAGE field in the footer.
-- **Expected QA on a correct translation:** 0 errors. Benign warnings on the headings p1.5 (1), p1.8 (2),
-  p1.9 (2.1), p1.27 (2.2) and p1.45 (3).
-
-**Vendor XLIFF: `demo/zh/jiance-baogao.vendor.en.xlf`.** XLIFF 2.0, `srcLang="zh-Hans" trgLang="en"`, 50 units,
-state `translated` (`at:draft`). Unit ids and sources are exactly the extraction above. Import it on
-`jiance-baogao.docx` (download menu → *Import a returned XLIFF…*).
-- Import report: **`codes: ['p1.6']`**: p1.6 is refused because the vendor dropped the footnote mark
-  `<x id="2"/>`. No unknown units and no source changes. On an untranslated document there are 49 changes;
-  after the pipeline has translated it, units identical to the AI's translation count as unchanged (about 30
-  changes in a live run).
-- After accepting the proposal, QA shows the planted errors:
-
-  | Segment | Planted error | Expected QA |
-  |---|---|---|
-  | p1.4 | 甲方 translated “Party A” (forbidden) | terminology **error**: forbidden “Party A” → use “Client” |
-  | p1.24 | 0.35 Ω → “0.53 Ω” | numbers **error** (0.35 missing) + warning (0.53 extra) |
-  | p1.46 | 2026年6月15日 → “15 May 2026” | numbers **error** (date missing) + warning (date extra) |
-  | p1.47 | left in Chinese | untranslated **error** (+ length warning) |
-  | p1.10 / p1.28 | same sentence translated two ways (“clear weather, ambient temperature…” vs “sunny, ambient temp.…”) | consistency **warning** on both |
-  | p1.6 | dropped footnote code | refused on import, so it stays untranslated: untranslated + numbers errors until translated |
-
-  Plus the benign heading-number warnings above.
-- Totals with the zh termbase on an untranslated document: 7 errors, 10 warnings. After the pipeline has
-  translated it, p1.6 keeps the AI's translation, so 4 errors (live run: 4 errors, 10 warnings). The other vendor wording (“O&M unit”, “eliminate the
-  defect”, “Checked by”) is acceptable and not flagged.
-
----
-
-### `anquan-peixun.pptx`: Chinese, PowerPoint, 4 slides
-
-**Summary.** 停电作业安全培训 (safety training for outage work) for project UW-2291:
-- Slide 1: title and subtitle, which demands strict 两票三制 and 五防.
-- Slide 2: preparation before work, including the 保电 period 7–10 June.
-- Slide 3: the Five Preventions.
-- Slide 4: the Two Permits and Three Systems, plus a fixed-size slogan box.
-
-Every slide has speaker notes. Default 4:3 template. Reference: `reference/anquan-peixun.en.md`.
-
-**Extraction:** 26 segments; `{'pages': 4, 'with_codes': 0}`. Ids:
-
-| Slide | Title | Body | Other | Notes |
-|---|---|---|---|---|
-| 1 | p1.1 | p1.2, p1.3 (subtitle; p1.3 = 严格执行两票三制，全面落实五防要求) | | p1.4, p1.5 |
-| 2 | p2.1 | p2.2–p2.5 (p2.3 倒闸操作/运维单位; p2.4 110 kV, 1.5 m; p2.5 6月7日至6月10日为保电期…) | | p2.6 |
-| 3 | p3.1 什么是“五防” | p3.2–p3.6 (the five rules) | | p3.7, p3.8 |
-| 4 | p4.1 什么是“两票三制” | p4.2–p4.4 | p4.5 `TextBox 3`: 安全第一、预防为主、综合治理 | p4.6, p4.7 |
-
-**Traps and expected behaviour.**
-- **Forward definitions:**
-  - **五防** and **两票三制** are used on slide 1 (p1.3). They are defined on slide 3 (p3.1–p3.6: the five
-    anti-maloperation rules) and slide 4 (p4.2–p4.3: work permit + switching order; shift handover, patrol
-    inspection, periodic testing and changeover).
-  - Expected: the analysis uses the later slides, so p1.3 gets the same terms as the definition slides
-    (reference: “Five Preventions”, “Two Permits and Three Systems”). No question is needed. If one is asked,
-    its guess reflects slides 3–4.
-- **Questions:**
-  - **保电** (p2.5, p2.6) should be asked.
-  - 运维单位 (p2.3, p2.6) may be.
-  - Termbase terms 倒闸操作, 电网调度中心, 接地 and 北区变电站 must not be.
-- **Repeat:** p3.8 = p4.7 (严禁擅自解除防误闭锁装置。): one consistency group.
-- **Shrink on overflow:**
-  - p4.5 is a fixed-size text box: 4.6 × 0.62 in, 20 pt bold, `<a:noAutofit/>`. The Chinese fits on one line.
-    The English (“Safety first, prevention foremost, comprehensive management”) is about 4× longer.
-  - Expected on download: the box gets `<a:normAutofit/>`.
-  - With the reference translation, `office.write` reports `autofit: 13`: every title, body, the text box and
-    every notes body grows by more than 10%.
-- **Dates/numbers:** 6月7日至6月10日 (keep both dates), 45分钟, 80分, 110 kV, 1.5 m.
-- **Expected QA on a correct translation:** 0 errors, 0 warnings.
-
----
-
-### `quexian-qingdan.xlsx`: Chinese, Excel, 2 sheets
-
-**Summary.** 缺陷清单 (defect list), with two sheets:
-- **缺陷**: six defects with columns 编号/位置/缺陷描述/责任方/整改期限/状态. 编号 holds numbers, 整改期限 real
-  Excel dates (format yyyy"年"m"月"d"日), 状态 已整改/未整改.
-- **汇总**: formulas
-  - `B2 =COUNTA(缺陷!A2:A7)`
-  - `B3 =COUNTIF(缺陷!F:F,"已整改")`
-  - `B4 =COUNTIF(缺陷!F:F,"未整改")`
-  - `B5 =B3/B2`
-  - `B6 =COUNTIF(缺陷!D:D,"乙方")`
-  - `B9 =B7*B8`
-
-  The formulas carry cached results 6, 3, 3, 50%, 4 and 31,250.00. The sheet also has numbers B7 625000 and
-  B8 5%, and the date B10 2026-05-20.
-
-Reference: `reference/quexian-qingdan.en.md`.
-
-**Extraction:** 31 segments; `{'pages': 2, 'with_codes': 1, 'in_formulas': 3}`. Shared strings, with first
-use and repeats:
-- p1.9 乙方 (D2, +3 more), p1.10 已整改 (F2, +2 more), p1.15 未整改 (F4, +2 more);
-- p1.11 110 kV开关室 (+1), p1.13 UPS室 (+1), p1.19 运维方 (+1).
-
-Rich text: p1.20 (C7) `<g id="1">【重要】</g>2号主变110 kV侧隔离开关触头发热，红外测温82 ℃` (bold run).
-formula_refs: p1.9 → 汇总!B6, p1.10 → 汇总!B3, p1.15 → 汇总!B4. Numbers and dates are cell values, not
-segments.
-
-**Traps and expected behaviour.**
-- **Formula literals:** p1.9, p1.10 and p1.15 are compared against by COUNTIF formulas. Expected: the translated
-  workbook updates those literals to the translations (`COUNTIF(缺陷!F:F,"Not rectified")`), so the counts stay
-  3 / 3 / 4; the download menu notes it.
-- **Shared strings:** one translation per shared string covers all its cells. 已整改/未整改 must not be
-  translated two ways.
-- **Questions:** **运维方** (p1.19, also inside p1.18) should be asked: it is the O&M side as opposed to 乙方
-  (Contractor). **消缺** (p1.18) should be asked too.
-- **Expected QA on a correct translation:** 0 errors. Warnings:
-  - terminology warnings on p1.10/p1.15 when rendered “Rectified” / “Not rectified” (inflection; benign).
-- No TM matches: the yanshou memory stores its table as one unit, not cell by cell.
 
 ---
 
@@ -491,7 +328,7 @@ Seite 2 von 2. Reference: `reference/vertragsauszug.en.md`. Use it in the German
    (§ 8 (1)), whether to expand **VOB/B**, and **fiktive Abnahme** (deemed acceptance).
 
    **Abnahme** and **Sicherheitseinbehalt** are in `demo/termbase.csv` (acceptance; security retention). With the
-   termbase imported they must not be asked. Without a project they are reasonable questions.
+   termbase seeded they must not be asked. Without a project they are reasonable questions.
 3. **Paragraph across the page break.** § 7 (1) is split mid-sentence:
    - page 1 ends with …nach Zugang der Fertigstellungsanzeige beim AG;
    - page 2 starts with durchzuführen. Über die Abnahme….
@@ -506,7 +343,7 @@ Seite 2 von 2. Reference: `reference/vertragsauszug.en.md`. Use it in the German
    - § 6 Abs. 1 → § 6(1), LV-Position 4.2.7, Ausgabe 2016.
 6. **Termbase hits:** Umspannwerk Nord (header, title, intro → Substation North; forbidden “Substation Nord”),
    Netzleitstelle, Abnahme, Gewährleistungsfrist, Sicherheitseinbehalt, Auftraggeber, Auftragnehmer.
-7. **TM:** no segment reaches 60 % against `demo/memory.tmx`, so the translation memory has no effect.
+7. **TM:** no segment reaches 60 % against `demo/memory.json`, so the translation memory has no effect.
 
 **Expected QA on a correct translation:** 0 errors, 0 warnings.
 
@@ -534,13 +371,13 @@ Same format as `demo/termbase.csv`: `Chinese;English;Note;Forbidden`, with `|` b
 | 电网调度中心 | network control centre | grid dispatching center, dispatch center |
 | 绝缘电阻 | insulation resistance | isolation resistance |
 
-The question terms 两票三制, 五防, 消缺, 三措一案, 运维单位/运维方 and 保电 are deliberately **not** in the
+The question terms 消缺, 三措一案, 运维单位 and 保电 are deliberately **not** in the
 termbase. 接地 maps to “earth”, so that earthing / earthed / earth grid all satisfy the substring check.
 
-### `demo/zh/memory.tmx`: zh→en translation memory, 9 units
+### `demo/zh/memory.json`: zh→en translation memory, 9 units
 
-Confirmed translations of `yanshou-baogao.pdf` (origin `yanshou-baogao.pdf (confirmed)`, `srclang="zh-Hans"`),
-in the same conventions as `demo/memory.tmx`:
+Confirmed translations of `yanshou-baogao.pdf`, as `{source, target, origin}` units (origin
+`yanshou-baogao.pdf (confirmed)`), in the same conventions as `demo/memory.json`:
 - one unit per heading or paragraph, without markdown heading markers;
 - the table as one markdown-table unit;
 - no unit for the diagram labels.
@@ -559,8 +396,7 @@ Units, in order:
 The English is the text of `reference/yanshou-baogao.en.md`.
 
 Expected: re-translating `yanshou-baogao.pdf` in the Chinese project gives exact matches for all 9 units. The
-figure legend is translated normally. See `fucha-baogao.pdf` and `jiance-baogao.docx` (p1.45) for leverage in
-other documents.
+figure legend is translated normally. See `fucha-baogao.pdf` for leverage in another document.
 
 ---
 
@@ -575,12 +411,12 @@ other documents.
 - the switching authorisation under BA-17 and the Netzleitstelle;
 - signatures.
 
-**Exercises.** Text-layer and scan OCR, a table, and layout-preserving PDF output from the text-layer PDF.
+**Exercises.** Text-layer and scan OCR, and a table.
 
 **Traps.**
 - Termbase hits: Umspannwerk Nord, Kabelpritsche, Zwischenkreis, Abnahme, Gewährleistungsfrist,
   Sicherheitseinbehalt, Schaltberechtigung, Netzleitstelle, Auftraggeber, Auftragnehmer.
-- Its confirmed translation is `demo/memory.tmx`, so re-translating it in the German project matches every
+- Its confirmed translation is `demo/memory.json`, so re-translating it in the German project matches every
   unit exactly.
 
 ### `nachbegehung.pdf`: German, 2 pages
@@ -588,7 +424,7 @@ other documents.
 **Summary.** Protokoll der Nachbegehung (follow-up inspection) of 06.05.2026 for the same defects. Running
 header “Umspannwerk Nord · Projekt UW-2291 · Vertraulich”; footer “Seite n von 2”.
 
-**TM against `demo/memory.tmx`:**
+**TM against `demo/memory.json`:**
 - **Exact (100 %):** 2. Festgestellte Mängel; Die Mängel sind bis zu den genannten Fristen zu beseitigen. …;
   3. Ergebnis; Für die Inbetriebsetzung gilt weiterhin … Netzleitstelle anzuordnen.; 4. Unterschriften.
 - **Fuzzy:**
@@ -613,41 +449,6 @@ mode until then.
 **Exercises.** Figure detection and cropping, translating the figure text as a legend, keeping the caption
 attached, and termbase hits (Kabelpritsche, Netzleitstelle).
 
-### `pruefbericht.docx`: German, Word
-
-**Summary.** Prüfbericht Erdungsanlage (earthing test of 12.05.2026). 21 segments;
-`{'pages': 2, 'tracked_changes': 2, 'with_codes': 4}`.
-- p1.1: footer PAGE field.
-- p1.2: header.
-- p1.4: bold Erdungsanlage/Kabelpritsche and italic *unter*.
-- p1.6–p1.17: table, with “in Ordnung” at p1.11 and p1.14.
-- p1.18: link + footnote mark.
-- p1.19: tracked deletion *vorläufig* and insertion *uneingeschränkt*.
-- p1.20: date 31.05.2026.
-- p2.1: footnote.
-
-**Vendor XLIFF `demo/pruefbericht.vendor.en.xlf`:**
-- Import: **21 changes**, `codes: ['p1.18']` (dropped footnote mark).
-- After accepting, QA:
-  - forbidden “Substation Nord” (p1.2) and “cable bridge” (p1.4);
-  - “in Ordnung” translated two ways (p1.11 “OK”, p1.14 “satisfactory”);
-  - untranslated p1.19 (and p1.18, refused);
-  - wrong date p1.20 (31.03.2026 for 31.05.2026).
-
-### `unterweisung.pptx`: German, PowerPoint, 3 slides
-
-**Summary.** Unterweisung Erdungsanlagen (safety briefing): title slide, the five safety rules (bold run on
-*Wiedereinschalten*, p2.3), inspection intervals. Speaker notes on slides 1–2. 12 segments; `with_codes: 1`.
-
-### `maengelliste.xlsx`: German, Excel
-
-**Summary.** Mängelliste (defect list), sheet “Mängel”. 18 segments;
-`{'with_codes': 1, 'in_formulas': 1}`.
-- “behoben” is a shared string used twice (p1.9).
-- B6 is rich text (bold “Hinweis:”, p1.17).
-- B7 `=COUNTIF(E2:E4,"offen")` compares against “offen” (p1.16): the translated file updates it to the translation.
-- The deadlines are text, not dates.
-
 ### `yanshou-baogao.pdf` (+ `yanshou-baogao-scanned.pdf`): Chinese, 1 page
 
 **Summary.** 设备验收报告 (equipment acceptance report) of 14 March 2026:
@@ -659,18 +460,17 @@ attached, and termbase hits (Kabelpritsche, Netzleitstelle).
   电网调度中心.
 
 The text layer uses a CJK font with wide Latin glyphs, so OCR tends to insert spaces (2026 年3 月14 日). TM keys
-ignore spaces and punctuation. Reference: `reference/yanshou-baogao.en.md`. Its units are `demo/zh/memory.tmx`.
+ignore spaces and punctuation. Reference: `reference/yanshou-baogao.en.md`. Its units are `demo/zh/memory.json`.
 
 **Traps.**
 - Without the zh termbase, a model may ask about 质量保证金 (quality retention vs retention money). With it
-  imported, it should not.
+  seeded, it should not.
 - 配电柜 in the figure (distribution cabinet vs switchgear cabinet) is a plausible question; it is not in the
   termbase.
 
-### `demo/termbase.csv`, `demo/memory.tmx`: German demo assets
+### `demo/termbase.csv`, `demo/memory.json`: German demo assets
 
 - 12 de→en terms with forbidden variants.
 - 12 TM units: the confirmed translation of `abnahmeprotokoll.pdf`.
 
-Both are seeded by `backend/scripts/seed_demo.py` into “Acme Energie – Umspannwerk Nord” (German → English,
-French).
+Both are seeded by `backend/scripts/seed_demo.py` into “Acme Energie – Umspannwerk Nord” (German → English).

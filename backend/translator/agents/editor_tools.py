@@ -13,12 +13,15 @@ import uuid
 
 from google.adk.tools import ToolContext
 
-from .. import dictionary, layout, prompts, proposals, qa, source_review
-from .. import state as st
-from ..documents import render_page
-from ..filters import inline
-from ..formats import term_from
+from ..document import proposals, source_check
+from ..document import state as st
+from ..document.pages import render_page
+from ..integrations import dictionary
+from ..models.replies import term_from
+from ..ocr import layout
+from ..quality import qa
 from ..text import match_case, term_pattern
+from . import prompts
 
 MAX_RESULTS = 20
 PROPOSED = "Proposed — the user will review the diff and accept or reject it."
@@ -96,13 +99,6 @@ def update_segment(segment_id: str, new_translation: str, tool_context: ToolCont
         return {"status": "error", "message": f"No segment {segment_id}."}
     if _locked(tool_context.state, segment_id.strip()):
         return {"status": "error", "message": f"Segment {segment_id} is locked by the user; leave it unchanged."}
-    source = st.get_segment(tool_context.state, segment_id.strip())["source"]
-    if inline.has_codes(source) or inline.has_codes(new_translation):
-        new_translation = inline.normalize(new_translation)
-        problems = inline.validate(source, new_translation)
-        if problems:
-            return {"status": "error", "message": f"Inline codes don't match the source ({'; '.join(problems)}). "
-                    f"Source: {source} — keep every code exactly once and try again."}
     changed = _stage(tool_context.state, segment_id.strip(), "target", new_translation)
     return {"status": "proposed" if changed else "unchanged", "segment_id": segment_id, "note": PROPOSED}
 
@@ -123,13 +119,9 @@ def propose_alternatives(segment_id: str, alternatives: list[str], notes: list[s
         return {"status": "error", "message": f"Segment {segment_id} is locked by the user; leave it unchanged."}
     options = []
     for i, text in enumerate(alternatives):
-        if inline.has_codes(seg["source"]) or inline.has_codes(text):
-            text = inline.normalize(text)
-            if inline.validate(seg["source"], text):
-                continue  # broken codes: drop this option
         options.append({"text": text, "note": notes[i] if i < len(notes) else ""})
     if not options:
-        return {"status": "error", "message": "None of the alternatives keeps the inline codes of the source; try again."}
+        return {"status": "error", "message": "No alternatives given; try again."}
     changed = _stage(tool_context.state, segment_id.strip(), "target", options[0]["text"], options)
     return {"status": "proposed" if changed else "unchanged", "options": len(options), "note": PROPOSED}
 
@@ -173,8 +165,6 @@ def replace_in_translation(find: str, replace: str, segment_ids: list[str], tool
         if scope and seg["id"] not in scope:
             continue
         new, n = pattern.subn(lambda m: match_case(m.group(0), replace), seg.get("target") or "")
-        if n and inline.validate(seg["source"], new) and not inline.validate(seg["source"], seg.get("target") or ""):
-            continue  # would break the formatting codes
         if n and _stage(tool_context.state, seg["id"], "target", new):
             changed.append(seg["id"])
     return {"proposed_in": changed, "count": len(changed), "note": PROPOSED}
@@ -231,19 +221,19 @@ def ask_user_about_term(
 
 
 def _not_in_review(state) -> dict | None:
-    if not source_review.in_review(state):
+    if not source_check.in_review(state):
         return {"status": "error", "message": "Page fixes are only for the source check before translating; use "
                                               "fix_source_segment for a single segment now."}
     return None
 
 
 def _stage_page(state, page: int, markdown: str, reason: str, origin: str) -> dict:
-    if page not in source_review.pages(state):
+    if page not in source_check.pages(state):
         return {"status": "error", "message": f"No page {page}."}
-    fix = source_review.stage(state, page, markdown, reason, origin)
+    fix = source_check.stage(state, page, markdown, reason, origin)
     if fix is None:
         return {"status": "unchanged", "page": page, "note": "That is what the page already says."}
-    state[source_review.FIXES] = {**(state.get(source_review.FIXES) or {}), str(page): fix}
+    state[source_check.FIXES] = {**(state.get(source_check.FIXES) or {}), str(page): fix}
     out = {"status": "proposed", "page": page, "note": "The user sees the page before and after and accepts or rejects it."}
     if fix["word_changes"]:
         out["word_changes"] = fix["word_changes"][:12]
@@ -262,10 +252,10 @@ def get_page_source(page_number: int, tool_context: ToolContext) -> dict:
       page_number: The page (1-based).
     """
     state = tool_context.state
-    if page_number not in source_review.pages(state):
-        return {"status": "error", "message": f"No page {page_number}; pages: {source_review.pages(state)}."}
-    pending = (state.get(source_review.FIXES) or {}).get(str(page_number))
-    return {"page": page_number, "markdown": source_review.page_markdown(state, page_number),
+    if page_number not in source_check.pages(state):
+        return {"status": "error", "message": f"No page {page_number}; pages: {source_check.pages(state)}."}
+    pending = (state.get(source_check.FIXES) or {}).get(str(page_number))
+    return {"page": page_number, "markdown": source_check.page_markdown(state, page_number),
             **({"pending_fix": pending["after"]} if pending else {})}
 
 
@@ -297,7 +287,7 @@ async def reread_page(page_number: int, instruction: str, tool_context: ToolCont
     from google.adk.models.llm_request import LlmRequest
     from google.genai import types
 
-    from ..llm import build_model, error_text
+    from ..models.llm import build_model, error_text
 
     state = tool_context.state
     if (refused := _not_in_review(state)) is not None:
@@ -309,13 +299,13 @@ async def reread_page(page_number: int, instruction: str, tool_context: ToolCont
     request = LlmRequest(contents=[types.Content(role="user", parts=[
         types.Part.from_bytes(data=png, mime_type="image/png"),
         types.Part(text=f"Transcribe page {page_number}." + prompts.REREAD_PAGE.format(
-            instruction=instruction.strip(), previous=source_review.page_markdown(state, page_number)))])])
+            instruction=instruction.strip(), previous=source_check.page_markdown(state, page_number)))])])
     request.config.system_instruction = prompts.VISION_OCR
     try:
         replies = [r async for r in build_model("ocr").generate_content_async(request)]
     except Exception as e:
         return {"status": "error", "message": f"Reading the page again failed: {error_text(e)}"}
-    from ..formats import clean
+    from ..models.replies import clean
 
     # Not the model's thinking: a reasoning model's arrives as thought parts (OpenRouter's `reasoning`, vLLM's
     # reasoning parser) and would otherwise open the page.
@@ -347,8 +337,6 @@ def fix_source_segment(segment_id: str, corrected_source: str, tool_context: Too
     """
     if not st.get_segment(tool_context.state, segment_id.strip()):
         return {"status": "error", "message": f"No segment {segment_id}."}
-    if tool_context.state.get("doc:format") in ("docx", "pptx", "xlsx", "xliff"):
-        return {"status": "error", "message": "This document was read directly from the file (no OCR), so its source text can't be changed."}
     changed = _stage(tool_context.state, segment_id.strip(), "source", corrected_source)
     return {
         "status": "proposed" if changed else "unchanged",

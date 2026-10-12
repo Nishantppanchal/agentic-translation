@@ -8,8 +8,9 @@ from __future__ import annotations
 
 import functools
 import re
+import unicodedata
 
-from .documents import NO_SPACE_CHARS
+from .document.pages import NO_SPACE_CHARS
 
 # A word character from a script that separates words with spaces (Latin, Cyrillic, digits, ...).
 SPACED_WORD = rf"[^\W{NO_SPACE_CHARS}]"
@@ -31,13 +32,11 @@ _BULLET = re.compile(r"^\s*[-*+]\s+", re.M)
 _EMPHASIS = re.compile(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1")
 
 
-_CODES = re.compile(r"""<g\s+id\s*=\s*["'][^"']+["']\s*>|</g\s*>|<x\s+id\s*=\s*["'][^"']+["']\s*/>""", re.I)
 
 
 def plain(markdown: str) -> str:
-    """Segment text → plain text for exchange files (TMX) and word counts: markdown markers and inline
-    codes removed, where they would show literally."""
-    return _EMPHASIS.sub(r"\2", _BULLET.sub("", _HEADING.sub("", _CODES.sub("", markdown or ""))))
+    """Segment text → plain text for word counts and comparisons: the markdown markers removed."""
+    return _EMPHASIS.sub(r"\2", _BULLET.sub("", _HEADING.sub("", markdown or "")))
 
 
 def with_markup_of(source: str, target: str) -> str:
@@ -58,3 +57,26 @@ def match_case(found: str, replacement: str) -> str:
     if found[:1].islower() and not any(c.isupper() for c in first_word[1:]):  # keep "BoQ", "LV", "iPhone"
         return replacement[:1].lower() + replacement[1:]
     return replacement
+
+
+_NON_WORD = re.compile(r"[\W_]+", re.UNICODE)
+_TABLE_SEP = re.compile(r"^:?-{2,}:?$")
+
+
+def norm(text: str) -> str:
+    """Letters and digits only, case-folded: for matching text whatever its spacing and punctuation."""
+    return _NON_WORD.sub("", unicodedata.normalize("NFKC", text or "").casefold())
+
+
+def markdown_grid(text: str) -> list[list[str]]:
+    """The cells of a markdown pipe table, row by row (the separator row left out)."""
+    rows = []
+    for raw in (text or "").splitlines():
+        raw = raw.strip()
+        if not raw.startswith("|"):
+            continue
+        cells = [c.strip() for c in raw.strip("|").split("|")]
+        if all(_TABLE_SEP.match(c.replace(" ", "")) for c in cells if c):
+            continue
+        rows.append(cells)
+    return rows

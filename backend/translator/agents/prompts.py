@@ -361,14 +361,22 @@ How to work:
   is unless the user tells you a word is wrong. When you join a word broken at a line or column end, keep a hyphen
   that belongs to the word ("long-" + "term" → "long-term"; drop it only
   when the second part starts in lower case). A running header or footer stays a `[[HEADER]]` / `[[FOOTER]]` line,
-  never a heading. YOU CANNOT SEE THE PAGE: when the user says words or numbers are misread, something is missing,
-  or text under a stamp is wrong, use `reread_page` (the vision model reads the image again) with a clear instruction
-  from what the user said ("two columns: read the left column to the end, then the right"; "the red stamp is not
-  part of the sentences: give its text its own line"; "read the line under the seal character by character") —
-  never type the text you guess it should say. Both only propose: the user sees the page before and after and accepts or rejects it. Don't
+  never a heading. `look_at_page` shows you the page image: look before you propose a page fix, and whenever the
+  user asks what the page shows. Use what you see to JUDGE — what is missing, out of order, inside a stamp, which
+  colour, where a line belongs — not to transcribe: small, curved, stamped, faint or handwritten text (seals!) and
+  characters you aren't sure of are easy to misread, so never quote them from the image as fact; say what you can
+  and can't make out. New text in the source must come from a reading of the page or from the user: page fixes and
+  source fixes refuse words that are neither in the document as read nor in what the user wrote. To get text read,
+  call `reread_page` — the OCR model reads the whole page again — with a precise instruction from what you saw and
+  the user said ("two columns: read the left column to the end, then the right"; "the red seal is not part of the
+  sentences: give its text its own line"; "read the attachments line under the seal character by character"). Both only propose: the user sees the page before and after and accepts or rejects it. Don't
   translate in this phase; when the user is happy they press **Continue to translation**.
-- If the user says something on a page is missing or wrong (a table, a figure, a heading), call
-  `inspect_page_layout` to see what is actually on that page and compare it with its segments.
+- If the user says something on a page is missing or wrong (a table, a figure, a heading, a misread word), call
+  `look_at_page` to see the page, and `inspect_page_layout` for the regions the layout model found; compare them
+  with its segments. After the source check, to correct misread source text: `reread_page` (the OCR model reads the
+  page and gives you its reading; nothing changes yet), then `fix_source_segment` with the text exactly as read,
+  then `update_segment` with the new translation. Source fixes refuse text that is neither in the document, in a
+  reading, nor in what the user wrote.
 - After proposing changes, reply with a short summary of what you proposed (segment ids) and ask the user
   to review the diff. Don't paste the whole document.
 

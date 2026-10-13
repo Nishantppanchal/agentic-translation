@@ -39,6 +39,13 @@ type Group =
   | { type: "activity"; id: string; items: TimelineItem[] };
 
 /** Collapse runs of activity/tool items into one expandable group. */
+// The source check for someone who doesn't read the language: the chat looks at every page next to its reading.
+const CHECK_PAGES_REQUEST =
+  "Please check the reading for me: look at each page next to its OCR text — start with the pages listed under " +
+  "“where to look first” — and tell me in plain English what looks wrong (reading order, missing or extra text, " +
+  "stamps or seals, headings, tables). Propose fixes where the structure is wrong, and have a page read again " +
+  "where text is misread. Don't change anything that looks right.";
+
 function groupTimeline(items: TimelineItem[]): Group[] {
   const groups: Group[] = [];
   for (const item of items) {
@@ -72,6 +79,16 @@ function toolLabel(item: Extract<TimelineItem, { kind: "tool" }>): string {
       return `Asked about “${a.term}”`;
     case "fix_source_segment":
       return `Fixed OCR in ${a.segment_id}`;
+    case "look_at_page":
+      return `Looked at page ${a.page_number}`;
+    case "get_page_source":
+      return `Read the OCR of page ${a.page_number}`;
+    case "propose_page_source":
+      return `Proposed a fix for page ${a.page_number}`;
+    case "reread_page":
+      return `Read page ${a.page_number} again`;
+    case "inspect_page_layout":
+      return `Checked the layout of page ${a.page_number}`;
     default:
       return item.name;
   }
@@ -357,7 +374,15 @@ export function Chat({
             </div>
           )}
 
-          {checking && <SourceCheck fixes={sourceFixes} onDecide={onDecideSourceFix} onContinue={onContinueSourceCheck} />}
+          {checking && (
+            <SourceCheck
+              fixes={sourceFixes}
+              onDecide={onDecideSourceFix}
+              onContinue={onContinueSourceCheck}
+              onAskToCheck={() => onSend(CHECK_PAGES_REQUEST)}
+              chatBusy={running}
+            />
+          )}
 
           {paused && openQs.length > 0 && (
             <ClarifyForm questions={openQs} segments={segMap} onSubmit={onClarify} onJump={onJump} />

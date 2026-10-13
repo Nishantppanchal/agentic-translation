@@ -19,8 +19,9 @@ from pathlib import Path
 
 from ..ocr.guard import WORD
 from . import state as st
-from .pages import IMAGE_EXTS, segments_from_pages
+from .pages import IMAGE_EXTS, NO_SPACE_CHARS, segments_from_pages
 
+_NO_SPACE = re.compile(f"[{NO_SPACE_CHARS}]")
 FIXES = "doc:source_fixes"  # {page: fix}
 CHECKED = "doc:source_checked"
 _FIGURE_IMAGE = re.compile(r"figure-p\d+-(\d+)\.png$")
@@ -113,6 +114,48 @@ def moved_text(before: str, after: str, limit: int = 3, quote: int = 60) -> list
             passage = " ".join(text[run[0].start():run[-1].end()].split())
             out.append(f"“{passage[:quote].rstrip()}{' …' if len(passage) > quote else ''}”")
     return out[:limit] + ([f"and {len(out) - limit} more"] if len(out) > limit else [])
+
+
+def unsourced_text(after: str, sources: list[str], quote: int = 60) -> list[str]:
+    """Passages of `after` that are in none of `sources` (the document as read, what the user wrote). Text on the
+    page has to come from a reading of it: a model's idea of what a page "probably" says is the misreading the check
+    is there to catch (a seal's text made up as a plausible company name).
+
+    Word by word, so moving, joining and dropping text needs no source: a word counts as read when it stands next
+    to the same neighbour somewhere in the sources — or, for a word in a script with spaces (or a number), on its
+    own. A single Chinese, Japanese, Korean or Thai character always needs its neighbour: on its own it proves
+    nothing."""
+    def tokens(text: str) -> list[str]:
+        return [m.group().casefold() for m in WORD.finditer(_MARKER.sub(" ", text))]
+
+    known_words: set[str] = set()
+    known_pairs: set[tuple[str, str]] = set()
+    for src in sources:
+        t = tokens(src)
+        known_words.update(t)
+        known_pairs.update(zip(t, t[1:]))
+    text = _MARKER.sub(" ", after)
+    found = list(WORD.finditer(text))
+    words = [m.group().casefold() for m in found]
+
+    def read(i: int) -> bool:
+        w = words[i]
+        if (i and (words[i - 1], w) in known_pairs) or (i + 1 < len(words) and (w, words[i + 1]) in known_pairs):
+            return True
+        return w in known_words and (len(w) > 1 or not _NO_SPACE.match(w))
+
+    out, i = [], 0
+    while i < len(words):
+        if read(i):
+            i += 1
+            continue
+        j = i
+        while j < len(words) and not read(j):
+            j += 1
+        passage = " ".join(text[found[i].start():found[j - 1].end()].split())
+        out.append(f"“{passage[:quote].rstrip()}{' …' if len(passage) > quote else ''}”")
+        i = j
+    return out
 
 
 def resegment(state, page: int, markdown: str) -> dict:

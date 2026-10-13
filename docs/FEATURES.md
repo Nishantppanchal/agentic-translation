@@ -140,16 +140,17 @@ upload ─►         ocr           vision LLM, then the OCR check, per page (2 
 
 ### Source check: fixing the reading before translating
 Every PDF and image **pauses after reading** (status *Check source*; the step bar shows Read → **Check** → Analyse). Nothing is translated yet, so a fix to the source loses nothing. Text files don't pause.
-- **The card** in the chat: *Check the source before translating*, with a **Continue to translation** button.
-- **Checking:** compare the reading with the page images (**Source & notes → Page images & OCR**) and describe what's wrong in the chat, in plain words: two columns read straight across, a paragraph split at the column break, a stamp's text missing or inside a sentence, a heading or running header not marked.
+- **The card** in the chat: *Check the source before translating*, with a **Continue to translation** button. The message above it says **where to look first**, page by page, from what the reading itself recorded: possible misreadings the OCR check listed, corrections it made, seals or stamps the layout model found (text under them is easy to misread), and pages read from a scan (no text layer to compare with) — or that nothing stands out.
+- **Checking:** compare the reading with the page images (**Source & notes → Page images & OCR**) and describe what's wrong in the chat — or, if you don't read the language, press **Check the pages for me**: the chat looks at each page next to its reading (the flagged ones first), says in plain English what looks wrong, and proposes fixes or has pages read again. In your own words you can point at things like: two columns read straight across, a paragraph split at the column break, a stamp's text missing or inside a sentence, a heading or running header not marked.
 - **Page fixes:** the chat editor proposes a fix for the whole page: the page's source as OCR markdown, before and after (a word-level diff), with a list of the words the fix adds or removes, and pictures dropped or added. A structure-only fix (join, split, reorder, mark a header, footer or heading) changes no words — but the word list can't tell a right reading order from a wrong one (two columns stitched the wrong way round keep every word), so each passage the fix **moves** is quoted separately (*Text moves*). The green *Only the structure changes* line means the same words in the same order. Two editor tools make them:
   - `propose_page_source`: the editor rewrites the page's structure itself;
   - `reread_page`: the vision model reads the page image again, with an instruction taken from what you said ("two columns: read the left column to the end, then the right; the red stamp is not part of the text").
 
-  `get_page_source` shows a page's current source.
+  `get_page_source` shows a page's current source, and `look_at_page` shows the editor the page image itself: it uses it to judge what's wrong (missing, out of order, inside a stamp, colours), not to transcribe — a general model reading small, stamped or curved text makes up plausible words (in a test it named a real company on a seal that says something else).
+- **Only read text goes into the source:** a page fix (or a segment's source fix) may only add words that are already in the document as read, or that you wrote in the chat. Anything else is refused, and the editor has the OCR model read the page again (`reread_page`). Moving, joining and dropping text is always allowed.
 - **Accept** or **Reject** each page fix. Check the word list and any moved passages against the page image first. Accepting splits the page into segments again.
 - **Continue to translation** goes on to the analysis; page fixes you haven't decided are dropped.
-- **Afterwards:** page fixes are only possible during the source check; later, `fix_source_segment` corrects one segment.
+- **Afterwards:** page fixes are only possible during the source check (they split the page into segments again, which would drop its translations). Later, a misread word is still fixed from the page, not from anyone's guess: `reread_page` has the OCR model read the page again and gives the editor the reading (nothing changes yet), then `fix_source_segment` corrects the segment with the text as read and `update_segment` proposes its new translation. You never need to type the source language yourself.
 
 ### Translating: page by page, with the document carried along
 Each **page** is one translator call, and pages are translated **in order**. A segment is a paragraph, heading, list item or table cell. A page is a real page of the PDF or image; a text file is one page.
@@ -284,7 +285,8 @@ Ask questions too: "explain p1.4" or **Summarise** (a shortcut above the input) 
 | `add_comment` | Leave a comment on a segment |
 | `ask_user_about_term`, `resolve_question` | Ask you about a term (with its meaning and English options), or apply your answer to a question card |
 | `get_page_source`, `propose_page_source`, `reread_page` | During the source check: show a page's source, propose a page fix (the editor rewrites the page's structure), or have the vision model read the page again with an instruction (see [§4](#source-check-fixing-the-reading-before-translating)) |
-| `fix_source_segment` | Correct an OCR mistake in one source segment, after the source check |
+| `look_at_page` | See a page image (the editor's model must be a vision model): to judge what's wrong, not to transcribe |
+| `fix_source_segment` | Correct an OCR mistake in one source segment, after the source check (only with words from the document, from a reading of the page, or from you) |
 | `inspect_page_layout` | Run PP-DocLayoutV3 on a source page and compare it with that page's segments |
 
 **Proposal card**

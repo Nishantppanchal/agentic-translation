@@ -6,3 +6,4 @@ models:
   - id: test-model
     model_name: test/model
     url: http://127.0.0.1:9/v1
+    vision: true

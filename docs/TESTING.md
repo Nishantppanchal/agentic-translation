@@ -86,7 +86,7 @@ What the model gets wrong differs between runs; the lists below are what a live 
 
 **3.1 German: a paragraph split at the column break, and a stamp.** Upload `samples/review/pruefvermerk-zweispaltig-scanned.pdf`.
 - *What it is:* an inspection note, *Prüfvermerk – Erdung der Kabelpritsche* (earthing of the cable tray). Section 3 (*Messwerte*, measured values) runs from the bottom of the left column to the top of the right one, and breaks the word *Fehlerstrom-Schutzeinrichtung* (residual-current device) across the columns. A red, turned rubber stamp *GEPRÜFT · 14.03.2026 · Bauleitung UW-2291* ("checked · … · site management") is printed over section 4.
-- [ ] The step bar stops at **Check**, and the chat shows *Check the source before translating* with **Continue to translation**.
+- [ ] The step bar stops at **Check**, and the chat shows *Check the source before translating* with **Continue to translation**. The message lists **where to look first** (on this scan: page 1 is a scan, plus any possible misreadings or seals).
 - [ ] **Source & notes → Page images & OCR**: compare the reading with the page image. Look for:
   - section 3 split into two segments at the column break (*…Fehlerstrom-* / *Schutzeinrichtung wurde…*);
   - the running header twice (once as a paragraph);
@@ -109,10 +109,15 @@ What the model gets wrong differs between runs; the lists below are what a live 
 - [ ] The page is read again (the fix says *read again*): attachment 1 is *现场照片8张*, and the headings and the header are marked. Check the word list and any *Text moves* passages against the page image (section 五 should run on from the left column to the right; see the English reference), then **Accept**.
 - [ ] **Continue to translation**. Compare with the reference.
 
+- [ ] Ask: *"Is the seal on page 1 red? What does it say?"* The chat shows *Looked at page 1* and answers from the image: the seal is red. For the seal's own characters it should say it can't read them reliably (or have the page read again), not quote a name: the seal says 北区变电站改造工程监理部 / 监理专用章, and in a test a general model "read" a real company's name there instead.
+- [ ] Ask it to add the seal's text to the page: the fix must come from the page being read again (*read again*), never from text the chat typed itself. Text that is neither in the document nor in your message is refused.
+
+- [ ] On a fresh upload of this file, press **Check the pages for me** instead of typing: the chat looks at the page (*Looked at page 1*), says what looks wrong in English, and proposes a fix or has the page read again — check its word list as above.
+
 **3.3 Rejecting, and when page fixes apply.**
 - [ ] Ask for a page fix, then **Reject** it: the page stays as it was read.
 - [ ] Ask for a page fix and click **Continue to translation** without deciding: the card says undecided fixes are left out, and the chat says so after continuing.
-- [ ] After **Continue**, ask for a source fix: the chat corrects single segments instead (page fixes are only possible during the source check).
+- [ ] After **Continue**, say a word on page 1 looks misread: the chat has the page read again (*Read page 1 again* — nothing changes yet), then proposes a fix for that one segment with the text as read, and its new translation. You never have to type German or Chinese; page fixes are only possible during the source check.
 - [ ] Upload a text file (.txt or .md): it doesn't stop at Check.
 
 ---

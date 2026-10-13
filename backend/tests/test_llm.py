@@ -43,9 +43,9 @@ def test_each_step_calls_the_model_pipeline_yaml_gives_it(use_models):
         {"defaults": {"headers": {"X-Gateway-Token": "t-default", "X-Team": "mt"}, "timeout": 60, "retries": 3},
          "models": [
              {"id": "vl", "model_name": "Qwen/Qwen3-VL-8B-Instruct", "url": "http://gpu-1:8100/v1", "api_key": "k-1",
-              "headers": {"X-Team": "ocr"}, "extra_body": {"top_k": 20}},
+              "headers": {"X-Team": "ocr"}, "extra_body": {"top_k": 20}, "vision": True},
              {"id": "text", "model_name": "anthropic/claude-haiku-5.5", "url": "https://openrouter.ai/api/v1",
-              "api_key": "or-key", "timeout": 30, "temperature": 0.4},
+              "api_key": "or-key", "timeout": 30, "temperature": 0.4, "vision": True},
          ]},
         {"default": "text", "steps": {"ocr": "vl", "ocr_check": "vl",
                                       "review": {"model": "vl", "extra_body": {"thinking_token_budget": 2000},
@@ -82,6 +82,7 @@ models:
     model_name: Qwen/Qwen3-VL-8B-Instruct
     url: http://localhost:8100/v1
     api_key: ${TEST_UNSET_KEY:-}
+    vision: true
 """, "default: local\n")
     cfg = load(models, pipeline)
     step = cfg.step("translate")
@@ -94,11 +95,13 @@ models:
 
 
 @pytest.mark.parametrize(("models", "pipeline", "problem"), [
-    ("models: [{id: a, model_name: m, url: u}]", "steps: {ocr: a}", "no model for the step 'ocr_check'"),
-    ("models: [{id: a, model_name: m, url: u}]", "default: b", "uses 'b', which is not an id in models.yaml (a)"),
-    ("models: [{id: a, model_name: m, url: u}, {id: a, model_name: n, url: u}]", "default: a", "two models have the id 'a'"),
-    ("models: [{id: a, model_name: m, url: u, api_kye: x}]", "default: a", "models.0.api_kye: Extra inputs"),
-    ("models: [{id: a, model_name: m, url: u}]", "default: a\nsteps: {translation: a}", "steps.translation"),
+    ("models: [{id: a, model_name: m, url: u, vision: true}]", "steps: {ocr: a}", "no model for the step 'ocr_check'"),
+    ("models: [{id: a, model_name: m, url: u, vision: true}]", "default: b", "uses 'b', which is not an id in models.yaml (a)"),
+    ("models: [{id: a, model_name: m, url: u, vision: true}, {id: a, model_name: n, url: u}]", "default: a", "two models have the id 'a'"),
+    ("models: [{id: a, model_name: m, url: u, vision: true, api_kye: x}]", "default: a", "models.0.api_kye: Extra inputs"),
+    ("models: [{id: a, model_name: m, url: u, vision: true}]", "default: a\nsteps: {translation: a}", "steps.translation"),
+    ("models: [{id: a, model_name: m, url: u, vision: true}, {id: t, model_name: n, url: u}]", "default: a\nsteps: {editor: t}",
+     "step 'editor' looks at page images, so it needs a vision model, but 't' is not marked `vision: true`"),
 ])
 def test_a_wrong_config_says_which_file_and_what(tmp_path, models, pipeline, problem):
     with pytest.raises(ConfigError, match=problem.replace("(", r"\(").replace(")", r"\)")):
@@ -120,7 +123,7 @@ def test_the_shipped_example_and_pipeline_are_valid(monkeypatch):
 
 @pytest.mark.structured
 def test_structured_output_is_a_model_setting(use_models):
-    use_models({"models": [{"id": "a", "model_name": "m", "url": "http://x/v1"},
+    use_models({"models": [{"id": "a", "model_name": "m", "url": "http://x/v1", "vision": True},
                            {"id": "b", "model_name": "n", "url": "http://x/v1", "structured_output": False}]},
                {"default": "a", "steps": {"review": "b"}})
     assert structured.enabled("translate") and not structured.enabled("review")
@@ -187,7 +190,7 @@ def fake_vllm():
 
 def _endpoint(url: str, **model) -> dict:
     return {"defaults": {"retries": 0, "timeout": 10},
-            "models": [{"id": "m", "model_name": "Qwen/Qwen3-32B", "url": url, **model}]}
+            "models": [{"id": "m", "model_name": "Qwen/Qwen3-32B", "url": url, "vision": True, **model}]}
 
 
 def test_the_request_reaches_the_server_as_configured(use_models, fake_vllm):
@@ -225,7 +228,7 @@ def test_the_api_forwards_the_configured_request_headers_to_the_runs_it_starts(u
     from translator.api.main import ForwardHeaders
 
     use_models({"defaults": {"forward_headers": ["X-Request-Id", "X-Tenant-Id"]},
-                "models": [{"id": "m", "model_name": "n", "url": "http://x/v1"}]})
+                "models": [{"id": "m", "model_name": "n", "url": "http://x/v1", "vision": True}]})
     seen = {}
 
     async def endpoint(scope, receive, send):  # an endpoint that starts a run in the background

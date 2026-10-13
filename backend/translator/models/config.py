@@ -26,6 +26,8 @@ from ..config import get_settings
 
 Step = Literal["ocr", "ocr_check", "analyse", "translate", "review", "refine", "polish", "rewrite", "editor", "lqa"]
 STEPS: tuple[Step, ...] = get_args(Step)
+# Steps that look at page images: their model must read images (`vision: true` in models.yaml).
+VISION_STEPS: tuple[Step, ...] = ("ocr", "ocr_check", "editor")
 STEP_LABELS: dict[Step, str] = {
     "ocr": "OCR",  # reads each page image, the text inside pictures, and pages read again in the source check
     "ocr_check": "OCR check",
@@ -66,6 +68,7 @@ class ModelSpec(_Strict):
     timeout: float | None = None
     retries: int | None = None
     temperature: float | None = None
+    vision: bool = False  # reads images: needed for the steps that look at pages (VISION_STEPS)
     # JSON-schema output for the translator, reviewer and refiner (vLLM and most hosted APIs support it);
     # false: they answer in a tag format instead.
     structured_output: bool = True
@@ -102,6 +105,7 @@ class StepModel:
     retries: int
     temperature: float
     structured_output: bool
+    vision: bool
 
     def __repr__(self) -> str:  # never the key or header values (they may hold credentials)
         return f"StepModel({self.step}: {self.id} = {self.model_name} at {self.url})"
@@ -172,13 +176,16 @@ def build(models: ModelsFile, pipeline: PipelineFile, where: str = "pipeline.yam
         if m is None:
             raise ConfigError(f"{where}: step {step!r} uses {spec.model!r}, which is not an id in models.yaml "
                               f"({', '.join(by_id) or 'none'})")
+        if step in VISION_STEPS and not m.vision:
+            raise ConfigError(f"{where}: step {step!r} looks at page images, so it needs a vision model, but {m.id!r} "
+                              "is not marked `vision: true` in models.yaml")
         steps[step] = StepModel(
             step=step, id=m.id, model_name=m.model_name, url=m.url, api_key=m.api_key or None,
             headers={**d.headers, **m.headers}, extra_body={**m.extra_body, **spec.extra_body},
             timeout=m.timeout if m.timeout is not None else d.timeout,
             retries=m.retries if m.retries is not None else d.retries,
             temperature=next(t for t in (spec.temperature, m.temperature, d.temperature) if t is not None),
-            structured_output=m.structured_output,
+            structured_output=m.structured_output, vision=m.vision,
         )
     return ModelConfig(steps=steps, forward_headers=tuple(d.forward_headers))
 

@@ -97,7 +97,7 @@ def test_figures_are_kept_in_place_with_translated_legend(scanned, monkeypatch):
         from translator.ocr import layout
 
         async def boxes(png, tool_context=None):
-            return [tuple(v * 150 / 72 for v in (150, 150, 450, 350))]
+            return [(tuple(v * 150 / 72 for v in (150, 150, 450, 350)), "image")]
 
         monkeypatch.setattr(layout, "available", lambda: True)
         monkeypatch.setattr(layout, "figure_boxes", boxes)

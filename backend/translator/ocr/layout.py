@@ -120,12 +120,12 @@ async def detect_layout(png: bytes, tool_context=None) -> dict | None:
     return await _call(TOOL, args, tool_context)
 
 
-async def figure_boxes(png: bytes, tool_context=None) -> list[tuple[float, float, float, float]] | None:
-    """Pixel boxes of picture-like regions (image/chart/seal), or None when layout detection is unavailable."""
+async def figure_boxes(png: bytes, tool_context=None) -> list[tuple[tuple[float, float, float, float], str]] | None:
+    """(pixel box, label) of picture-like regions (image, chart, seal), or None when layout detection is unavailable."""
     found = await detect_layout(png, tool_context)
     if found is None:
         return None
-    return [tuple(r["box"]) for r in found["regions"] if r["label"] in FIGURE_LABELS]
+    return [(tuple(r["box"]), r["label"]) for r in found["regions"] if r["label"] in FIGURE_LABELS]
 
 
 async def close() -> None:

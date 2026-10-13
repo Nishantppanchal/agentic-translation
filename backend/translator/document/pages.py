@@ -22,6 +22,7 @@ class Figure:
     box: tuple[float, float, float, float]  # pixel box on the rendered page image (left, top, right, bottom)
     png: bytes  # cropped figure
     anchor: str | None = None  # PDFs: start of the first text block below the figure (for exact placement)
+    kind: str = "image"  # image | chart | seal (as the layout model labelled it)
 
 
 @dataclass

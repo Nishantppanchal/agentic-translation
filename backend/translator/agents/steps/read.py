@@ -127,9 +127,10 @@ async def _vision_figures(page: Page) -> tuple[list[Figure], str]:
         return [], ""
     figures = list(page.figures)
     sources = ["pdf"] if figures else []
-    if layout.available() and (boxes := await layout.figure_boxes(page.image)):
-        added = [box for box in boxes if not any(_overlap(box, f.box) > 0.5 for f in figures)]
-        figures += [Figure(box=box, png=crop_png(page.image, box), anchor=page.anchor_below(box)) for box in added]
+    if layout.available() and (regions := await layout.figure_boxes(page.image)):
+        added = [(box, label) for box, label in regions if not any(_overlap(box, f.box) > 0.5 for f in figures)]
+        figures += [Figure(box=box, png=crop_png(page.image, box), anchor=page.anchor_below(box), kind=label)
+                    for box, label in added]
         if added:
             sources.append("layout")
     figures.sort(key=lambda f: (round(f.box[1]), f.box[0]))
@@ -142,7 +143,7 @@ async def _read_page(ctx: Context, page: Page) -> tuple[str, dict, dict[tuple[in
     settings = get_settings()
     report = _new_report(page)
     figures, figure_source = await _vision_figures(page)
-    report.update(figures=len(figures), figure_source=figure_source)
+    report.update(figures=len(figures), figure_source=figure_source, seals=sum(f.kind == "seal" for f in figures))
     page_png = mark_figures(page.image, [f.box for f in figures]) if figures else page.image
     image = types.Part.from_bytes(data=page_png, mime_type="image/png" if figures else page.image_mime)
     hint = prompts.VISION_OCR_TEXT_LAYER.format(text_layer=page.text_layer.strip()) if page.has_text_layer else ""
@@ -268,6 +269,29 @@ def source_format(filename: str) -> str:
     return "pdf" if ext == ".pdf" else "text" if ext in (".txt", ".md", ".markdown") else "image"
 
 
+def _where_to_look(state) -> str:
+    """What the reading itself says is worth a look, page by page — so someone who doesn't read the language knows
+    where to start."""
+    image_upload = not (state.get("doc:filename") or "").lower().endswith(".pdf")
+    lines = []
+    for r in state.get("doc:ocr_report") or []:
+        notes = []
+        if n := len(r.get("suggestions") or []):
+            notes.append(f"{n} possible misreading{'s' if n != 1 else ''} the OCR check listed but didn't change")
+        if not r.get("ok", True) and (n := len(r.get("issues") or [])):
+            notes.append(f"the OCR check corrected {n} thing{'s' if n != 1 else ''}")
+        if n := r.get("seals") or 0:
+            notes.append(f"{'a seal or stamp' if n == 1 else f'{n} seals or stamps'} — its text is kept as a picture "
+                         "legend, and text under it is easy to misread")
+        if not r.get("used_text_layer"):
+            notes.append("read from the image" if image_upload else "a scan: no text layer to compare the reading with")
+        if notes:
+            lines.append(f"- **Page {r['page']}:** " + "; ".join(notes))
+    if not lines:
+        return "Nothing stands out: every page matches the PDF's own text, and the OCR check changed nothing."
+    return "Where to look first:\n" + "\n".join(lines)
+
+
 @node(rerun_on_resume=True)
 async def check_source(ctx: Context, node_input: Any):
     """PDFs and images stop after reading, so the person can check the source against the page images and have
@@ -278,9 +302,10 @@ async def check_source(ctx: Context, node_input: Any):
     if (ctx.resume_inputs or {}).get(SOURCE_INTERRUPT) is None:
         pages = len(source_check.pages(ctx.state))
         text = (f"I've read {pages} page{'s' if pages != 1 else ''}. Before I translate, check the source text next to the "
-                "page images (**Source & notes → Page images & OCR**). If something is wrong — two columns read across, "
-                "a paragraph split in two, a stamp's text inside a sentence, a broken table — tell me here and I'll "
-                "propose a fix for that page. Press **Continue to translation** when it's right.")
+                "page images (**Source & notes → Page images & OCR**).\n\n" + _where_to_look(ctx.state) + "\n\n"
+                "If something is wrong — two columns read across, a paragraph split in two, a stamp's text inside a "
+                "sentence, a misread word — tell me here: I'll look at the page and propose a fix for it. Press "
+                "**Continue to translation** when it's right.")
         yield say(text, kind="assistant",
                    state=progress_state("check", 0, 0, "Waiting for you to check the source", "awaiting_source_check"))
         yield RequestInput(interrupt_id=SOURCE_INTERRUPT, message="Check the source", payload={})

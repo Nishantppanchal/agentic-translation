@@ -36,9 +36,10 @@ FIXED = ("[[HEADER]] Umspannwerk Nord · UW-2291\n\n# Prüfvermerk\n\n"
 class Ctx:
     """Enough of a ToolContext for the page tools."""
 
-    def __init__(self, state, source: bytes | None = None):
+    def __init__(self, state, source: bytes | None = None, said: str = ""):
         self.state = state
         self._source = source
+        self.user_content = types.Content(role="user", parts=[types.Part(text=said)])  # the user's message
 
     async def load_artifact(self, name):
         return types.Part.from_bytes(data=self._source, mime_type="application/pdf") if self._source else None
@@ -103,8 +104,26 @@ def test_the_chat_proposes_a_page_fix_and_accepting_splits_the_page_again():
 
 def test_a_page_fix_that_changes_words_says_so():
     state = _state()
-    result = editor_tools.propose_page_source(1, FIXED.replace("weiterhin", "noch immer"), "joined", Ctx(state))
+    said = 'Section 1 should say "noch immer", not "weiterhin".'
+    result = editor_tools.propose_page_source(1, FIXED.replace("weiterhin", "noch immer"), "joined", Ctx(state, said=said))
     assert result["status"] == "proposed" and result["word_changes"] and "warning" in result
+
+
+def test_the_chat_cannot_put_text_into_the_source_that_nobody_read_off_the_page():
+    """New source text comes from a reading of the page (reread_page: the OCR model) or from the user's own words
+    — never from the chat's idea of what the page probably says (a made-up seal text, say)."""
+    state = _state()
+    invented = FIXED + "\n\n中国铁塔股份有限公司甘肃省分公司 监理专用章"
+    result = editor_tools.propose_page_source(1, invented, "added the seal", Ctx(state, said="What does the seal say?"))
+    assert result["status"] == "refused" and "reread_page" in result["message"]
+    assert result["unread"] == ["“中国铁塔股份有限公司甘肃省分公司 监理专用章”"] and source_check.FIXES not in state
+    said = "The seal reads 中国铁塔股份有限公司甘肃省分公司 / 监理专用章 — add it after the signature."
+    assert editor_tools.propose_page_source(1, invented, "added the seal", Ctx(state, said=said))["status"] == "proposed"
+    # Moving, joining and dropping text needs nobody's reading: every word is already in the document.
+    assert editor_tools.propose_page_source(1, FIXED, "joined", Ctx(_state()))["status"] == "proposed"
+    seg = st.get_segments(state)[1]
+    refused = editor_tools.fix_source_segment(seg["id"], seg["source"] + " Gut.", Ctx(state))
+    assert refused["status"] == "refused" and refused["unread"] == ["“Gut”"]
 
 
 def test_page_fixes_only_during_the_source_check():
@@ -147,6 +166,57 @@ def test_reading_a_page_again_leaves_the_models_thinking_out(monkeypatch):
     pdf = (SAMPLES / "wartungsbericht-scanned.pdf").read_bytes()
     asyncio.run(editor_tools.reread_page(1, "Read it again.", Ctx(state, pdf)))
     assert state[source_check.FIXES]["1"]["after"] == FIXED
+
+
+def test_the_editor_looks_at_the_page_image_itself():
+    """`look_at_page` answers the call, and the page image goes into the editor's next request (a tool result can
+    only carry text through OpenAI-compatible APIs)."""
+    from google.adk.models.llm_request import LlmRequest
+
+    look = editor_tools.look_at_page
+    state = _state()
+    pdf = (SAMPLES / "wartungsbericht-scanned.pdf").read_bytes()
+    ctx = Ctx(state, pdf)
+    result = asyncio.run(look.run_async(args={"page_number": 1}, tool_context=ctx))
+    assert result["status"] == "shown" and result["page"] == 1
+    assert asyncio.run(look.run_async(args={"page_number": 9}, tool_context=ctx))["status"] == "error"
+
+    request = LlmRequest(contents=[
+        types.Content(role="user", parts=[types.Part(text="Is the stamp red?")]),
+        types.Content(role="model", parts=[types.Part(function_call=types.FunctionCall(name="look_at_page", args={"page_number": 1}))]),
+        types.Content(role="user", parts=[types.Part(function_response=types.FunctionResponse(name="look_at_page", response=result))]),
+    ])
+    asyncio.run(look.process_llm_request(tool_context=ctx, llm_request=request))
+    shown = request.contents[-1]
+    assert shown.role == "user" and shown.parts[0].text == "Page 1:"
+    assert shown.parts[1].inline_data.mime_type == "image/png" and shown.parts[1].inline_data.data.startswith(b"\x89PNG")
+    assert "look_at_page" in {t.name for t in request.config.tools[0].function_declarations}  # and it is offered
+
+    asyncio.run(look.process_llm_request(tool_context=ctx, llm_request=request))  # no new tool call: no new image
+    assert request.contents[-1] is shown
+
+
+def test_after_translation_a_misread_word_is_fixed_from_the_page_read_again(monkeypatch):
+    """After the source check a page fix would throw the translations away: reading the page again changes nothing,
+    it gives the chat the OCR model's reading — and that text may then go into a segment's source."""
+    from translator.models import llm
+
+    state = _state("ready")
+    seg = next(x for x in st.get_segments(state) if "weiterhin" in x["source"])
+    corrected = seg["source"].replace("weiterhin", "noch immer")
+    reading = PAGE.replace("weiterhin", "noch immer")
+
+    class FakeModel:
+        async def generate_content_async(self, request):
+            yield _reply(reading)
+
+    monkeypatch.setattr(llm, "build_model", lambda step: FakeModel())
+    pdf = (SAMPLES / "wartungsbericht-scanned.pdf").read_bytes()
+    ctx = Ctx(state, pdf, said="p1.2 looks misread, can you check it?")
+    assert editor_tools.fix_source_segment(seg["id"], corrected, ctx)["status"] == "refused"  # nobody read "noch immer"
+    result = asyncio.run(editor_tools.reread_page(1, "Read the second paragraph carefully.", ctx))
+    assert result["status"] == "read" and result["reading"] == reading and source_check.FIXES not in state
+    assert editor_tools.fix_source_segment(seg["id"], corrected, ctx)["status"] == "proposed"  # now it was read
 
 
 def test_markup_isnt_a_word_change_but_a_dropped_picture_is():

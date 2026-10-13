@@ -10,12 +10,15 @@ from __future__ import annotations
 
 import time
 import uuid
+from typing import Any
 
-from google.adk.tools import ToolContext
+from google.adk.models.llm_request import LlmRequest
+from google.adk.tools import BaseTool, ToolContext
+from google.genai import types
 
 from ..document import proposals, source_check
 from ..document import state as st
-from ..document.pages import render_page
+from ..document.pages import IMAGE_EXTS, guess_mime, render_page
 from ..integrations import dictionary
 from ..models.replies import term_from
 from ..ocr import layout
@@ -220,10 +223,13 @@ def ask_user_about_term(
     return {"status": "asked", "note": "The user will answer via the question card. Continue with your best guess."}
 
 
+READINGS = "temp:page_readings"  # what the OCR model read in this turn: text the editor may put into the source
+
+
 def _not_in_review(state) -> dict | None:
     if not source_check.in_review(state):
-        return {"status": "error", "message": "Page fixes are only for the source check before translating; use "
-                                              "fix_source_segment for a single segment now."}
+        return {"status": "error", "message": "Page fixes are only for the source check before translating; now use "
+                                              "reread_page to have the page read, then fix_source_segment per segment."}
     return None
 
 
@@ -242,6 +248,22 @@ def _stage_page(state, page: int, markdown: str, reason: str, origin: str) -> di
         out["moved"] = fix["moved"]
         out["moved_note"] = "These passages change place: tell the user to check the reading order against the page image."
     return out
+
+
+def _unread_text(tool_context: ToolContext, before: str, after: str) -> dict | None:
+    """Refuse source text that nobody read off the page: what the editor adds must already be in the document as
+    read, or be what the user wrote. New text from the page is the OCR model's job (reread_page)."""
+    user = "".join(p.text or "" for p in (tool_context.user_content.parts or [])) if tool_context.user_content else ""
+    sources = [user, *tool_context.state.get(READINGS, []), *(seg["source"] for seg in st.get_segments(tool_context.state))]
+    unread = source_check.unsourced_text(after, [before, *sources])
+    if not unread:
+        return None
+    return {"status": "refused", "unread": unread,
+            "message": "This text is neither in the document as it was read nor in what the user wrote, so it can't "
+                       "go into the source from you: " + "; ".join(unread) + ". Text on the page must be read by the "
+                       "OCR model: call reread_page (any time) with a precise instruction (e.g. \"read the attachments line under "
+                       "the seal character by character\"). If the user tells you the exact words, use them exactly "
+                       "as they wrote them."}
 
 
 def get_page_source(page_number: int, tool_context: ToolContext) -> dict:
@@ -270,34 +292,38 @@ def propose_page_source(page_number: int, corrected_markdown: str, reason: str, 
       corrected_markdown: The complete corrected page.
       reason: One sentence: what you fixed.
     """
-    return _not_in_review(tool_context.state) or _stage_page(tool_context.state, page_number, corrected_markdown,
-                                                             reason, "editor")
+    state = tool_context.state
+    if (refused := _not_in_review(state)) is not None:
+        return refused
+    if page_number in source_check.pages(state):
+        refused = _unread_text(tool_context, source_check.page_markdown(state, page_number), corrected_markdown)
+        if refused:
+            return refused
+    return _stage_page(state, page_number, corrected_markdown, reason, "editor")
 
 
 async def reread_page(page_number: int, instruction: str, tool_context: ToolContext) -> dict:
-    """Have the vision model read a page again with an instruction, during the source check before translating;
-    the result is proposed as the page's new source. Use it when the text itself is misread or the order is too
-    tangled to fix by hand.
+    """Have the OCR model (a vision model) read a page again with an instruction. Use it when text is misread or
+    missing, or the order is too tangled to fix by hand.
+    During the source check, the reading is proposed as the page's new source (a page fix). After it, nothing is
+    changed: you get the reading back, and its text may then go into the source — fix the affected segments with
+    fix_source_segment, then propose their new translations with update_segment.
 
     Args:
       page_number: The page (1-based).
       instruction: What to do differently, from what the user said, e.g. "two columns: read the left column to
         the end, then the right one; the red stamp is not part of the text".
     """
-    from google.adk.models.llm_request import LlmRequest
-    from google.genai import types
-
     from ..models.llm import build_model, error_text
 
     state = tool_context.state
-    if (refused := _not_in_review(state)) is not None:
-        return refused
-    source = await tool_context.load_artifact(state.get("doc:source_artifact"))
-    png = render_page(source.inline_data.data, state.get("doc:filename", ""), page_number) if source and source.inline_data else None
-    if png is None:
+    if page_number not in source_check.pages(state):
+        return {"status": "error", "message": f"No page {page_number}; pages: {source_check.pages(state)}."}
+    image = await _page_image(tool_context, page_number)
+    if image is None:
         return {"status": "error", "message": f"No page image for page {page_number}."}
     request = LlmRequest(contents=[types.Content(role="user", parts=[
-        types.Part.from_bytes(data=png, mime_type="image/png"),
+        image,
         types.Part(text=f"Transcribe page {page_number}." + prompts.REREAD_PAGE.format(
             instruction=instruction.strip(), previous=source_check.page_markdown(state, page_number)))])])
     request.config.system_instruction = prompts.VISION_OCR
@@ -310,7 +336,75 @@ async def reread_page(page_number: int, instruction: str, tool_context: ToolCont
     # Not the model's thinking: a reasoning model's arrives as thought parts (OpenRouter's `reasoning`, vLLM's
     # reasoning parser) and would otherwise open the page.
     markdown = clean("".join(p.text or "" for r in replies if r.content for p in r.content.parts or [] if not p.thought))
-    return _stage_page(state, page_number, markdown, f"Read again: {instruction.strip()}", "reread")
+    state[READINGS] = [*state.get(READINGS, []), markdown]
+    if source_check.in_review(state):
+        return _stage_page(state, page_number, markdown, f"Read again: {instruction.strip()}", "reread")
+    return {"status": "read", "page": page_number, "reading": markdown,
+            "next": "Compare it with the page's segments (get_segments). Fix each misread segment with fix_source_segment "
+                    "using the text exactly as read here, then propose its translation with update_segment. Change only "
+                    "what the user asked about."}
+
+
+async def _page_image(tool_context: ToolContext, page_number: int) -> types.Part | None:
+    """The page as an image the model can see (PDF pages rendered; an uploaded image as it is)."""
+    state = tool_context.state
+    source = await tool_context.load_artifact(state.get("doc:source_artifact"))
+    filename = state.get("doc:filename", "")
+    png = render_page(source.inline_data.data, filename, page_number) if source and source.inline_data else None
+    if png is None:
+        return None
+    is_upload = any(filename.lower().endswith(ext) for ext in IMAGE_EXTS)
+    return types.Part.from_bytes(data=png, mime_type=guess_mime(filename) if is_upload else "image/png")
+
+
+class LookAtPage(BaseTool):
+    """Shows the editor a page image. A tool result can only carry text through OpenAI-compatible APIs, so the
+    call answers briefly and the image itself is added to the model's next request (as ADK's load_artifacts
+    does); it isn't kept in the session."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            name="look_at_page",
+            description=(
+                "See the image of a page of the uploaded document (a PDF page or the uploaded image). Look before "
+                "you propose a page fix or fix a segment's source, and whenever the user asks what the page shows. "
+                "Use it to judge what is wrong (missing, out of order, inside a stamp, colours, layout); to get text "
+                "read, use reread_page — don't transcribe small, stamped or handwritten text from the image yourself."
+            ),
+        )
+
+    def _get_declaration(self) -> types.FunctionDeclaration:
+        return types.FunctionDeclaration(
+            name=self.name,
+            description=self.description,
+            parameters=types.Schema(
+                type=types.Type.OBJECT,
+                properties={"page_number": types.Schema(type=types.Type.INTEGER, description="The page (1-based).")},
+                required=["page_number"],
+            ),
+        )
+
+    async def run_async(self, *, args: dict[str, Any], tool_context: ToolContext) -> dict:
+        page = args.get("page_number")
+        if not isinstance(page, int) or await _page_image(tool_context, page) is None:
+            pages = source_check.pages(tool_context.state)
+            return {"status": "error", "message": f"No page image for page {page!r}; pages: {pages} (text documents have none)."}
+        return {"status": "shown", "page": page, "note": f"The image of page {page} follows."}
+
+    async def process_llm_request(self, *, tool_context: ToolContext, llm_request: LlmRequest) -> None:
+        await super().process_llm_request(tool_context=tool_context, llm_request=llm_request)
+        last = llm_request.contents[-1] if llm_request.contents else None
+        for part in (last.parts or []) if last else []:
+            response = part.function_response
+            if response and response.name == self.name and (response.response or {}).get("status") == "shown":
+                page = response.response["page"]
+                image = await _page_image(tool_context, page)
+                if image is not None:
+                    llm_request.contents.append(
+                        types.Content(role="user", parts=[types.Part(text=f"Page {page}:"), image]))
+
+
+look_at_page = LookAtPage()
 
 
 async def look_up_term(term: str, tool_context: ToolContext) -> dict:
@@ -335,8 +429,11 @@ def fix_source_segment(segment_id: str, corrected_source: str, tool_context: Too
       segment_id: The segment whose source text is wrong.
       corrected_source: The corrected source-language text.
     """
-    if not st.get_segment(tool_context.state, segment_id.strip()):
+    seg = st.get_segment(tool_context.state, segment_id.strip())
+    if not seg:
         return {"status": "error", "message": f"No segment {segment_id}."}
+    if (refused := _unread_text(tool_context, seg["source"], corrected_source)) is not None:
+        return refused
     changed = _stage(tool_context.state, segment_id.strip(), "source", corrected_source)
     return {
         "status": "proposed" if changed else "unchanged",
@@ -411,4 +508,5 @@ EDITOR_TOOLS = [
     get_page_source,
     propose_page_source,
     reread_page,
+    look_at_page,
 ] + ([look_up_term] if dictionary.enabled() else [])  # only offered when a dictionary is set up

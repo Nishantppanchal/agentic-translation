@@ -1,6 +1,6 @@
 "use client";
 
-import { AlertTriangle, ArrowDownUp, Check, FileSearch, Loader2, X } from "lucide-react";
+import { AlertTriangle, ArrowDownUp, Check, Eye, FileSearch, Loader2, X } from "lucide-react";
 import { useState } from "react";
 import type { SourceFix } from "@/lib/types";
 import { DiffText } from "../document/Diff";
@@ -13,10 +13,14 @@ export function SourceCheck({
   fixes,
   onDecide,
   onContinue,
+  onAskToCheck,
+  chatBusy,
 }: {
   fixes: SourceFix[];
   onDecide: (page: number, accept: boolean) => Promise<void>;
   onContinue: () => Promise<void>;
+  onAskToCheck: () => void; // the chat looks at the pages itself (for someone who can't read the source)
+  chatBusy: boolean; // the chat is working
 }) {
   const [busy, setBusy] = useState<string | null>(null);
   const run = async (key: string, action: () => Promise<void>) => {
@@ -38,6 +42,16 @@ export function SourceCheck({
         wrong, describe it below — e.g. “page 1 has two columns: read the left one first”, “the stamp&apos;s text is inside
         the second paragraph”, “the table lost its last row”. I&apos;ll propose a fix for the page.
       </p>
+      {fixes.length === 0 && (
+        <button
+          onClick={onAskToCheck}
+          disabled={chatBusy}
+          className="mt-2 flex items-center gap-1.5 rounded-lg border border-warn-fg/30 bg-panel px-2.5 py-1 text-xs font-medium hover:border-accent disabled:opacity-40"
+          title="The chat looks at each page next to its reading and tells you what looks wrong"
+        >
+          <Eye size={13} /> Check the pages for me
+        </button>
+      )}
 
       {fixes.map((fix) => (
         <div key={fix.id} className="mt-3 rounded-lg border border-border bg-panel p-3">
@@ -92,7 +106,7 @@ export function SourceCheck({
         )}
         <button
           onClick={() => run("continue", onContinue)}
-          disabled={!!busy}
+          disabled={!!busy || chatBusy}
           className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
         >
           {busy === "continue" && <Loader2 size={12} className="animate-spin" />}

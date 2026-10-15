@@ -15,7 +15,7 @@ defaults:                    # every model gets these; a model's own values win
 
 models:
   - id: qwen-flash                        # what pipeline.yaml refers to
-    model_name: qwen/qwen3.8-flash        # the name the server knows the model by
+    model_name: qwen/qwen3.8-flash        # the name the server knows the model by (no ZDR endpoint on OpenRouter)
     url: https://openrouter.ai/api/v1     # the server's OpenAI-compatible base URL
     api_key: ${OPENROUTER_API_KEY}        # sent as "Authorization: Bearer …"
     vision: true                          # reads images: needed by the ocr, ocr_check and editor steps
@@ -27,6 +27,7 @@ models:
     model_name: anthropic/claude-haiku-5.5
     url: https://openrouter.ai/api/v1
     api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}   # zero data retention only (Amazon Bedrock, Google)
     vision: true                          # the chat editor looks at page images when fixing the OCR
     thinking: true
     effort: low

@@ -2,6 +2,7 @@
 name = "translator-backend"
 version = "0.1.0"
 description = "Agentic document translation backend (Google ADK)"
+license = "LicenseRef-Proprietary"  # all rights reserved: see LICENSE at the repository root
 requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.141.1",

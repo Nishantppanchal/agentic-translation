@@ -8,19 +8,23 @@
 # These are the defaults: people can choose other models and levels in the app (Settings → Models, or a
 # document's own settings, or the chat box for the chat).
 
-default: {model: claude-haiku, effort: low}   # every step not listed below
+default: {model: claude-haiku, effort: low}   # every step not listed below: analysis, translation, refinement,
+                                              # consistency, rewrites and the chat (it reads images and calls tools)
 
+# Chosen for what each step needs (all on providers with zero data retention, see models.example.yaml):
 steps:
-  ocr: {model: qwen-flash, effort: instant}   # reads each page image (and the text inside pictures, and pages read again in the chat)
-  ocr_check: {model: qwen-flash, effort: low} # compares the reading with the page image
+  ocr: {model: gpt-luna, effort: low}         # reads each page image (and the text in pictures): the most accurate
+                                              # reader on our scans (5 pages, German and Chinese; Instant was worse)
+  ocr_check: {model: glm-flash, effort: low}  # compares the reading with the page image: another company's model
+                                              # reads it independently (fast, strong on Chinese)
   # analyse:                 # brief, key terms, the questions, and the document's title and summary
   # translate:
-  review: {model: qwen-flash, effort: low}    # a second model reviewing the translation
+  review: {model: gpt-luna, effort: low}      # the AI review: a different company than the translator's
   # refine:                  # fixes what the review found
   # polish:                  # consistency fixes before Ready (and the consistency task)
   # rewrite:                 # tasks: rewrite with an instruction, alternatives
-  # editor:                  # the chat
-  lqa: {model: qwen-flash, effort: low}       # independent quality scoring (MQM)
+  # editor:                  # the chat (needs images and tool calling)
+  lqa: {model: gemini-flash, effort: low}     # independent quality scoring (MQM): a third company
   # The AI assist features (each its own model and level; Settings → Models can change them too):
   suggest: {model: claude-haiku, effort: instant}   # the suggested follow-up prompts in the chat
   complete: {model: claude-haiku, effort: instant}  # Tab completions in the chat box (keep it fast)

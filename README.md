@@ -107,9 +107,10 @@ Key terms can be looked up in a dictionary service: any HTTP endpoint answering 
 (`POST {"terms": [...], "source_lang": "fr", "target_lang": "en"}` → `{"results": {term: [{translation, definition,
 domain, source, url}]}}`), set with `DICTIONARY_URL` (plus `DICTIONARY_API_KEY` / `DICTIONARY_HEADERS`). The analysis
 looks up all key terms in one call and shows the entries on the question cards (a dictionary translation it didn't
-offer becomes an option); the chat editor gets a `look_up_term` tool. `dictionary-server/` is a dummy implementation
-(`python3 dictionary-server/server.py`); put an adapter in front of IATE, Wiktionary or a commercial API to use a real
-one. See [dictionary-server/README.md](dictionary-server/README.md).
+offer becomes an option); the chat editor gets a `look_up_dictionary` tool. `dictionary-server/` is a dummy implementation
+(`python3 dictionary-server/server.py`, on port 8200), and `.env.example` points `DICTIONARY_URL` at it; put an adapter
+in front of IATE, Wiktionary or a commercial API to use a real one. A dictionary that is down never blocks a run (the
+lookups come back empty). See [dictionary-server/README.md](dictionary-server/README.md).
 
 ## Running it
 
@@ -122,6 +123,9 @@ uv sync
 cp config/models.example.yaml config/models.yaml   # the models (see "Models")
 cp .env.example .env                               # then put the API key in .env (OPENROUTER_API_KEY for the example)
 uv run uvicorn translator.api:app --port 8000
+
+# dictionary (another terminal; the dummy one .env.example points at — DICTIONARY_URL)
+python3 dictionary-server/server.py     # http://localhost:8200/lookup
 
 # frontend (second terminal)
 cd frontend
@@ -177,13 +181,13 @@ models:
     thinking: true
     effort: low
 
-# config/pipeline.yaml
-default: {model: claude-haiku, effort: low}   # every step not listed below
+# config/pipeline.yaml — each step on a model that fits it, all on zero-data-retention providers
+default: {model: claude-haiku, effort: low}   # analysis, translation, fixes, rewrites, the chat (images + tools)
 steps:
-  ocr: {model: qwen-flash, effort: instant}
-  ocr_check: {model: qwen-flash, effort: low}
-  review: {model: qwen-flash, effort: low}
-  lqa: {model: qwen-flash, effort: low}
+  ocr: {model: gpt-luna, effort: low}         # the most accurate page reader on our German and Chinese scans
+  ocr_check: {model: glm-flash, effort: low}  # a second company's model checks the reading
+  review: {model: gpt-luna, effort: low}      # a different company than the translator's
+  lqa: {model: gemini-flash, effort: low}     # a third, independent scorer
   suggest: {model: claude-haiku, effort: instant}   # suggested follow-ups
   complete: {model: claude-haiku, effort: instant}  # Tab completions
   notes: {model: claude-haiku, effort: low}         # client notes
@@ -345,3 +349,13 @@ Every PDF stops after reading for the source check (step 6): press **Continue to
 - Translation runs pages in order, so it has no cross-page parallelism. With a single small GPU at `MAX_CONCURRENCY=1` that costs nothing; with spare capacity, long documents are slower than with the old parallel batches. OCR and review still run in parallel.
 - LQA scores are per 1000 source words, so on very short documents a single error swings the score a lot (one major error in 100 words = 50 points).
 - No auth; everything runs as a single local user.
+
+## License
+
+**All rights reserved.** This is proprietary software: no license is granted (see [LICENSE](LICENSE)).
+- **Not allowed without written permission:** using, running, copying, changing or sharing it, or offering it as a service, for any purpose, commercial or not.
+- **The only exception:** what GitHub's terms allow for a public repository, which is viewing it and forking it on GitHub.
+- **Permission:** ask the copyright holder, Nishant Panchal, through [GitHub](https://github.com/Nishantppanchal).
+
+The libraries, models and assets it uses keep their own licenses (for example the company logos from
+`@lobehub/icons-static-svg`, MIT).

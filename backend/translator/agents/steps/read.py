@@ -27,22 +27,23 @@ from ...document.pages import (
     place_figure_marker,
     segments_from_pages,
 )
-from ...models.config import step_model
+from ...models import routing
 from ...models.replies import (
     clean,
-    is_none_reply,
+    parse_figure_reply,
     parse_ocr_check,
 )
 from ...ocr import layout
+from ...ocr.figures import FIGURE_LABELS, Guard, judge
 from ...ocr.guard import guard
 from .. import prompts
 from ..common import progress_state, reply_text, run_bounded, say, user_message
-from ..workers import ocr_checker, ocr_reader
+from ..workers import figure_reader, ocr_checker, ocr_reader
 
 SOURCE_INTERRUPT = "source_check"
 
 
-OCR_CACHE_VERSION = 3  # 3: vision LLM + PP-DocLayoutV3 figures, guarded check
+OCR_CACHE_VERSION = 4  # 4: figures checked (size, layout text, text layer, picture-or-text) before the reading
 
 
 def _overlap(a: tuple, b: tuple) -> float:
@@ -79,14 +80,17 @@ def layer_agreement(markdown: str, text_layer: str) -> float:
     return fuzz.ratio(a, b) if a and b else 0.0
 
 
-def _ocr_signature(page: Page) -> str:
-    """What a cached page result depends on: the page itself, the OCR settings and prompts."""
+def _ocr_signature(page: Page, state=None) -> str:
+    """What a cached page result depends on: the page itself, the reading models the document uses (and their
+    reasoning level), the OCR settings and prompts."""
     s = get_settings()
+    ocr, check = routing.resolve("ocr", state), routing.resolve("ocr_check", state)
     h = hashlib.sha1(page.image or b"")
-    for part in (page.text_layer, step_model("ocr").model_name, s.layout_model, step_model("ocr_check").model_name,
-                 s.ocr_check_enabled, s.ocr_check, s.figure_detection, s.figure_text, OCR_CACHE_VERSION,
+    for part in (page.text_layer, f"{ocr.model_name}/{ocr.effort}", s.layout_model, f"{check.model_name}/{check.effort}",
+                 s.ocr_check_enabled, s.ocr_check, s.figure_detection, s.figure_text, s.figure_check,
+                 json.dumps(layout.thresholds(), sort_keys=True), _guard(), OCR_CACHE_VERSION,
                  prompts.VISION_OCR, prompts.VISION_OCR_TEXT_LAYER, prompts.VISION_OCR_FIGURES, prompts.OCR_CHECK,
-                 prompts.FIGURE_TEXT):  # a better prompt reads the page again
+                 prompts.FIGURE_CHECK):  # a better prompt reads the page again
         h.update(str(part).encode())
     return h.hexdigest()
 
@@ -111,7 +115,7 @@ async def _ocr_page(ctx: Context, page: Page) -> tuple[str, dict, dict[tuple[int
     if page.image is None:  # plain text input: nothing to OCR
         report = {"page": page.number, "ok": True, "issues": [], "used_text_layer": False, "figures": 0}
         return page.text_layer, report, {}
-    sig = _ocr_signature(page)
+    sig = _ocr_signature(page, ctx.state)
     if cached := await _cached_ocr(ctx, page, sig):
         return cached
     markdown, report, meta = await _read_page(ctx, page)
@@ -120,49 +124,104 @@ async def _ocr_page(ctx: Context, page: Page) -> tuple[str, dict, dict[tuple[int
     return markdown, report, meta
 
 
-async def _vision_figures(page: Page) -> tuple[list[Figure], str]:
-    """Pictures for the vision engine: the PDF's embedded images, plus what PP-DocLayoutV3 finds (the layout
-    server, if it is running): figures on scans, vector charts, seals."""
+def _guard() -> Guard:
+    return Guard(text_cover=get_settings().figure_text_cover)
+
+
+def _image_size(png: bytes) -> tuple[int, int]:
+    import pymupdf
+
+    pix = pymupdf.Pixmap(png)
+    return pix.width, pix.height
+
+
+async def _vision_figures(page: Page) -> tuple[list[Figure], list[dict]]:
+    """Picture candidates that pass the checks in ocr/figures.py → (figures, regions turned down as pictures).
+    Candidates: the PDF's embedded images, plus the pictures, charts and seals PP-DocLayoutV3 finds (the layout
+    server, if it is running) on scans and in vector drawings."""
     if get_settings().figure_detection == "off":
-        return [], ""
-    figures = list(page.figures)
-    sources = ["pdf"] if figures else []
-    if layout.available() and (regions := await layout.figure_boxes(page.image)):
-        added = [(box, label) for box, label in regions if not any(_overlap(box, f.box) > 0.5 for f in figures)]
-        figures += [Figure(box=box, png=crop_png(page.image, box), anchor=page.anchor_below(box), kind=label)
-                    for box, label in added]
-        if added:
-            sources.append("layout")
+        return [], []
+    guard_ = _guard()
+    size = _image_size(page.image)
+    text_blocks = page.text_blocks if page.has_text_layer else []
+    figures: list[Figure] = []
+    dropped: list[dict] = []
+    for f in page.figures:  # an image embedded in a PDF: a picture unless the PDF's own text covers it
+        if reason := judge(f.box, "image", 1.0, size, [], text_blocks, from_layout=False, guard=guard_):
+            dropped.append({"label": "image", "reason": reason})
+        else:
+            figures.append(f)
+    found = await layout.detect_layout(page.image) if layout.available() else None
+    regions = (found or {}).get("regions") or []
+    for r in regions:
+        box = tuple(r["box"])
+        if r["label"] not in FIGURE_LABELS or any(_overlap(box, f.box) > 0.5 for f in page.figures):
+            continue
+        if reason := judge(box, r["label"], float(r.get("score", 1.0)), size, regions, text_blocks, guard=guard_):
+            dropped.append({"label": r["label"], "reason": reason})
+            continue
+        figures.append(Figure(box=box, png=crop_png(page.image, box), anchor=page.anchor_below(box), kind=r["label"],
+                              source="layout"))
     figures.sort(key=lambda f: (round(f.box[1]), f.box[0]))
-    return figures, "+".join(sources)
+    return figures, dropped
+
+
+async def _check_figures(ctx: Context, page: Page, figures: list[Figure]) -> tuple[list[Figure], list[str], list[dict]]:
+    """The OCR model looks at each picture candidate: a picture keeps the text read in it as its legend; plain text
+    is dropped as a figure (seals never are), so the page reading transcribes it like any other text.
+    → (pictures, their legends, the regions read as text)."""
+    settings = get_settings()
+    if not figures or (settings.figure_check == "off" and not settings.figure_text):
+        return figures, [""] * len(figures), []
+
+    async def look(k: int, figure: Figure) -> tuple[str, str]:
+        crop = types.Part.from_bytes(data=figure.png, mime_type="image/png")
+        out = await ctx.run_node(figure_reader, node_input=user_message(crop, prompts.FIGURE_CHECK.format(label=figure.kind)),
+                                 run_id=f"figcheck-p{page.number}-{k}")
+        return parse_figure_reply(reply_text(out))
+
+    replies: dict[int, tuple[str, str]] = {}
+    async for i, res in run_bounded([lambda k=k, f=f: look(k, f) for k, f in enumerate(figures, start=1)],
+                                    settings.max_concurrency):
+        replies[i] = res
+    kept, legends, as_text = [], [], []
+    for i, figure in enumerate(figures):
+        kind, text = replies[i]
+        if settings.figure_check == "auto" and kind == "text" and figure.kind != "seal":
+            as_text.append({"label": figure.kind, "reason": "vision"})
+            continue
+        kept.append(figure)
+        legends.append(text if settings.figure_text else "")
+    return kept, legends, as_text
 
 
 async def _read_page(ctx: Context, page: Page) -> tuple[str, dict, dict[tuple[int, int], dict]]:
     """A vision LLM transcribes the whole page (any script), with the pictures outlined and numbered so it writes
     `[[FIGURE n]]` in their place; then the OCR check, whose corrections are applied only where safe."""
-    settings = get_settings()
     report = _new_report(page)
-    figures, figure_source = await _vision_figures(page)
-    report.update(figures=len(figures), figure_source=figure_source, seals=sum(f.kind == "seal" for f in figures))
-    page_png = mark_figures(page.image, [f.box for f in figures]) if figures else page.image
+    figures, dropped = await _vision_figures(page)
+    figures, legends, as_text = await _check_figures(ctx, page, figures)
+    sources = {f.source for f in figures}
+    report.update(figures=len(figures), figure_source="+".join(x for x in ("pdf", "layout") if x in sources),
+                  seals=sum(f.kind == "seal" for f in figures))
+    if dropped or as_text:
+        report["figures_as_text"] = dropped + as_text
+    boxes = [f.box for f in figures]
+    page_png = mark_figures(page.image, boxes) if figures else page.image
     image = types.Part.from_bytes(data=page_png, mime_type="image/png" if figures else page.image_mime)
-    hint = prompts.VISION_OCR_TEXT_LAYER.format(text_layer=page.text_layer.strip()) if page.has_text_layer else ""
+    # The OCR leaves the text inside the red boxes out, so the text layer it is compared with does too.
+    text_layer = page.text_layer_outside(boxes) if page.has_text_layer else ""
+    hint = prompts.VISION_OCR_TEXT_LAYER.format(
+        text_layer=text_layer.strip(), outside_figures=" (the text inside the red boxes is left out of it)" if figures else ""
+    ) if text_layer.strip() else ""
     fig_hint = prompts.VISION_OCR_FIGURES.format(n=len(figures)) if figures else ""
     out = await ctx.run_node(ocr_reader, node_input=user_message(image, f"Transcribe page {page.number}.{fig_hint}{hint}"),
                              run_id=f"ocr-p{page.number}")
     markdown = clean(reply_text(out))
     markdown = await _check_page(ctx, page, markdown, image, prompts.OCR_CHECK_MARKED_FIGURES if figures else "",
-                                 bool(figures), report)
-    legends = []
+                                 text_layer, report)
     for n, figure in enumerate(figures, start=1):
         markdown = place_figure_marker(markdown, n, figure.anchor)
-        text = ""
-        if settings.figure_text:
-            crop = types.Part.from_bytes(data=figure.png, mime_type="image/png")
-            reply = reply_text(await ctx.run_node(ocr_reader, node_input=user_message(crop, prompts.FIGURE_TEXT),
-                                             run_id=f"figtext-p{page.number}-{n}"))
-            text = "" if is_none_reply(reply) else clean(reply)
-        legends.append(text)
     return markdown, report, await _save_figures(ctx, page, figures, legends)
 
 
@@ -170,13 +229,14 @@ def _new_report(page: Page) -> dict:
     return {"page": page.number, "ok": True, "issues": [], "used_text_layer": page.has_text_layer, "figures": 0}
 
 
-async def _check_page(ctx: Context, page: Page, markdown: str, image: types.Part, figure_note: str, has_figures: bool,
+async def _check_page(ctx: Context, page: Page, markdown: str, image: types.Part, figure_note: str, text_layer: str,
                       report: dict) -> str:
-    """The OCR check: skipped when the reading and a clean text layer agree (two independent readings, a page
-    without pictures); otherwise a vision LLM compares the reading with the image, and its corrections are
-    applied only where safe (`ocr/guard.py`) — the rest are listed as possible misreadings."""
+    """The OCR check: skipped when the reading and a clean text layer agree (two independent readings; the text
+    layer here leaves out the text inside the figures, as the reading does); otherwise a vision LLM compares the
+    reading with the image, and its corrections are applied only where safe (`ocr/guard.py`) — the rest are
+    listed as possible misreadings."""
     settings = get_settings()
-    agreement = layer_agreement(markdown, page.text_layer) if page.has_text_layer and not has_figures and not page.full_page_image else 0
+    agreement = layer_agreement(markdown, text_layer) if text_layer.strip() and not page.full_page_image else 0
     if settings.ocr_check == "auto" and agreement >= settings.ocr_check_agreement:
         report.update(checked="text layer", agreement=round(agreement, 1))
         return markdown
@@ -184,14 +244,14 @@ async def _check_page(ctx: Context, page: Page, markdown: str, image: types.Part
         return markdown
     check_prompt = prompts.OCR_CHECK.format(
         transcription=markdown,
-        text_layer_hint=" (and the PDF's embedded text layer)" if page.has_text_layer else "",
-        text_layer_block=f"\n\n<text_layer>\n{page.text_layer.strip()}\n</text_layer>" if page.has_text_layer else "",
+        text_layer_hint=" (and the PDF's embedded text layer)" if text_layer.strip() else "",
+        text_layer_block=f"\n\n<text_layer>\n{text_layer.strip()}\n</text_layer>" if text_layer.strip() else "",
         figure_note=figure_note,
     )
     verdict = await ctx.run_node(ocr_checker, node_input=user_message(image, check_prompt), run_id=f"ocrcheck-p{page.number}")
     _ok, _issues, corrected = parse_ocr_check(reply_text(verdict))
     if corrected:
-        markdown, applied, held = guard(markdown, corrected, page.text_layer if page.has_text_layer else "")
+        markdown, applied, held = guard(markdown, corrected, text_layer)
         if applied:
             report.update(ok=False, issues=report["issues"] + applied)
         if held:
@@ -241,6 +301,8 @@ async def ocr(ctx: Context, node_input: Any):
             note += f"; {n} possible misreading{'s' if n != 1 else ''} to check (not changed)"
         if report["figures"]:
             note += f"; {report['figures']} figure{'s' if report['figures'] != 1 else ''} kept ({report['figure_source']})"
+        if n := len(report.get("figures_as_text") or []):
+            note += f"; {n} region{'s' if n != 1 else ''} taken for a picture read as text"
         yield say(f"OCR page {pages[i].number}: {note}", state=progress_state("ocr", len(results), total, f"OCR page {len(results)}/{total}"))
 
     page_md = [(pages[i].number, results[i][0]) for i in range(total)]
@@ -264,9 +326,11 @@ async def ocr(ctx: Context, node_input: Any):
 
 
 def source_format(filename: str) -> str:
-    """pdf | image (read with OCR) · text (.txt / .md, read as it is)."""
+    """pdf | image (read with OCR) · text (.txt / .md, read as it is) · docx | pptx | xlsx (extracted, office/)."""
+    from ... import office
+
     ext = "." + filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
-    return "pdf" if ext == ".pdf" else "text" if ext in (".txt", ".md", ".markdown") else "image"
+    return office.detect(filename) or ("pdf" if ext == ".pdf" else "text" if ext in (".txt", ".md", ".markdown") else "image")
 
 
 def _where_to_look(state) -> str:
@@ -283,6 +347,9 @@ def _where_to_look(state) -> str:
         if n := r.get("seals") or 0:
             notes.append(f"{'a seal or stamp' if n == 1 else f'{n} seals or stamps'} — its text is kept as a picture "
                          "legend, and text under it is easy to misread")
+        if n := len(r.get("figures_as_text") or []):
+            notes.append(f"{n} region{'s' if n != 1 else ''} the layout model took for a picture {'were' if n != 1 else 'was'} "
+                         "read as text: check nothing is missing there")
         if not r.get("used_text_layer"):
             notes.append("read from the image" if image_upload else "a scan: no text layer to compare the reading with")
         if notes:

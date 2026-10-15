@@ -8,6 +8,9 @@ environment variable NAME (`backend/.env` is loaded into the environment), `${NA
 Headers reach every model request from three places, later ones winning: `defaults.headers` (all models), the
 model's own `headers`, and the headers of the run that makes the call — `defaults.forward_headers` copies the
 named headers of the API request that started a run, and code can add more with `llm.request_headers(...)`.
+
+pipeline.yaml gives the defaults. People can choose other models (and a reasoning level for models with
+`thinking: true`) in the app — for all new documents (Settings) or one document — see models/routing.py.
 """
 
 from __future__ import annotations
@@ -24,10 +27,18 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..config import get_settings
 
-Step = Literal["ocr", "ocr_check", "analyse", "translate", "review", "refine", "polish", "rewrite", "editor", "lqa"]
+Step = Literal["ocr", "ocr_check", "analyse", "translate", "review", "refine", "polish", "rewrite", "editor", "lqa",
+               "suggest", "complete", "notes"]
 STEPS: tuple[Step, ...] = get_args(Step)
 # Steps that look at page images: their model must read images (`vision: true` in models.yaml).
 VISION_STEPS: tuple[Step, ...] = ("ocr", "ocr_check", "editor")
+# How hard a model with `thinking: true` reasons, sent as the standard `reasoning_effort` (instant = "none": no
+# thinking; vLLM turns it into enable_thinking=false). A thinking model always gets one: the choice made in the
+# app, else the step's `effort` in pipeline.yaml (when the step uses that model), else the model's own `effort`
+# in models.yaml, else DEFAULT_EFFORT (OpenAI's documented default for reasoning_effort).
+Effort = Literal["instant", "low", "medium", "high"]
+EFFORTS: tuple[Effort, ...] = get_args(Effort)
+DEFAULT_EFFORT: Effort = "medium"
 STEP_LABELS: dict[Step, str] = {
     "ocr": "OCR",  # reads each page image, the text inside pictures, and pages read again in the source check
     "ocr_check": "OCR check",
@@ -39,11 +50,30 @@ STEP_LABELS: dict[Step, str] = {
     "rewrite": "Rewrite",  # tasks: rewrite with an instruction, alternatives
     "editor": "Chat editor",
     "lqa": "LQA",
+    "suggest": "Suggestions",  # the suggested follow-up prompts in the chat
+    "complete": "Tab completion",  # the rest of a chat message being typed (keep it fast)
+    "notes": "Client notes",  # the delivery note for the client
 }
+
+
+# The steps as people choose models for them (Settings): one model per group, or per step under Advanced.
+STEP_GROUPS: tuple[dict[str, Any], ...] = (
+    {"id": "reading", "label": "Reading", "help": "Reads each page (OCR) and checks the reading", "steps": ("ocr", "ocr_check")},
+    {"id": "translating", "label": "Translating", "help": "Analysis, translation, fixes and rewrites",
+     "steps": ("analyse", "translate", "refine", "polish", "rewrite")},
+    {"id": "reviewing", "label": "Reviewing", "help": "The AI review and the quality score (LQA)", "steps": ("review", "lqa")},
+    {"id": "chat", "label": "Chat", "help": "The chat editor (it looks at pages too)", "steps": ("editor",)},
+    {"id": "assist", "label": "AI assist", "help": "Suggested prompts, Tab completions and notes for the client",
+     "steps": ("suggest", "complete", "notes")},
+)
 
 
 class ConfigError(ValueError):
     """models.yaml or pipeline.yaml is wrong: says which file and what."""
+
+
+class ChoiceError(ValueError):
+    """A model chosen in the app can't do that step (unknown, can't read images, or doesn't think)."""
 
 
 class _Strict(BaseModel):
@@ -69,6 +99,10 @@ class ModelSpec(_Strict):
     retries: int | None = None
     temperature: float | None = None
     vision: bool = False  # reads images: needed for the steps that look at pages (VISION_STEPS)
+    thinking: bool = False  # a reasoning model: offers Instant / Low / Medium / High (sent as `reasoning_effort`)
+    effort: Effort | None = None  # its default level (thinking models only); unset: DEFAULT_EFFORT
+    label: str | None = None  # the name people see ("Claude Haiku 5.5"); unset: made from model_name
+    vendor: str | None = None  # whose model it is, for its logo (anthropic, qwen, openai, …); unset: from model_name
     # JSON-schema output for the translator, reviewer and refiner (vLLM and most hosted APIs support it);
     # false: they answer in a tag format instead.
     structured_output: bool = True
@@ -83,10 +117,11 @@ class StepSpec(_Strict):
     model: str
     extra_body: dict[str, Any] = Field(default_factory=dict)  # added to the model's, e.g. a thinking budget
     temperature: float | None = None
+    effort: Effort | None = None  # reasoning level, for a model with `thinking: true`
 
 
 class PipelineFile(_Strict):
-    default: str | None = None  # the model for every step not listed
+    default: str | StepSpec | None = None  # the model for every step not listed
     steps: dict[Step, str | StepSpec] = Field(default_factory=dict)
 
 
@@ -103,9 +138,11 @@ class StepModel:
     extra_body: dict[str, Any]
     timeout: float
     retries: int
-    temperature: float
+    temperature: float | None  # None: not sent (a reasoning model at Low/Medium/High uses its own)
     structured_output: bool
     vision: bool
+    thinking: bool = False
+    effort: Effort | None = None
 
     def __repr__(self) -> str:  # never the key or header values (they may hold credentials)
         return f"StepModel({self.step}: {self.id} = {self.model_name} at {self.url})"
@@ -113,11 +150,48 @@ class StepModel:
 
 @dataclass(frozen=True)
 class ModelConfig:
-    steps: dict[Step, StepModel]
+    steps: dict[Step, StepModel]  # pipeline.yaml's choices
     forward_headers: tuple[str, ...]
+    models: dict[str, ModelSpec]
+    defaults: Defaults
+    specs: dict[Step, StepSpec]  # pipeline.yaml's entry for each step
 
     def step(self, step: Step) -> StepModel:
         return self.steps[step]
+
+    def check_choice(self, step: Step, model_id: str, effort: str | None = None) -> ModelSpec:
+        """The model, if it can do this step at this reasoning level; ChoiceError (saying why) if not."""
+        m = self.models.get(model_id)
+        if m is None:
+            raise ChoiceError(f"{model_id!r} is not a model in models.yaml ({', '.join(self.models)})")
+        if step in VISION_STEPS and not m.vision:
+            raise ChoiceError(f"{STEP_LABELS[step]} looks at page images, and {model_id!r} doesn't read images")
+        if effort is not None and effort not in EFFORTS:
+            raise ChoiceError(f"unknown reasoning level {effort!r} (one of {', '.join(EFFORTS)})")
+        if effort is not None and not m.thinking:
+            raise ChoiceError(f"{model_id!r} doesn't think (no `thinking: true` in models.yaml), so it has no reasoning level")
+        return m
+
+    def default_effort(self, step: Step, model_id: str) -> tuple[Effort | None, str | None]:
+        """The level a thinking model gets on this step when nobody chose one, and where it comes from
+        ("pipeline.yaml", "models.yaml" or "built-in"); (None, None) for a model that doesn't think."""
+        m = self.models.get(model_id)
+        if m is None or not m.thinking:
+            return None, None
+        spec = self.specs.get(step)
+        if spec is not None and spec.model == model_id and spec.effort is not None:
+            return spec.effort, "pipeline.yaml"
+        if m.effort is not None:
+            return m.effort, "models.yaml"
+        return DEFAULT_EFFORT, "built-in"
+
+    def choose(self, step: Step, model_id: str, effort: str | None = None) -> StepModel:
+        """The step on this model: pipeline.yaml's own settings for the step (extra_body, temperature) only apply
+        when it is the step's pipeline.yaml model. No level chosen: the default one (`default_effort`)."""
+        m = self.check_choice(step, model_id, effort)
+        spec = self.specs[step]
+        own = spec if spec.model == model_id else StepSpec(model=model_id)
+        return _step_model(step, m, self.defaults, own, effort if effort is not None else self.default_effort(step, model_id)[0])
 
 
 _VAR = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)(:-([^}]*))?\}")
@@ -159,14 +233,32 @@ def _read(file: Path, schema: type[BaseModel]) -> BaseModel:
         raise ConfigError(f"{file}: {problems}") from None
 
 
+def _step_model(step: Step, m: ModelSpec, d: Defaults, spec: StepSpec, effort: str | None) -> StepModel:
+    thinks = bool(m.thinking and effort and effort != "instant")
+    # A reasoning model at Low/Medium/High: the default temperature isn't sent (some providers refuse one with
+    # reasoning on); a temperature set on the step or the model still is.
+    temperature = next((t for t in (spec.temperature, m.temperature) if t is not None), None if thinks else d.temperature)
+    return StepModel(
+        step=step, id=m.id, model_name=m.model_name, url=m.url, api_key=m.api_key or None,
+        headers={**d.headers, **m.headers}, extra_body={**m.extra_body, **spec.extra_body},
+        timeout=m.timeout if m.timeout is not None else d.timeout,
+        retries=m.retries if m.retries is not None else d.retries,
+        temperature=temperature, structured_output=m.structured_output, vision=m.vision,
+        thinking=m.thinking, effort=effort if m.thinking else None,
+    )
+
+
 def build(models: ModelsFile, pipeline: PipelineFile, where: str = "pipeline.yaml") -> ModelConfig:
     by_id: dict[str, ModelSpec] = {}
     for m in models.models:
         if m.id in by_id:
             raise ConfigError(f"models.yaml: two models have the id {m.id!r}")
         by_id[m.id] = m
+        if m.effort is not None and not m.thinking:
+            raise ConfigError(f"models.yaml: {m.id!r} sets effort {m.effort!r} but is not marked `thinking: true`")
     d = models.defaults
     steps: dict[Step, StepModel] = {}
+    specs: dict[Step, StepSpec] = {}
     for step in STEPS:
         spec = pipeline.steps.get(step, pipeline.default)
         if spec is None:
@@ -179,15 +271,13 @@ def build(models: ModelsFile, pipeline: PipelineFile, where: str = "pipeline.yam
         if step in VISION_STEPS and not m.vision:
             raise ConfigError(f"{where}: step {step!r} looks at page images, so it needs a vision model, but {m.id!r} "
                               "is not marked `vision: true` in models.yaml")
-        steps[step] = StepModel(
-            step=step, id=m.id, model_name=m.model_name, url=m.url, api_key=m.api_key or None,
-            headers={**d.headers, **m.headers}, extra_body={**m.extra_body, **spec.extra_body},
-            timeout=m.timeout if m.timeout is not None else d.timeout,
-            retries=m.retries if m.retries is not None else d.retries,
-            temperature=next(t for t in (spec.temperature, m.temperature, d.temperature) if t is not None),
-            structured_output=m.structured_output, vision=m.vision,
-        )
-    return ModelConfig(steps=steps, forward_headers=tuple(d.forward_headers))
+        if spec.effort is not None and not m.thinking:
+            raise ConfigError(f"{where}: step {step!r} sets effort {spec.effort!r}, but {m.id!r} is not marked "
+                              "`thinking: true` in models.yaml")
+        specs[step] = spec
+        effort = spec.effort if spec.effort is not None else (m.effort or DEFAULT_EFFORT) if m.thinking else None
+        steps[step] = _step_model(step, m, d, spec, effort)
+    return ModelConfig(steps=steps, forward_headers=tuple(d.forward_headers), models=by_id, defaults=d, specs=specs)
 
 
 def load(models_file: Path, pipeline_file: Path) -> ModelConfig:

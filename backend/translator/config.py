@@ -46,6 +46,16 @@ class Settings(BaseSettings):
     # auto: the PDF's embedded images, plus the pictures, charts and seals PP-DocLayoutV3 finds (layout server) · off
     figure_detection: Literal["auto", "off"] = "auto"
     figure_text: bool = True  # read the text inside figures and translate it as a legend
+    # auto: before a region becomes a figure, the OCR model looks at it and says picture or text (a block of text
+    # the layout model took for a picture is then transcribed as text) · off: trust the layout model (and the
+    # size / text-layer checks in ocr/figures.py)
+    figure_check: Literal["auto", "off"] = "auto"
+    figure_text_cover: float = 0.6  # text regions of the layout covering this much of a "picture": it's text
+    # Pictures in Word, PowerPoint and Excel files: auto — the OCR model (if it reads images) reads the text in each
+    # and it is translated (alt text, a caption in Word, the slide's notes in PowerPoint) · off — pictures are left alone
+    office_pictures: Literal["auto", "off"] = "auto"
+    office_picture_min_cm: float = 1.5  # smaller on their short side (icons, bullets): left alone
+    office_picture_max: int = 60  # pictures read per file at most (the rest are listed as not translated)
 
     # The layout MCP server (../layout-server): PP-DocLayoutV3 finds the pictures on pages, and the chat editor
     # inspects page layouts with it. Blank LAYOUT_SERVER_DIR: figures come from the PDF's embedded images only.
@@ -55,7 +65,11 @@ class Settings(BaseSettings):
     # (PP-DocLayoutV3/, ...), or the layout model's own
     # folder (inference.yml, inference.json, inference.pdiparams). Blank: PaddleX downloads them to its cache.
     layout_model_dir: str = ""
-    layout_threshold: float = 0.5
+    # Minimum layout confidence: LAYOUT_THRESHOLD for every class, LAYOUT_THRESHOLDS (JSON) per class. Text regions
+    # come in at a low bar (more of them = better evidence against a block of text read as a picture); pictures
+    # need more.
+    layout_threshold: float = 0.3
+    layout_thresholds: Annotated[dict[str, float], NoDecode] = {"image": 0.55, "chart": 0.55, "seal": 0.45}
     layout_timeout: float = 300.0  # seconds; first call loads (and may download) the model
 
     # A dictionary service (any HTTP endpoint answering the contract in dictionary-server/README.md): key terms
@@ -85,6 +99,14 @@ class Settings(BaseSettings):
     data_dir: Path = Path("data")
     cors_origins: list[str] = ["http://localhost:3000", "http://127.0.0.1:3000"]
     user_id: str = "local"
+
+    @field_validator("layout_thresholds", mode="before")
+    @classmethod
+    def _thresholds(cls, value):
+        """`{"image": 0.6}` from the environment; empty means the defaults for every class."""
+        if isinstance(value, str):
+            value = json.loads(value) if value.strip() else {}
+        return value
 
     @field_validator("dictionary_headers", mode="before")
     @classmethod

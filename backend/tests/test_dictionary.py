@@ -73,7 +73,7 @@ def test_without_a_dictionary_nothing_is_called(monkeypatch):
 
 
 def test_a_dictionary_translation_the_analysis_missed_becomes_an_option():
-    from translator.agents.steps.analyse import _add_dictionary_options
+    from translator.references import add_dictionary_options as _add_dictionary_options
 
     term = {"term": "réception avec réserves", "guess": "acceptance subject to reservations",
             "options": [{"target": "acceptance subject to reservations", "note": ""}],
@@ -85,11 +85,13 @@ def test_a_dictionary_translation_the_analysis_missed_becomes_an_option():
 
 
 def test_the_editor_can_look_terms_up(dictionary_server):
-    from translator.agents.editor_tools import look_up_term
+    from translator.agents.reference_tools import look_up_dictionary
 
     class Ctx:
         state = {"doc:source_lang": "Chinese (Simplified)"}
 
-    result = asyncio.run(look_up_term("三措一案", Ctx()))
-    assert result["status"] == "found" and result["entries"][0]["translation"] == "three measures and one plan"
-    assert asyncio.run(look_up_term("不存在", Ctx()))["status"] == "not found"
+    result = asyncio.run(look_up_dictionary("三措一案", Ctx()))
+    assert result["status"] == "found" and result["results"][0]["target"] == "three measures and one plan"
+    assert asyncio.run(look_up_dictionary("不存在", Ctx()))["status"] == "not found"
+    Ctx.state = {**Ctx.state, "doc:dictionary": False}  # turned off for this document
+    assert asyncio.run(look_up_dictionary("三措一案", Ctx()))["status"] == "off"

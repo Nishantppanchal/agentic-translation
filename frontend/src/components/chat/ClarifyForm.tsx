@@ -2,6 +2,7 @@
 
 import { HelpCircle, Loader2 } from "lucide-react";
 import { useState } from "react";
+import { Button } from "@/components/ui/button";
 import type { Answer, Question, Segment } from "@/lib/types";
 import { answerFor, type Choice, isRecommended, recommendedChoice, TermChoice } from "./TermChoice";
 
@@ -35,12 +36,12 @@ export function ClarifyForm({
   };
 
   return (
-    <div className="rounded-xl border border-warn-fg/30 bg-warn/50 p-4 text-sm">
-      <div className="flex items-center gap-2 font-medium">
-        <HelpCircle size={16} className="text-warn-fg" />
+    <div className="rounded-xl border border-warn-fg/25 bg-warn/45 p-4 text-sm">
+      <div className="flex items-center gap-2 font-medium text-warn-fg">
+        <HelpCircle size={16} />
         {questions.length} term{questions.length === 1 ? "" : "s"} to decide {beforeTranslating ? "before I translate" : "before the review"}
       </div>
-      <p className="mt-1 text-xs text-muted">
+      <p className="mt-1 text-xs text-muted-foreground">
         Each term is explained in plain English, with the sentence it appears in. My recommendation is preselected — if
         you&apos;re not sure, just continue. Terms you choose yourself become approved project terms; recommendations you
         just accept are saved as <i>proposed</i> (a suggestion for later documents, which you can approve in the termbase).
@@ -58,23 +59,14 @@ export function ClarifyForm({
           />
         ))}
       </div>
-      <div className="mt-3 flex items-center justify-end gap-2">
-        <button
-          onClick={() => submit(true)}
-          disabled={busy}
-          className="rounded-lg px-3 py-1.5 text-xs text-muted hover:text-fg disabled:opacity-40"
-          title="Don't record any decision; the AI keeps its guesses"
-        >
+      <div className="mt-3 flex flex-wrap items-center justify-end gap-2">
+        <Button variant="ghost" size="sm" onClick={() => submit(true)} disabled={busy} title="Don't record any decision; the AI keeps its guesses">
           Skip — let the AI decide
-        </button>
-        <button
-          onClick={() => submit(false)}
-          disabled={busy}
-          className="flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-white disabled:opacity-40"
-        >
-          {busy && <Loader2 size={12} className="animate-spin" />}
+        </Button>
+        <Button size="sm" onClick={() => submit(false)} disabled={busy}>
+          {busy && <Loader2 className="animate-spin" />}
           {changed === 0 ? "Accept all recommendations & continue" : `Continue with my ${changed} change${changed === 1 ? "" : "s"}`}
-        </button>
+        </Button>
       </div>
     </div>
   );

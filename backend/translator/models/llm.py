@@ -18,7 +18,7 @@ from google.adk.models.llm_response import LlmResponse
 from google.genai import types
 from pydantic import PrivateAttr
 
-from .config import Step, step_model
+from .config import Step, StepModel, step_model
 
 log = logging.getLogger(__name__)
 
@@ -28,6 +28,8 @@ litellm.suppress_debug_info = True
 
 VLLM = "hosted_vllm/"  # LiteLLM's OpenAI-compatible provider: vLLM, SGLang, OpenRouter, Ollama, LM Studio, ...
 BUDGET = "thinking_token_budget"  # vLLM's cap on a reasoning model's hidden thinking
+EFFORT = "reasoning_effort"  # the standard reasoning level (OpenAI, vLLM, OpenRouter); instant = "none"
+EFFORT_PARAM = {"instant": "none", "low": "low", "medium": "medium", "high": "high"}
 
 
 _DETAIL = re.compile(r"Hosted_vllmException - (.*)", re.S)
@@ -120,19 +122,29 @@ class EndpointModel(LiteLlm):
     """A model on an OpenAI-compatible endpoint (vLLM, OpenRouter, …). A failed call is logged with the server's own error (and raised with it, so
     the run shows it too). vLLM refuses a thinking budget unless the server runs with a reasoning parser
     (`--reasoning-parser`); a server without one gets the request again without the budget, and this role
-    stops sending it — and its thinking, written into the answer, is split off (`split_thinking`)."""
+    stops sending it — and its thinking, written into the answer, is split off (`split_thinking`). The same for
+    a server that refuses `reasoning_effort`. Every response says which model (models.yaml id) and reasoning level
+    answered, for usage (`custom_metadata`)."""
 
     _step: str = PrivateAttr(default="")
+    _spec: StepModel | None = PrivateAttr(default=None)
 
     def where(self) -> str:
         return f"{self._step or 'model'} model {self.model.removeprefix(VLLM)} at {safe_url(self._additional_args.get('api_base'))}"
 
     async def generate_content_async(self, llm_request: LlmRequest, stream: bool = False) -> AsyncGenerator[LlmResponse, None]:
+        # ADK names the agent's default model in the request (basic.py); a document may have chosen another one.
+        llm_request.model = self.model
+        if self._spec is not None:
+            llm_request.config.temperature = self._spec.temperature  # None: not sent
         if run_headers := _run_headers.get():  # per request, on top of the model's own (ADK merges them)
             options = llm_request.config.http_options or types.HttpOptions()
             llm_request.config.http_options = options.model_copy(update={"headers": {**(options.headers or {}), **run_headers}})
         try:
             async for response in self._generate(llm_request, stream):
+                if self._spec is not None:
+                    response.custom_metadata = {**(response.custom_metadata or {}), "model_id": self._spec.id,
+                                                "effort": self._spec.effort if EFFORT in self._additional_args else None}
                 yield split_thinking(response)
         except Exception as e:
             message = f"{self.where()}: {server_error(e)}"
@@ -146,22 +158,27 @@ class EndpointModel(LiteLlm):
             return
         except litellm.BadRequestError as e:
             extra = self._additional_args.get("extra_body") or {}
-            if BUDGET not in str(e) or BUDGET not in extra:
-                raise
-            log.warning("vLLM error — %s refused the thinking budget (%s); retrying without it, and not sending it again",
-                        self.where(), server_error(e))
-            rest = {k: v for k, v in extra.items() if k != BUDGET}
-            if rest:
-                self._additional_args["extra_body"] = rest
+            if EFFORT in str(e) and EFFORT in self._additional_args:
+                log.warning("vLLM error — %s refused reasoning_effort (%s); retrying without it, and not sending it again",
+                            self.where(), server_error(e))
+                del self._additional_args[EFFORT]
+            elif BUDGET in str(e) and BUDGET in extra:
+                log.warning("vLLM error — %s refused the thinking budget (%s); retrying without it, and not sending it again",
+                            self.where(), server_error(e))
+                rest = {k: v for k, v in extra.items() if k != BUDGET}
+                if rest:
+                    self._additional_args["extra_body"] = rest
+                else:
+                    del self._additional_args["extra_body"]
             else:
-                del self._additional_args["extra_body"]
+                raise
         async for response in super().generate_content_async(llm_request, stream):
             yield response
 
 
-def build_model(step: Step) -> EndpointModel:
-    """The model for a pipeline step, as config/models.yaml and config/pipeline.yaml define it."""
-    m = step_model(step)
+def build_model(step: Step, spec: StepModel | None = None) -> EndpointModel:
+    """The model for a pipeline step: `spec` (a document's choice, models/routing.py), or pipeline.yaml's."""
+    m = spec or step_model(step)
     # Rate limits are retried with exponential backoff, other API errors a few times — a busy server
     # shouldn't fail a whole document. A stalled connection times out and is retried instead of blocking
     # the document: LiteLLM's own default timeout is 6000 s.
@@ -172,8 +189,11 @@ def build_model(step: Step) -> EndpointModel:
         kwargs["extra_headers"] = m.headers
     if m.extra_body:
         kwargs["extra_body"] = m.extra_body
+    if m.thinking and m.effort:
+        kwargs[EFFORT] = EFFORT_PARAM[m.effort]
     model = EndpointModel(model=VLLM + m.model_name, api_base=m.url, drop_params=True, **kwargs)
     model._step = step
+    model._spec = m
     return model
 
 

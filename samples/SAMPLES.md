@@ -37,6 +37,12 @@ GmbH (甲方); Contractor: Albrecht Elektrotechnik GmbH (乙方, site manager K.
 | `yanshou-baogao.pdf` (+ `-scanned.pdf`) | zh | PDF | 1 p. | Chinese acceptance report; source of the Chinese TM | existing |
 | `fucha-baogao.pdf` (+ `-scanned.pdf`) | zh | PDF | 2 pp. | Forward definition, cross-page paragraph, TM leverage, questions | **new** |
 | `vertragsauszug.pdf` (+ `-scanned.pdf`) | de | PDF | 2 pp. | AG/AN defined late, VOB/B legal terms, repeated clause | **new** |
+| `jiance-baogao.docx` | zh | Word | 51 seg. | Bold/italic, a link, a footnote, a PAGE field, two tracked changes, tables, a repeated sentence, a sketch with Chinese labels | **new** |
+| `anquan-peixun.pptx` | zh | PowerPoint | 27 seg. | Terms defined on later slides, speaker notes, a fixed-size box the English must shrink into, a safety sign picture | **new** |
+| `quexian-qingdan.xlsx` | zh | Excel | 33 seg. | Shared strings, rich text, COUNTIF over status texts, real dates, a sketch picture | **new** |
+| `pruefbericht.docx` | de | Word | 22 seg. | Formatting, tracked changes, header and footer | existing |
+| `unterweisung.pptx` | de | PowerPoint | 12 seg. | Slides and speaker notes | existing |
+| `maengelliste.xlsx` | de | Excel | 18 seg. | Shared strings, rich text, a COUNTIF literal | existing |
 | `demo/termbase.csv`, `demo/memory.json` | de→en | CSV, JSON | 12 + 12 | German project termbase and TM | existing |
 | `demo/zh/termbase.csv`, `demo/zh/memory.json` | zh→en | CSV, JSON | 15 + 9 | Chinese project termbase and TM | **new** |
 | `reference/*.en.md` | en | Markdown | 6 files | English references (`acceptance-report.en.md` fits every file in `languages/`) | **new** |
@@ -397,6 +403,65 @@ The English is the text of `reference/yanshou-baogao.en.md`.
 
 Expected: re-translating `yanshou-baogao.pdf` in the Chinese project gives exact matches for all 9 units. The
 figure legend is translated normally. See `fucha-baogao.pdf` for leverage in another document.
+
+---
+
+## Word, PowerPoint and Excel samples
+
+Their text is read from the file (no OCR, no source check) and the translation is written back into a copy of
+it; **Document → Layout** shows the original and the translated file side by side, and the download menu offers
+the translated file. Built by `backend/scripts/make_samples.py` (the Chinese ones; the German ones are older
+one-off files). Reading and writing back each of the six reproduces the same segments (`tests/test_office.py`
+checks the same on built-in files).
+
+**Pictures.** Each Chinese file has one picture with Chinese text in it (drawn by the script). The OCR model reads
+its text when the file is read (the chat says "Read the text in 1 picture"); it is translated like a figure's
+legend and shown under the picture in Reading. The translated file gets the English as the picture's alt text
+("Text in the picture: …", after the picture's own alt text, translated, if it has one), plus a caption under it in
+Word and a "Text in pictures (English)" line in the slide's notes in PowerPoint (the picture itself is unchanged).
+The references list the English of each picture's text.
+
+### `jiance-baogao.docx`: Chinese, Word, 51 segments
+接地及绝缘电阻检测报告 (earthing and insulation resistance test report), 18 May 2026: the main earth grid 0.42 Ω
+(meets 0.5 Ω), the basement cable tray 0.08 Ω pass, the UPS cabinet 0.35 Ω fail (to be fixed by 15 June 2026),
+insulation of the 110 kV switchgear A/B/C 2500/2300/2400 MΩ. Reference: `reference/jiance-baogao.en.md`.
+- **Formatting:** p1.3 carries `**主接地网**` (bold) and `*满足设计值0.5 Ω的要求*` (italic): the English keeps a bold
+  and an italic stretch with the original's formatting.
+- **Link:** p1.5 `[检测方案](https://example.com/…)`: the link stays a link (same target) around its English words.
+- **Footnote:** the mark at the end of p1.5 stays at the end; its text is p2.1 (*Notes*), translated in place.
+- **Field:** the footer p1.50 `第 [^1]1[^2] 页` holds a live PAGE field: the English footer (`Page [^1]1[^2]`) keeps it.
+- **Tracked changes:** the chat says 2 were accepted (尽快 deleted, 于2026年6月15日前 inserted): the text to translate
+  has the date, and the translated file has no revision marks.
+- **Questions:** 运维单位 and 消缺 should be asked (as in `fucha-baogao.pdf`); termbase terms (甲方, 乙方, 电缆桥架,
+  倒闸操作…) must not be. The sentence 测试条件：天气晴… repeats (one translation for both).
+- **Picture:** p1.10 is the test wiring sketch (接地电阻测试接线示意图, five labels). The translated file has its English
+  as the alt text and as a caption paragraph right under the picture.
+
+### `anquan-peixun.pptx`: Chinese, PowerPoint, 4 slides, 27 segments
+停电作业安全培训 (safety training for outage work). Reference: `reference/anquan-peixun.en.md`.
+- **Forward definitions:** 五防 and 两票三制 are used on slide 1 and defined on slides 3 and 4: slide 1 gets the
+  same terms (Five Preventions, Two Permits and Three Systems).
+- **Speaker notes** of every slide are segments (p1.4, p1.5, p2.7, …); the Layout view shows them under the slides.
+- **Shrink to fit:** p4.5 is a fixed-size box (安全第一、预防为主、综合治理) the English is about four times longer than:
+  the translated file sets it (and other text that grew by more than a tenth) to shrink on overflow; the Layout
+  view's report lists them.
+- **Repeat:** p3.8 = p4.7. **Question:** 保电 (p2.5, p2.7).
+- **Picture:** p2.6 is the safety sign on slide 2 (止步，高压危险！/ 禁止合闸 / 有人工作). The translated file has its
+  English as the alt text and under "Text in pictures (English)" in slide 2's notes.
+
+### `quexian-qingdan.xlsx`: Chinese, Excel, 2 sheets, 33 segments
+缺陷清单 (defect list): sheet 缺陷 (six defects; 编号 numbers, 整改期限 real dates, 状态 已整改/未整改) and 汇总 (formulas:
+`COUNTIF(缺陷!F:F,"已整改")`, `COUNTIF(缺陷!F:F,"未整改")`, `COUNTIF(缺陷!D:D,"乙方")`, a ratio and a product).
+Reference: `reference/quexian-qingdan.en.md`.
+- **Shared strings:** one segment per distinct text (乙方 p1.9 is in 4 cells, 已整改 p1.10 in 3, 未整改 p1.15 in 3):
+  one translation for all its cells.
+- **Formula texts:** the COUNTIF literals are translated with their cells (`COUNTIF(缺陷!F:F,"Not rectified")`), so
+  the counts stay 3 / 3 / 4; the workbook recalculates on opening.
+- **Rich text:** p1.20 `**【重要】**2号主变…` keeps its bold run.
+- **Not translated:** sheet names (formulas refer to them), numbers, dates. **Questions:** 运维方 (p1.19) and 消缺.
+- **Picture:** p1.22 is the defect location sketch at H2, and p1.21 its own alt text (缺陷位置示意图, a segment of
+  kind "alt"). The translated file's alt text is the translated alt text, then "Text in the picture: …" with the
+  English of the labels; nothing else in the file changes.
 
 ---
 

@@ -2,8 +2,11 @@
 
 import { Check, CircleHelp, Download, FileCheck2, Gauge, ListChecks, Loader2, Wrench } from "lucide-react";
 import { useEffect, useState } from "react";
+import { cn } from "cn";
+import { Button } from "@/components/ui/button";
+import { Progress as Bar } from "@/components/ui/progress";
 import { api } from "@/lib/api";
-import type { DocStatus, LqaResult, Progress, Segment } from "@/lib/types";
+import type { DocStatus, ExportFormat, LqaResult, Progress, Segment } from "@/lib/types";
 
 const STEPS = ["Read", "Analyse", "Translate", "Review", "Ready"] as const;
 const WITH_CHECK = ["Read", "Check", "Analyse", "Translate", "Review", "Ready"] as const; // PDFs and images
@@ -73,7 +76,7 @@ export function RunSteps({
   const steps = check ? WITH_CHECK : STEPS;
   const current = stepOf(progress, status, segments.some((s) => s.translatable && s.target), check);
   return (
-    <div className="rounded-xl border border-border bg-panel p-3 text-sm">
+    <div className="rounded-xl border border-border bg-card p-3.5 text-sm shadow-xs">
       <ol className="flex items-center">
         {steps.map((label, i) => {
           const done = i < current;
@@ -82,26 +85,31 @@ export function RunSteps({
             <li key={label} className="flex flex-1 items-center last:flex-none">
               <div className="flex flex-col items-center gap-1">
                 <span
-                  className={`flex h-6 w-6 items-center justify-center rounded-full text-[11px] font-medium ${
+                  className={cn(
+                    "flex size-6 items-center justify-center rounded-full text-[11px] font-medium transition-colors duration-300",
                     done
-                      ? "bg-accent text-white"
+                      ? "bg-primary text-primary-foreground"
                       : now
                         ? waiting
                           ? "bg-warn text-warn-fg ring-2 ring-warn-fg/40"
-                          : "bg-accent-soft text-accent ring-2 ring-accent/40"
-                        : "bg-sidebar text-muted"
-                  }`}
+                          : "bg-primary-soft text-primary ring-2 ring-primary/40"
+                        : "bg-muted text-muted-foreground",
+                  )}
                 >
                   {done ? <Check size={13} /> : now && waiting ? <CircleHelp size={13} /> : now && running ? <Loader2 size={12} className="animate-spin" /> : i + 1}
                 </span>
-                <span className={`text-[11px] ${now ? "font-medium text-fg" : "text-muted"}`}>{label}</span>
+                <span className={`text-[11px] ${now ? "font-medium text-foreground" : "text-muted-foreground"}`}>{label}</span>
               </div>
-              {i < steps.length - 1 && <div className={`mx-1 mb-4 h-0.5 flex-1 rounded ${done ? "bg-accent" : "bg-border"}`} />}
+              {i < steps.length - 1 && (
+                <div className="relative mx-1 mb-4 h-0.5 flex-1 overflow-hidden rounded bg-border">
+                  <div className={cn("absolute inset-0 origin-left bg-primary transition-transform duration-500", done ? "scale-x-100" : "scale-x-0")} />
+                </div>
+              )}
             </li>
           );
         })}
       </ol>
-      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted">
+      <div className="mt-2 flex items-center justify-between gap-2 text-xs text-muted-foreground">
         <span className="truncate">
           {checking
             ? "Check the source text — ask me to fix anything, then press Continue to translation."
@@ -111,7 +119,7 @@ export function RunSteps({
         </span>
         <span className="flex shrink-0 items-center gap-2">
           {!waiting && progress && progress.total > 0 && (
-            <span>
+            <span className="tabular-nums">
               {progress.current}/{progress.total}
             </span>
           )}
@@ -119,9 +127,7 @@ export function RunSteps({
         </span>
       </div>
       {!waiting && progress && progress.total > 0 && (
-        <div className="mt-1.5 h-1 overflow-hidden rounded-full bg-sidebar">
-          <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${Math.round((100 * progress.current) / progress.total)}%` }} />
-        </div>
+        <Bar value={Math.round((100 * progress.current) / progress.total)} className="mt-1.5 h-1 bg-muted" aria-label="Progress" />
       )}
     </div>
   );
@@ -146,7 +152,7 @@ export function NextSteps({
   onRunLqa: () => void;
 }) {
   const [qaErrors, setQaErrors] = useState<number | null>(null);
-  const [canDownload, setCanDownload] = useState(false);
+  const [canDownload, setCanDownload] = useState<ExportFormat["id"] | null>(null);
   useEffect(() => {
     let cancelled = false;
     api
@@ -155,7 +161,8 @@ export function NextSteps({
       .catch(() => {});
     api
       .exportFormats(sessionId)
-      .then((formats) => !cancelled && setCanDownload(formats.some((f) => f.id === "docx" && f.available)))
+      // The translated Word / PowerPoint / Excel file for Office uploads, else the Word export.
+      .then((formats) => !cancelled && setCanDownload(formats.find((f) => f.available && (f.id === "office" || f.id === "docx"))?.id ?? null))
       .catch(() => {});
     return () => {
       cancelled = true;
@@ -163,28 +170,29 @@ export function NextSteps({
   }, [sessionId, versionCount]);
 
   const drafts = segments.filter((s) => s.translatable && (s.status === "draft" || s.status === "new")).length;
-  const btn = "flex items-center gap-1.5 rounded-lg border border-border bg-panel px-2.5 py-1.5 text-xs hover:border-accent";
   return (
-    <div className="rounded-xl border border-border bg-bg p-3">
-      <div className="mb-2 text-xs font-medium tracking-wide text-muted uppercase">Next steps</div>
+    <div className="rounded-xl border border-border bg-card/60 p-3">
+      <div className="mb-2 text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">Next steps</div>
       <div className="flex flex-wrap gap-2">
         {drafts > 0 && (
-          <button onClick={onOpenSegments} className={btn}>
-            <ListChecks size={14} className="text-accent" /> Review {drafts} draft{drafts === 1 ? "" : "s"}
-          </button>
+          <Button variant="outline" size="sm" onClick={onOpenSegments} className="bg-card">
+            <ListChecks className="text-primary" /> Review {drafts} draft{drafts === 1 ? "" : "s"}
+          </Button>
         )}
         {!!qaErrors && (
-          <button onClick={onFixQa} className={btn} title="The agent runs the QA checks and proposes fixes">
-            <Wrench size={14} className="text-del-fg" /> Fix {qaErrors} QA error{qaErrors === 1 ? "" : "s"}
-          </button>
+          <Button variant="outline" size="sm" onClick={onFixQa} className="bg-card" title="The agent runs the QA checks and proposes fixes">
+            <Wrench className="text-del-fg" /> Fix {qaErrors} QA error{qaErrors === 1 ? "" : "s"}
+          </Button>
         )}
-        <button onClick={onRunLqa} className={btn} title="An independent model scores the translation (MQM)">
-          <Gauge size={14} className="text-accent" /> {lqa ? "Re-check quality score" : "Check quality score"}
-        </button>
+        <Button variant="outline" size="sm" onClick={onRunLqa} className="bg-card" title="An independent model scores the translation (MQM)">
+          <Gauge className="text-primary" /> {lqa ? "Re-check quality score" : "Check quality score"}
+        </Button>
         {canDownload && (
-          <a href={api.exportUrl(sessionId, undefined, "target", "docx")} className={btn}>
-            <Download size={14} className="text-accent" /> Download Word
-          </a>
+          <Button variant="outline" size="sm" asChild className="bg-card">
+            <a href={api.exportUrl(sessionId, undefined, "target", canDownload)}>
+              <Download className="text-primary" /> {canDownload === "office" ? "Download the translated file" : "Download Word"}
+            </a>
+          </Button>
         )}
         {drafts === 0 && !qaErrors && (
           <span className="flex items-center gap-1.5 px-1 text-xs text-ins-fg">

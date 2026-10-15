@@ -2,18 +2,21 @@
 
 from __future__ import annotations
 
+import html
 from dataclasses import dataclass
 from typing import Any
 
 from google.adk import Context, Event
 from google.adk.workflow import node
 
-from ... import projects
+from ... import projects, references
 from ...config import get_settings
+from ...document import memory as tm_memory
 from ...document import state as st
 from ...document.pages import (
     page_batches,
 )
+from ...integrations import dictionary
 from ...models import structured
 from ...models.replies import (
     parse_keeps,
@@ -22,7 +25,6 @@ from ...models.replies import (
     tag_body,
 )
 from ...quality import qa
-from ...text import with_markup_of
 from .. import prompts
 from ..common import doc_langs, progress_state, reply_text, run_bounded, save_version, say, scope, user_message
 from ..workers import translator
@@ -113,7 +115,7 @@ async def _translate_batch(
 ) -> BatchResult:
     """One translator call for a page (+ targeted retries for dropped and merged segments)."""
     max_terms = get_settings().max_questions_per_batch
-    if structured.enabled("translate"):
+    if structured.enabled("translate", ctx.state):
         output_format = prompts.TRANSLATE_FORMAT_JSON
     else:
         output_format = prompts.TRANSLATE_FORMAT_TAGS + (prompts.TRANSLATE_FORMAT_TAGS_DETECT if detect else "")
@@ -127,10 +129,11 @@ async def _translate_batch(
             brief=brief or "(start of document — no brief yet)",
             instructions=instructions,
             tm=tm,
+            evidence=references.evidence_text(ctx.state, segs),
             max_terms=max_terms,
             context=context,
             scope=scope,
-            segments="\n\n".join(f'<seg id="{s["id"]}">\n{s["source"]}\n</seg>' for s in segs),
+            segments="\n\n".join(f'<seg id="{s["id"]}"{_where(s)}>\n{s["source"]}\n</seg>' for s in segs),
             output_format=output_format,
         ) + extra
 
@@ -161,37 +164,9 @@ async def _translate_batch(
     return result
 
 
-def _tm_pass(state, segments: list[dict]) -> tuple[dict[str, dict], dict[str, dict], dict[str, int]]:
-    """→ (state delta for reused segments, fuzzy refs by segment id, stats)."""
-    stats = {"context": 0, "exact": 0, "fuzzy": 0, "words": 0}
-    pid = projects.project_id(state)
-    if not pid:
-        return {}, {}, stats
-    store = projects.get_store()
-    auto_confirm = (store.project(pid) or {}).get("auto_confirm_context", True)
-    delta: dict[str, dict] = {}
-    refs: dict[str, dict] = {}
-    prev = ""
-    for seg in segments:
-        if not seg["translatable"]:
-            continue
-        if not st.is_frozen(seg) and not seg.get("target"):
-            best = next(iter(store.lookup(pid, seg["source"], prev, limit=1)), None)
-            if best and best["score"] >= 100:
-                # A person confirmed this sentence in this context before: 101% starts confirmed (project
-                # setting, on by default as in CAT tools); 100% still wants a look.
-                target = with_markup_of(seg["source"], best["target"])  # the heading/list markup of this segment
-                confirmed = best["score"] > 100 and auto_confirm
-                new = st.apply_target(seg, target, origin="tm_exact", status="confirmed" if confirmed else "draft")
-                new["match"] = best["score"]
-                delta[st.seg_key(seg["id"])] = new
-                stats["context" if best["score"] > 100 else "exact"] += 1
-                stats["words"] += len(seg["source"].split())
-            elif best:
-                refs[seg["id"]] = best
-                stats["fuzzy"] += 1
-        prev = seg["source"]
-    return delta, refs, stats
+def _where(seg: dict) -> str:
+    """Where an Office segment is ("Slide 3 · Title", "Sheet1!B4 · column …"): context for short texts."""
+    return f' where="{html.escape(seg["where"], quote=True)}"' if seg.get("where") else ""
 
 
 @node(rerun_on_resume=True)
@@ -199,8 +174,10 @@ async def translate(ctx: Context, node_input: Any):
     """Translate page by page, in order, carrying the previous text and the termbase forward."""
     settings = get_settings()
     segments = st.get_segments(ctx.state)
-    # Segments that already have a translation (from the translation memory) are kept.
+    # Segments that already have a translation (filled from the translation memory before the analysis) are kept;
+    # fuzzy TM matches are references to adapt.
     batches = page_batches([s for s in segments if not s.get("target")], settings.page_max_chars)
+    tm_refs: dict[str, dict] = ctx.state.get("doc:tm_refs") or {}
     total = len(batches)
     source_lang, target_lang = doc_langs(ctx.state)
     detect = source_lang.startswith("the source language")
@@ -216,21 +193,6 @@ async def translate(ctx: Context, node_input: Any):
     instructions = projects.instructions_for(ctx.state)
     brief = ctx.state.get("doc:brief") or ""
 
-    # Translation memory first: 100/101% matches are reused as-is (no model call); fuzzy matches
-    # become references the translator adapts.
-    tm_delta, tm_refs, tm_stats = _tm_pass(ctx.state, segments)
-    if tm_delta or tm_refs:
-        for key, seg in tm_delta.items():
-            translations[seg["id"]] = snap[seg["id"]] = seg["target"]
-        reused = tm_stats["context"] + tm_stats["exact"]
-        yield say(
-            f"Translation memory: {reused} segment{'s' if reused != 1 else ''} reused"
-            f" ({tm_stats['words']} words, no model call), {tm_stats['fuzzy']} fuzzy match{'es' if tm_stats['fuzzy'] != 1 else ''} to adapt",
-            state={**tm_delta, "doc:tm_stats": tm_stats},
-        )
-        prefilled = {seg["id"] for seg in tm_delta.values()}
-        batches = page_batches([s for s in segments if s["id"] not in prefilled and not s.get("target")], settings.page_max_chars)
-        total = len(batches)
     all_terms: list[dict] = []
     part_of_page: dict[int, int] = {}
     flagged = 0
@@ -240,11 +202,6 @@ async def translate(ctx: Context, node_input: Any):
         page = batch[0]["page"]
         part_of_page[page] = part_of_page.get(page, 0) + 1
         multi = sum(1 for b in batches if b[0]["page"] == page) > 1
-        tm_lines = [
-            f"- [{s['id']}] {tm_refs[s['id']]['score']}% · {tm_refs[s['id']]['source']} → {tm_refs[s['id']]['target']}"
-            for s in batch
-            if s["id"] in tm_refs
-        ]
         result = await _translate_batch(
             ctx,
             f"translate-{i}",
@@ -253,7 +210,7 @@ async def translate(ctx: Context, node_input: Any):
             target_lang=target_lang,
             glossary=projects.glossary_for(ctx.state, [s["source"] for s in batch]),
             instructions=instructions,
-            tm="\n".join(tm_lines) or "(none)",
+            tm=tm_memory.reference_lines(batch, tm_refs),
             termbase=st.termbase_text({"doc:termbase": termbase}),
             context=_carried_context(segments, batch[0]["id"], translations, settings.carry_context_chars),
             scope=scope(batch, part_of_page[page] if multi else None),
@@ -272,11 +229,9 @@ async def translate(ctx: Context, node_input: Any):
             flagged += bool(flags)
             translations[seg["id"]] = target
             snap[seg["id"]] = target
-            ref = tm_refs.get(seg["id"])
-            new = st.apply_target(seg, target, origin="tm_fuzzy" if ref else "mt", status="draft", flags=flags)
-            if ref:
-                new["match"] = ref["score"]
-            delta[st.seg_key(seg["id"])] = new
+            ref = tm_refs.get(seg["id"])  # a fuzzy match the translator adapted: machine translation, with its score
+            delta[st.seg_key(seg["id"])] = st.apply_target(seg, target, origin="mt", status="draft", flags=flags,
+                                                           match=ref["score"] if ref else None)
         if result.detected:
             source_lang = result.detected.strip()
             delta["doc:detected_lang"] = source_lang
@@ -319,6 +274,25 @@ async def clarify(ctx: Context, node_input: Any):
 
     answers = (ctx.resume_inputs or {}).get(CLARIFY_INTERRUPT)
     if answers is None:
+        # The dictionary on the translator's late terms (the analysis's were looked up already), in one call.
+        missing = [q for q in open_qs if not q.get("dictionary")]
+        if missing and references.dictionary_on(ctx.state):
+            source_lang, _ = doc_langs(ctx.state)
+            hits = await dictionary.lookup([q["term"] for q in missing], source_lang)
+            questions = [dict(q) for q in ctx.state.get("doc:questions") or []]
+            ids = {q["id"] for q in missing}
+            for q in questions:
+                if q["id"] in ids and (entries := hits.get(q["term"])):
+                    q["dictionary"] = entries
+                    references.add_dictionary_options(q)
+            results = [{"query": q["term"], "entries": [references.dictionary_entry(e) for e in q["dictionary"][:3]]}
+                       for q in questions if q["id"] in ids and q.get("dictionary")]
+            yield references.lookup_event(
+                references.lookup_payload("dictionary", "Dictionary senses for the terms the translator asks about", results,
+                                          queries=len(missing)),
+                f"Dictionary: {len(results)} of {len(missing)} term{'s' if len(missing) != 1 else ''} found",
+                state={"doc:questions": questions})
+            open_qs = st.open_questions({"doc:questions": questions})  # (ADK State is not a Mapping to spread)
         n = len(open_qs)
         text = (f"Before the review pass I need your help with {n} term{'s' if n != 1 else ''} I wasn't sure about. "
                 "Each card explains the term and preselects my recommendation; skip to keep my guesses.")
@@ -360,6 +334,7 @@ async def clarify(ctx: Context, node_input: Any):
     snap = st.snapshot(ctx.state)
     changed: list[str] = []
     done = 0
+    tm_refs: dict[str, dict] = ctx.state.get("doc:tm_refs") or {}
     tasks = [
         lambda i=i, b=b: _translate_batch(
             ctx,
@@ -373,6 +348,7 @@ async def clarify(ctx: Context, node_input: Any):
             scope=f"{scope(b)} — re-translate these segments only, applying the glossary",
             brief=ctx.state.get("doc:brief") or "",
             instructions=projects.instructions_for(ctx.state),
+            tm=tm_memory.reference_lines(b, tm_refs),
         )
         for i, b in enumerate(batches)
     ]
@@ -382,7 +358,8 @@ async def clarify(ctx: Context, node_input: Any):
         for seg in batches[i]:
             new = result.translated.get(seg["id"])
             if new and new != seg.get("target"):
-                delta[st.seg_key(seg["id"])] = st.apply_target(seg, new, origin="mt", status="draft")
+                delta[st.seg_key(seg["id"])] = st.apply_target(seg, new, origin="mt", status="draft",
+                                                               match=(tm_refs.get(seg["id"]) or {}).get("score"))
                 snap[seg["id"]] = new
                 changed.append(seg["id"])
         delta.update(progress_state("clarify", done, total, f"Re-translated {scope(batches[i])} ({done}/{total})"))

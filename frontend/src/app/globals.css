@@ -1,14 +1,51 @@
 @import "tailwindcss";
+@import "tw-animate-css";
+
+/* Theme: System follows the OS; <html data-theme="light|dark"> (set before paint by lib/prefsScript.ts) pins one.
+   shadcn/ui's token names; the accent is a soft blue from the logo's family. The dark palette appears twice
+   below — keep both copies in sync. */
+@custom-variant dark {
+  &:where([data-theme="dark"], [data-theme="dark"] *) {
+    @slot;
+  }
+  @media (prefers-color-scheme: dark) {
+    &:where(:root:not([data-theme="light"]), :root:not([data-theme="light"]) *) {
+      @slot;
+    }
+  }
+}
 
 :root {
-  --bg: #fbfaf8;
-  --panel: #ffffff;
-  --sidebar: #f4f2ee;
-  --border: #e6e2db;
-  --muted: #6f6a62;
-  --fg: #1f1d1a;
-  --accent: #4f46e5;
-  --accent-soft: #eef0ff;
+  color-scheme: light;
+  --radius: 0.625rem;
+  --background: oklch(0.99 0.003 250);
+  --foreground: oklch(0.21 0.02 258);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.21 0.02 258);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.21 0.02 258);
+  --primary: oklch(0.56 0.11 255);
+  --primary-foreground: oklch(0.99 0.003 250);
+  --primary-soft: oklch(0.955 0.025 250); /* selected rows, chips, highlights */
+  --secondary: oklch(0.965 0.008 250);
+  --secondary-foreground: oklch(0.25 0.02 258);
+  --muted: oklch(0.965 0.006 250);
+  --muted-foreground: oklch(0.52 0.02 255);
+  --accent: oklch(0.955 0.014 250); /* hover and focus backgrounds (shadcn's meaning) */
+  --accent-foreground: oklch(0.21 0.02 258);
+  --destructive: oklch(0.577 0.21 27);
+  --border: oklch(0.915 0.008 250);
+  --input: oklch(0.89 0.01 250);
+  --ring: oklch(0.7 0.09 252);
+  --sidebar: oklch(0.975 0.006 250);
+  --sidebar-foreground: oklch(0.21 0.02 258);
+  --sidebar-primary: oklch(0.56 0.11 255);
+  --sidebar-primary-foreground: oklch(0.99 0.003 250);
+  --sidebar-accent: oklch(0.94 0.014 250);
+  --sidebar-accent-foreground: oklch(0.21 0.02 258);
+  --sidebar-border: oklch(0.915 0.008 250);
+  --sidebar-ring: oklch(0.7 0.09 252);
+  /* Changes and states: added text, removed text, warnings */
   --ins: #dcfce7;
   --ins-fg: #166534;
   --del: #fee2e2;
@@ -17,16 +54,73 @@
   --warn-fg: #92400e;
 }
 
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --background: oklch(0.17 0.012 255);
+  --foreground: oklch(0.95 0.005 250);
+  --card: oklch(0.205 0.014 255);
+  --card-foreground: oklch(0.95 0.005 250);
+  --popover: oklch(0.215 0.015 255);
+  --popover-foreground: oklch(0.95 0.005 250);
+  --primary: oklch(0.74 0.1 252);
+  --primary-foreground: oklch(0.2 0.03 255);
+  --primary-soft: oklch(0.29 0.045 255);
+  --secondary: oklch(0.25 0.014 255);
+  --secondary-foreground: oklch(0.95 0.005 250);
+  --muted: oklch(0.25 0.014 255);
+  --muted-foreground: oklch(0.7 0.02 255);
+  --accent: oklch(0.27 0.018 255);
+  --accent-foreground: oklch(0.95 0.005 250);
+  --destructive: oklch(0.65 0.19 25);
+  --border: oklch(0.29 0.015 255);
+  --input: oklch(0.32 0.016 255);
+  --ring: oklch(0.6 0.09 252);
+  --sidebar: oklch(0.155 0.012 255);
+  --sidebar-foreground: oklch(0.95 0.005 250);
+  --sidebar-primary: oklch(0.74 0.1 252);
+  --sidebar-primary-foreground: oklch(0.2 0.03 255);
+  --sidebar-accent: oklch(0.24 0.016 255);
+  --sidebar-accent-foreground: oklch(0.95 0.005 250);
+  --sidebar-border: oklch(0.27 0.014 255);
+  --sidebar-ring: oklch(0.6 0.09 252);
+  --ins: #14361f;
+  --ins-fg: #86efac;
+  --del: #3f1717;
+  --del-fg: #fca5a5;
+  --warn: #3a2e10;
+  --warn-fg: #fcd34d;
+}
+
 @media (prefers-color-scheme: dark) {
-  :root {
-    --bg: #1b1a18;
-    --panel: #232220;
-    --sidebar: #171614;
-    --border: #36332f;
-    --muted: #a39d93;
-    --fg: #ece9e4;
-    --accent: #8b87ff;
-    --accent-soft: #2a2846;
+  :root:not([data-theme="light"]) {
+    color-scheme: dark;
+    --background: oklch(0.17 0.012 255);
+    --foreground: oklch(0.95 0.005 250);
+    --card: oklch(0.205 0.014 255);
+    --card-foreground: oklch(0.95 0.005 250);
+    --popover: oklch(0.215 0.015 255);
+    --popover-foreground: oklch(0.95 0.005 250);
+    --primary: oklch(0.74 0.1 252);
+    --primary-foreground: oklch(0.2 0.03 255);
+    --primary-soft: oklch(0.29 0.045 255);
+    --secondary: oklch(0.25 0.014 255);
+    --secondary-foreground: oklch(0.95 0.005 250);
+    --muted: oklch(0.25 0.014 255);
+    --muted-foreground: oklch(0.7 0.02 255);
+    --accent: oklch(0.27 0.018 255);
+    --accent-foreground: oklch(0.95 0.005 250);
+    --destructive: oklch(0.65 0.19 25);
+    --border: oklch(0.29 0.015 255);
+    --input: oklch(0.32 0.016 255);
+    --ring: oklch(0.6 0.09 252);
+    --sidebar: oklch(0.155 0.012 255);
+    --sidebar-foreground: oklch(0.95 0.005 250);
+    --sidebar-primary: oklch(0.74 0.1 252);
+    --sidebar-primary-foreground: oklch(0.2 0.03 255);
+    --sidebar-accent: oklch(0.24 0.016 255);
+    --sidebar-accent-foreground: oklch(0.95 0.005 250);
+    --sidebar-border: oklch(0.27 0.014 255);
+    --sidebar-ring: oklch(0.6 0.09 252);
     --ins: #14361f;
     --ins-fg: #86efac;
     --del: #3f1717;
@@ -36,15 +130,41 @@
   }
 }
 
+/* The sidebar's collapsed state, also set before paint: `sidebar-collapsed:w-12`. */
+@custom-variant sidebar-collapsed (&:where([data-sidebar="collapsed"] *));
+
 @theme inline {
-  --color-bg: var(--bg);
-  --color-panel: var(--panel);
-  --color-sidebar: var(--sidebar);
-  --color-border: var(--border);
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-primary-soft: var(--primary-soft);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
-  --color-fg: var(--fg);
+  --color-muted-foreground: var(--muted-foreground);
   --color-accent: var(--accent);
-  --color-accent-soft: var(--accent-soft);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
   --color-ins: var(--ins);
   --color-ins-fg: var(--ins-fg);
   --color-del: var(--del);
@@ -55,14 +175,17 @@
   --font-mono: var(--font-geist-mono);
 }
 
-html,
-body {
-  height: 100%;
-}
-
-body {
-  background: var(--bg);
-  color: var(--fg);
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+  html,
+  body {
+    height: 100%;
+  }
+  body {
+    @apply bg-background text-foreground;
+  }
 }
 
 /* Rendered markdown */
@@ -70,19 +193,57 @@ body {
   line-height: 1.65;
   font-size: 0.95rem;
 }
-.prose-doc h1 { font-size: 1.5rem; font-weight: 650; margin: 0.4em 0; }
-.prose-doc h2 { font-size: 1.25rem; font-weight: 650; margin: 0.4em 0; }
+.prose-doc h1 { font-size: 1.5rem; font-weight: 650; margin: 0.4em 0; letter-spacing: -0.01em; }
+.prose-doc h2 { font-size: 1.25rem; font-weight: 650; margin: 0.4em 0; letter-spacing: -0.01em; }
 .prose-doc h3, .prose-doc h4, .prose-doc h5, .prose-doc h6 { font-size: 1.05rem; font-weight: 650; margin: 0.4em 0; }
 .prose-doc p { margin: 0.25em 0; }
 .prose-doc ul { list-style: disc; padding-left: 1.4em; }
 .prose-doc ol { list-style: decimal; padding-left: 1.4em; }
 .prose-doc table { border-collapse: collapse; margin: 0.4em 0; font-size: 0.9em; }
 .prose-doc th, .prose-doc td { border: 1px solid var(--border); padding: 0.25em 0.5em; text-align: left; }
-.prose-doc th { background: var(--sidebar); }
-.prose-doc code { font-family: var(--font-mono); font-size: 0.85em; background: var(--sidebar); padding: 0.1em 0.3em; border-radius: 4px; }
-.prose-doc pre { background: var(--sidebar); padding: 0.75em; border-radius: 8px; overflow-x: auto; }
+.prose-doc th { background: var(--muted); }
+.prose-doc code { font-family: var(--font-mono); font-size: 0.85em; background: var(--muted); padding: 0.1em 0.3em; border-radius: 4px; }
+.prose-doc pre { background: var(--muted); padding: 0.75em; border-radius: 8px; overflow-x: auto; }
 .prose-doc pre code { background: none; padding: 0; }
-.prose-doc a { color: var(--accent); text-decoration: underline; }
-.prose-doc blockquote { border-left: 3px solid var(--border); padding-left: 0.8em; color: var(--muted); }
+.prose-doc a { color: var(--primary); text-decoration: underline; }
+.prose-doc blockquote { border-left: 3px solid var(--border); padding-left: 0.8em; color: var(--muted-foreground); }
+.prose-doc mark { background: color-mix(in oklch, var(--primary) 18%, transparent); color: inherit; border-radius: 3px; padding: 0 0.1em; }
+
+.prose-doc.prose-inline { font-size: inherit; line-height: inherit; }
+.prose-inline p, .prose-inline strong { margin: 0; }
 
 .scroll-thin { scrollbar-width: thin; }
+
+/* Word / PowerPoint pages rendered in the Layout view: the renderers bring their own styles; keep Tailwind's reset out
+   of their way, and keep the paper white in dark mode. */
+.office-page img,
+.office-page svg {
+  display: inline-block;
+  max-width: none;
+}
+.office-page {
+  color-scheme: light;
+}
+.office-page .docx-wrapper {
+  background: transparent;
+  padding: 12px 0;
+}
+.office-located {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--primary) 12%, transparent);
+  transition: outline-color 0.3s;
+}
+
+/* The pipeline diagram (Settings): an arrow of the lit steps runs (components/settings/PipelineFlow.tsx) */
+@keyframes flow-dash { to { stroke-dashoffset: -9; } }
+
+/* The logo floats: up and down slowly, its shadow shrinking as it rises (components/shell/Logo.tsx). */
+@keyframes orb-float { /* around its resting place, so it stays centred on the word beside it */
+  0%, 100% { transform: translateY(7%); }
+  50% { transform: translateY(-7%); }
+}
+@keyframes orb-shadow {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(0.72); opacity: 0.55; }
+}

@@ -10,7 +10,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from ..models import config as model_config
 from ..models.llm import request_headers
 from ..ocr import layout
-from .routes import chat, documents, meta, projects, segments, source_check
+from .routes import assist, chat, documents, meta, office, projects, segments, source_check
+from .routes import settings as settings_routes
 from .services import editor_runner, ingest_runner, ops_runner, settings
 
 
@@ -52,4 +53,7 @@ app.include_router(documents.router)
 app.include_router(chat.router)
 app.include_router(segments.router)
 app.include_router(source_check.router)
+app.include_router(office.router)
 app.include_router(projects.router)
+app.include_router(settings_routes.router)
+app.include_router(assist.router)

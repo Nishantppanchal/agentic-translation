@@ -8,8 +8,9 @@ from typing import Any
 from google.adk import Context, Event
 from google.adk.workflow import node
 
-from ... import projects
+from ... import projects, references
 from ...config import get_settings
+from ...document import memory as tm_memory
 from ...document import state as st
 from ...document.pages import (
     page_batches,
@@ -47,7 +48,7 @@ def is_major(issue: dict) -> bool:
 def issues_to_fix(issues: list[dict], segments: list[dict], round_no: int) -> list[dict]:
     """What the refiner gets: round 1 everything raised, later rounds only major issues. A 100% TM match is
     a person's approved wording for the same sentence: it is only changed for a major issue, never for style."""
-    tm_exact = {s["id"] for s in segments if s.get("origin") == "tm_exact"}
+    tm_exact = {s["id"] for s in map(st.normalize, segments) if s["origin"] == "tm" and (s["match"] or 0) >= 100}
     return [x for x in issues if (round_no == 1 or is_major(x)) and (x["segment_id"] not in tm_exact or is_major(x))]
 
 
@@ -82,7 +83,7 @@ async def review(ctx: Context, node_input: Any):
         state=progress_state("review", 0, total, f"Reviewing (round {round_no})…", "reviewing"),
     )
 
-    review_format = prompts.REVIEW_FORMAT_JSON if structured.enabled("review") else prompts.REVIEW_FORMAT_TAGS
+    review_format = prompts.REVIEW_FORMAT_JSON if structured.enabled("review", ctx.state) else prompts.REVIEW_FORMAT_TAGS
     # Deterministic findings (untranslated / merged segments, QA errors such as a missing number or a
     # forbidden term) are always fixed, whatever the reviewer says.
     forced: list[dict] = qa.forced_review_issues(ctx.state, segments)
@@ -101,6 +102,8 @@ async def review(ctx: Context, node_input: Any):
             brief=ctx.state.get("doc:brief") or "(none)",
             instructions=projects.instructions_for(ctx.state),
             pairs=pair_text(batch),
+            evidence=references.evidence_text(ctx.state, batch),
+            tm=tm_memory.reference_lines(batch, ctx.state.get("doc:tm_refs") or {}),
             auto_issues=auto or "(none)",
             output_format=review_format,
         )
@@ -179,7 +182,7 @@ async def refine(ctx: Context, node_input: Any):
             glossary=projects.glossary_for(ctx.state, [s["source"] for s in batch]),
             termbase=st.termbase_text(ctx.state), pairs=pair_text(batch), issues=issue_text,
             instructions=projects.instructions_for(ctx.state),
-            output_format=prompts.REFINE_FORMAT_JSON if structured.enabled("refine") else prompts.REFINE_FORMAT_TAGS,
+            output_format=prompts.REFINE_FORMAT_JSON if structured.enabled("refine", ctx.state) else prompts.REFINE_FORMAT_TAGS,
         )
         out = reply_text(await ctx.run_node(refiner, node_input=user_message(prompt), run_id=f"refine-r{round_no}-b{i}"))
         return _parse_revision(out)

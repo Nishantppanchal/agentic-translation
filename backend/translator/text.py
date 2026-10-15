@@ -34,9 +34,14 @@ _EMPHASIS = re.compile(r"(\*\*|__)(?=\S)(.+?)(?<=\S)\1")
 
 
 
+_OBJECT_MARK = re.compile(r"\[\^\d+\]")  # an object in a Word / PowerPoint sentence (office/markup.py)
+_LINK_TEXT = re.compile(r"\[([^\]]*)\]\([^)]*\)")
+
+
 def plain(markdown: str) -> str:
     """Segment text → plain text for word counts and comparisons: the markdown markers removed."""
-    return _EMPHASIS.sub(r"\2", _BULLET.sub("", _HEADING.sub("", markdown or "")))
+    text = _EMPHASIS.sub(r"\2", _BULLET.sub("", _HEADING.sub("", markdown or "")))
+    return _LINK_TEXT.sub(r"\1", _OBJECT_MARK.sub("", text))
 
 
 def with_markup_of(source: str, target: str) -> str:

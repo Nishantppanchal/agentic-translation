@@ -2,61 +2,61 @@
  {
   "source": "Abnahmeprotokoll – Umspannwerk Nord",
   "target": "Acceptance Report – Substation North",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  },
  {
   "source": "Datum: 14.03.2026 | Projekt-Nr.: UW-2291",
   "target": "Date: 14/03/2026 | Project No.: UW-2291",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  },
  {
   "source": "1. Gegenstand der Abnahme",
   "target": "1. Subject of Acceptance",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  },
  {
   "source": "Gegenstand der Abnahme ist die Erneuerung der 110-kV-Schaltanlage einschließlich der Sekundärtechnik. Die Arbeiten wurden gemäß LV-Position 4.2.7 ausgeführt. Der Auftragnehmer hat die Prüfprotokolle vollständig übergeben.",
   "target": "The subject of acceptance is the renewal of the 110 kV switchgear, including the secondary technology. The works were carried out in accordance with LV position 4.2.7. The Contractor has handed over the test records in full.",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  },
  {
   "source": "2. Festgestellte Mängel",
   "target": "2. Defects Identified",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  },
  {
   "source": "| Nr. | Beschreibung | Frist |\n|---|---|---|\n| 1 | Kabelpritsche im Kellergeschoss nicht geerdet | 30.04.2026 |\n| 2 | Beschriftung der Abgangsfelder unvollständig | 15.04.2026 |\n| 3 | Restarbeiten am Zwischenkreis der USV-Anlage | 30.04.2026 |",
   "target": "| No. | Description | Deadline |\n|---|---|---|\n| 1 | Cable tray in the basement not earthed | 30/04/2026 |\n| 2 | Labelling of the outgoing feeder bays incomplete | 15/04/2026 |\n| 3 | Outstanding works on the DC link of the UPS system | 30/04/2026 |",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  },
  {
   "source": "Die Mängel sind bis zu den genannten Fristen zu beseitigen. Die Gewährleistungsfrist beginnt mit dem Tag der Abnahme.",
   "target": "The defects are to be rectified by the stated deadlines. The warranty period begins on the day of acceptance.",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  },
  {
   "source": "3. Ergebnis",
   "target": "3. Result",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  },
  {
   "source": "Die Anlage wird unter Vorbehalt der oben genannten Mängel abgenommen. Eine Nachbegehung ist für die 18. KW vorgesehen. Bis dahin bleibt der Sicherheitseinbehalt in Höhe von 5 % der Schlussrechnungssumme bestehen.",
   "target": "The installation is accepted subject to the defects listed above. A follow-up inspection is scheduled for calendar week 18. Until then, the security retention of 5 % of the final invoice total remains in place.",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  },
  {
   "source": "Für die Inbetriebsetzung gilt weiterhin die Schaltberechtigung gemäß der internen Betriebsanweisung BA-17. Freischaltungen sind ausschließlich durch die Netzleitstelle anzuordnen.",
   "target": "The switching authorisation under the internal operating instruction BA-17 remains in force for commissioning. Isolations may only be ordered by the network control centre.",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  },
  {
   "source": "4. Unterschriften",
   "target": "4. Signatures",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  },
  {
   "source": "Für den Auftraggeber: Dipl.-Ing. M. Weber\nFür den Auftragnehmer: K. Albrecht, Bauleiter",
   "target": "For the Client: Dipl.-Ing. M. Weber\nFor the Contractor: K. Albrecht, Site Manager",
-  "origin": "abnahmeprotokoll.pdf (confirmed)"
+  "ref": "abnahmeprotokoll.pdf (confirmed)"
  }
 ]

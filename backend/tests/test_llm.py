@@ -2,11 +2,8 @@
 each step. Each call goes to its model's server with its key, headers and extra body; calls retry and time out."""
 
 import asyncio
-import json
 import logging
 import socket
-import threading
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import pytest
@@ -16,20 +13,11 @@ from google.genai import types
 from translator.config import CONFIG_DIR
 from translator.models import config as model_config
 from translator.models import llm, structured
-from translator.models.config import ConfigError, ModelsFile, PipelineFile, build, load
+from translator.models.config import ConfigError, load
 
-
-@pytest.fixture
-def use_models(monkeypatch):
-    """Run with these models.yaml / pipeline.yaml contents (as dicts)."""
-
-    def use(models: dict, pipeline: dict | None = None):
-        cfg = build(ModelsFile.model_validate(models),
-                    PipelineFile.model_validate(pipeline or {"default": models["models"][0]["id"]}))
-        monkeypatch.setattr(model_config, "current", lambda: cfg)
-        return cfg
-
-    return use
+from .fake_vllm import FakeVllm as _FakeVllm
+from .fake_vllm import call as _call
+from .fake_vllm import request as _request
 
 
 def _write(tmp_path: Path, models: str, pipeline: str) -> tuple[Path, Path]:
@@ -127,65 +115,6 @@ def test_structured_output_is_a_model_setting(use_models):
                            {"id": "b", "model_name": "n", "url": "http://x/v1", "structured_output": False}]},
                {"default": "a", "steps": {"review": "b"}})
     assert structured.enabled("translate") and not structured.enabled("review")
-
-
-class _FakeVllm(BaseHTTPRequestHandler):
-    """An OpenAI-compatible /v1/chat/completions that records each request. With `reasoning_parser` off it
-    answers a thinking budget the way vLLM does."""
-
-    requests: list[dict] = []
-    reasoning_parser = True
-    fail_with: tuple[int, dict] | None = None  # (status, body) to answer every request with
-    content = '{"ok": true}'  # the answer's text
-
-    def _send(self, status: int, payload: dict):
-        data = json.dumps(payload).encode()
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def do_POST(self):  # noqa: N802
-        body = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
-        _FakeVllm.requests.append({"path": self.path, "headers": dict(self.headers), "body": body})
-        if _FakeVllm.fail_with:
-            return self._send(*_FakeVllm.fail_with)
-        if "thinking_token_budget" in body and not _FakeVllm.reasoning_parser:
-            message = ("thinking_token_budget is set but reasoning_config is not configured. "
-                       "Please set --reasoning-parser and/or --reasoning-config to use thinking_token_budget.")
-            return self._send(400, {"object": "error", "message": message, "type": "BadRequestError", "param": None, "code": 400})
-        reply = {
-            "id": "chatcmpl-1", "object": "chat.completion", "created": 0, "model": body["model"],
-            "choices": [{"index": 0, "finish_reason": "stop", "message": {"role": "assistant", "content": _FakeVllm.content}}],
-            "usage": {"prompt_tokens": 7, "completion_tokens": 3, "total_tokens": 10},
-        }
-        self._send(200, reply)
-
-    def log_message(self, *_args):
-        pass
-
-
-def _call(model, request: LlmRequest) -> list:
-    async def run():
-        return [r async for r in model.generate_content_async(request)]
-
-    return asyncio.run(run())
-
-
-def _request() -> LlmRequest:
-    return LlmRequest(contents=[types.Content(role="user", parts=[types.Part(text="Review: Abnahme → acceptance")])])
-
-
-@pytest.fixture
-def fake_vllm():
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _FakeVllm)
-    threading.Thread(target=server.serve_forever, daemon=True).start()
-    _FakeVllm.requests, _FakeVllm.reasoning_parser, _FakeVllm.fail_with = [], True, None
-    _FakeVllm.content = '{"ok": true}'
-    yield f"http://127.0.0.1:{server.server_address[1]}/v1"
-    server.shutdown()
-    server.server_close()
 
 
 def _endpoint(url: str, **model) -> dict:

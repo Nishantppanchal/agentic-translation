@@ -25,7 +25,6 @@ from ..config import get_settings
 log = logging.getLogger(__name__)
 
 TOOL = "detect_layout"
-FIGURE_LABELS = {"image", "chart", "seal"}
 
 _toolset: McpToolset | None = None
 _tools: dict[str, object] = {}
@@ -114,18 +113,17 @@ async def _call(name: str, args: dict, tool_context=None) -> dict | None:
     return None
 
 
+def thresholds() -> dict[str, float]:
+    """Minimum confidence per layout class ("default" for the rest)."""
+    s = get_settings()
+    return {"default": s.layout_threshold, **s.layout_thresholds}
+
+
 async def detect_layout(png: bytes, tool_context=None) -> dict | None:
-    """Run PP-DocLayout on a page image. Returns {width, height, regions} or None if unavailable/failed."""
-    args = {"image_base64": base64.b64encode(png).decode(), "threshold": get_settings().layout_threshold}
+    """Run PP-DocLayout on a page image. Returns {width, height, regions: [{label, score, box}]} or None if
+    unavailable/failed. Which regions are pictures is decided in ocr/figures.py."""
+    args = {"image_base64": base64.b64encode(png).decode(), "threshold": thresholds()}
     return await _call(TOOL, args, tool_context)
-
-
-async def figure_boxes(png: bytes, tool_context=None) -> list[tuple[tuple[float, float, float, float], str]] | None:
-    """(pixel box, label) of picture-like regions (image, chart, seal), or None when layout detection is unavailable."""
-    found = await detect_layout(png, tool_context)
-    if found is None:
-        return None
-    return [(tuple(r["box"]), r["label"]) for r in found["regions"] if r["label"] in FIGURE_LABELS]
 
 
 async def close() -> None:

@@ -113,7 +113,7 @@ def _pdf() -> bytes:
 
 def test_workflow_with_structured_output(monkeypatch):
     SCHEMAS.clear()
-    monkeypatch.setattr(structured, "enabled", lambda role: True)
+    monkeypatch.setattr(structured, "enabled", lambda role, state=None: True)
     pages = iter(["# Abnahmeprotokoll\n\nDie Kabelpritsche ist nicht geerdet.", "## Ergebnis\n\nDie Anlage wird unter Vorbehalt der Mängel abgenommen."])
     fake_ocr(monkeypatch, pages)
     monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))

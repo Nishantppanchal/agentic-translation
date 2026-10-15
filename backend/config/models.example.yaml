@@ -19,12 +19,139 @@ models:
     url: https://openrouter.ai/api/v1     # the server's OpenAI-compatible base URL
     api_key: ${OPENROUTER_API_KEY}        # sent as "Authorization: Bearer …"
     vision: true                          # reads images: needed by the ocr, ocr_check and editor steps
+    thinking: true                        # a reasoning model: the app offers Instant / Low / Medium / High
+    effort: instant                       # its default level, where pipeline.yaml sets none (unset: medium)
+    label: Qwen3.8 Flash                  # the name the app shows (unset: made from model_name)
 
   - id: claude-haiku
     model_name: anthropic/claude-haiku-5.5
     url: https://openrouter.ai/api/v1
     api_key: ${OPENROUTER_API_KEY}
     vision: true                          # the chat editor looks at page images when fixing the OCR
+    thinking: true
+    effort: low
+    label: Claude Haiku 5.5
+
+  # More models on OpenRouter. Each only ever reaches providers with zero data retention (ZDR): OpenRouter routes
+  # the call to a ZDR endpoint or fails it, never elsewhere (provider.zdr). Checked live in October 2026 against
+  # GET https://openrouter.ai/api/v1/endpoints/zdr: each answered a JSON-schema translation at a reasoning level.
+  - id: claude-sonnet
+    model_name: anthropic/claude-sonnet-5.5
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}
+    vision: true
+    thinking: true
+    effort: low
+    label: Claude Sonnet 5.5
+
+  - id: gpt-luna
+    model_name: openai/gpt-6-luna
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}   # served by Azure
+    vision: true
+    thinking: true
+    effort: low
+    label: GPT-6 Luna
+
+  - id: gpt-sol
+    model_name: openai/gpt-6.1-sol
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}
+    vision: true
+    thinking: true
+    effort: low
+    label: GPT-6.1 Sol
+
+  - id: glm
+    model_name: z-ai/glm-5.3
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}
+    thinking: true                        # text only (GLM 5.3 Flash reads images)
+    effort: low
+    label: GLM 5.3
+
+  - id: glm-flash
+    model_name: z-ai/glm-5.3-flash
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}
+    vision: true
+    thinking: true
+    effort: low
+    label: GLM 5.3 Flash
+
+  - id: kimi
+    model_name: moonshotai/kimi-k3
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}
+    vision: true
+    thinking: true
+    effort: low
+    label: Kimi K3
+
+  - id: deepseek
+    model_name: deepseek/deepseek-v4-pro
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}
+    thinking: true                        # text only
+    effort: low
+    label: DeepSeek V4 Pro
+
+  - id: deepseek-flash
+    model_name: deepseek/deepseek-v4.1-flash
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}
+    vision: true
+    thinking: true
+    effort: low
+    label: DeepSeek V4.1 Flash
+
+  - id: gemini-flash
+    model_name: google/gemini-3.8-flash
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}
+    vision: true
+    thinking: true
+    effort: low
+    label: Gemini 3.8 Flash
+
+  - id: mistral-large
+    model_name: mistralai/mistral-large-4-0
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}
+    vision: true
+    thinking: true                        # thinks at length even at Low: slow (≈20 s for one sentence)
+    effort: low
+    label: Mistral Large 4
+
+  - id: grok
+    model_name: x-ai/grok-4.7
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}
+    vision: true
+    thinking: true
+    effort: low
+    label: Grok 4.7
+
+  - id: qwen-27b
+    model_name: qwen/qwen3.8-27b          # a Qwen with ZDR endpoints (qwen3.8-flash above has none)
+    url: https://openrouter.ai/api/v1
+    api_key: ${OPENROUTER_API_KEY}
+    extra_body: {provider: {zdr: true}}
+    vision: true
+    thinking: true
+    effort: instant
+    label: Qwen3.8 27B
 
   # A model on your own vLLM server (`vllm serve Qwen/Qwen3-VL-8B-Instruct --port 8100 --api-key …`):
   # - id: qwen-vl
@@ -36,4 +163,16 @@ models:
   #   extra_body:                              # extra request fields the server accepts
   #     chat_template_kwargs: {enable_thinking: false}
   #   vision: true                             # a vision-language model (it reads images)
+  #   thinking: true                           # a reasoning model (see below)
+  #   effort: low                              # its default reasoning level (unset: medium)
+  #   label: Qwen3 VL 8B                       # the name the app shows (unset: made from model_name)
+  #   vendor: qwen                             # whose model, for its logo (unset: guessed from model_name)
   #   structured_output: true                  # JSON-schema answers (false: a tag format instead)
+#
+# Reasoning levels. A model with `thinking: true` always gets a level: the one chosen in the app (Settings, one
+# document's settings, the chat box), else the step's own in pipeline.yaml ({model: <id>, effort: low}), else the
+# model's `effort` here, else medium. The app shows which level "Default" stands for. It is sent as the standard
+# `reasoning_effort`: instant → "none" (no thinking), low / medium / high. vLLM turns it into the chat template's
+# enable_thinking (none → false, low/medium/high → true: for Qwen3 the three are the same), and OpenRouter passes
+# it to the provider. A server that refuses the field gets the call again without it (logged). An older vLLM
+# that ignores "none": keep thinking off with  extra_body: {chat_template_kwargs: {enable_thinking: false}}.

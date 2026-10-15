@@ -7,16 +7,19 @@ user saves, or automatically before an agent run, a proposal accept, or an expor
 
 from __future__ import annotations
 
+import asyncio
+import logging
 import time
-import uuid
 
 from google.adk.artifacts import BaseArtifactService
 from google.adk.events import Event, EventActions
 from google.adk.sessions import BaseSessionService, Session
 
-from .. import projects
+from . import comments, memory
 from . import state as st
 from .versions import activity_event, snapshot_version
+
+log = logging.getLogger(__name__)
 
 EDITABLE_STATUSES = {"ready", "error"}
 
@@ -38,20 +41,14 @@ def _check_editable(session: Session) -> None:
         raise EditConflict("The document is still being processed; edit it when the pipeline has finished.")
 
 
-def remember(session: Session, segs: list[dict]) -> int:
-    """Write human-confirmed segments to the project's translation memory (with their context)."""
-    pid = projects.project_id(session.state)
-    if not pid:
-        return 0
-    order = [s for s in st.get_segments(session.state) if s.get("translatable", True)]
-    prev_of = {s["id"]: (order[i - 1]["source"] if i else "") for i, s in enumerate(order)}
-    filename = session.state.get("doc:filename", "")
-    store, n = projects.get_store(), 0
-    for seg in segs:
-        if seg.get("target") and seg.get("status") in st.HUMAN_DONE:
-            store.add_unit(pid, seg["source"], seg["target"], prev_of.get(seg["id"], ""), origin=f"{filename}#{seg['id']}")
-            n += 1
-    return n
+async def save_to_memory(state, segs: list[dict], approval: str) -> set[str]:
+    """Confirmed/reviewed segments → the project's TM (memory.save, in a thread). → the ids now in the TM.
+    A TM that can't be written doesn't undo the confirmation: the segment just isn't marked as saved."""
+    try:
+        return (await asyncio.to_thread(memory.save, state, segs, approval)).saved
+    except Exception:
+        log.exception("saving %d segment(s) to the translation memory failed", len(segs))
+        return set()
 
 
 def _without_proposal_change(session: Session, seg_id: str) -> dict:
@@ -98,14 +95,15 @@ async def edit_segment(
     else:
         return seg
 
+    if seg["status"] in st.HUMAN_DONE:  # confirmed or reviewed: its wording goes into the project's TM
+        saved = await save_to_memory(session.state, [seg], "review" if done == "reviewed" else "segment")
+        seg = {**seg, "tm_saved": seg_id in saved}
     delta: dict = {st.seg_key(seg_id): seg, **_without_proposal_change(session, seg_id)}
     if changed:
         dirty = list(session.state.get("doc:human_dirty") or [])
         if seg_id not in dirty:
             delta["doc:human_dirty"] = [*dirty, seg_id]
     await session_service.append_event(session, Event(author="human", actions=EventActions(state_delta=delta)))
-    if seg["status"] in st.HUMAN_DONE:
-        remember(session, [seg])
     return seg
 
 
@@ -135,12 +133,14 @@ async def confirm_segments(
             delta[st.seg_key(seg["id"])] = {**seg, "status": done, "updated_at": now}
     if delta:
         n = len(delta)
+        # Into the TM too, as CAT tools do — tagged "bulk": such a unit never confirms a later segment by itself
+        # (a 101% match from it arrives as a draft), and it never replaces wording a person approved one by one.
+        saved = await save_to_memory(session.state, list(delta.values()), "bulk")
+        for key, seg in delta.items():
+            seg["tm_saved"] = seg["id"] in saved
         verb = "Confirmed" if done == "confirmed" else "Marked reviewed:"
-        await session_service.append_event(
-            session, activity_event(f"{verb} {n} segment{'s' if n != 1 else ''}", delta)
-        )
-        # Not written to the translation memory: a bulk click isn't a person checking each sentence, and the TM
-        # reuses its units as approved wording. Segments confirmed one by one (edit / Ctrl+Enter) go in.
+        text = f"{verb} {n} segment{'s' if n != 1 else ''}" + (f" · {len(saved)} saved to the TM" if saved else "")
+        await session_service.append_event(session, activity_event(text, delta))
     return [k.removeprefix(st.SEG) for k in delta]
 
 
@@ -207,31 +207,27 @@ async def replace_in_targets(
 
 
 # ---- Comments ---------------------------------------------------------------- #
+# Stored in doc:comments (see comments.py); any status, but not while a run is active (the API checks that).
 
-COMMENT_ROLES = ("translator", "reviewer", "agent")
+
+def _with_comments(state, seg_id: str) -> dict | None:
+    seg = st.get_segment(state, seg_id)
+    return {**st.normalize(seg), "comments": comments.for_segment(state, seg_id)} if seg else None
 
 
 async def add_comment(session_service: BaseSessionService, session: Session, seg_id: str, text: str, role: str = "translator") -> dict:
     """A note on a segment (a question for the reviewer, a client remark…). Comments never change the text."""
-    seg = _segment(session, seg_id)
-    if not text.strip():
-        raise EditConflict("The comment is empty.")
-    comment = {"id": uuid.uuid4().hex[:8], "role": role if role in COMMENT_ROLES else "translator",
-               "text": text.strip(), "at": time.time(), "resolved": False}
-    seg = {**seg, "comments": [*seg["comments"], comment]}
-    await session_service.append_event(session, Event(author="human", actions=EventActions(state_delta={st.seg_key(seg_id): seg})))
-    return seg
+    try:
+        delta, _ = comments.add(session.state, seg_id, text, role)
+    except ValueError as exc:
+        raise EditConflict(str(exc)) from exc
+    await session_service.append_event(session, Event(author="human", actions=EventActions(state_delta=delta)))
+    return _with_comments({**session.state, **delta}, seg_id)
 
 
 async def update_comment(session_service: BaseSessionService, session: Session, seg_id: str, comment_id: str,
-                         *, resolved: bool | None = None, delete: bool = False) -> dict:
-    seg = _segment(session, seg_id)
-    if not any(c["id"] == comment_id for c in seg["comments"]):
-        raise KeyError(comment_id)
-    if delete:
-        comments = [c for c in seg["comments"] if c["id"] != comment_id]
-    else:
-        comments = [{**c, "resolved": bool(resolved)} if c["id"] == comment_id else c for c in seg["comments"]]
-    seg = {**seg, "comments": comments}
-    await session_service.append_event(session, Event(author="human", actions=EventActions(state_delta={st.seg_key(seg_id): seg})))
-    return seg
+                         *, resolved: bool | None = None, delete: bool = False) -> dict | None:
+    """Resolve, reopen or delete a comment. Returns the segment `seg_id` with its comments (None if it's gone)."""
+    delta = comments.update(session.state, comment_id, resolved=resolved, delete=delete)
+    await session_service.append_event(session, Event(author="human", actions=EventActions(state_delta=delta)))
+    return _with_comments({**session.state, **delta}, seg_id)

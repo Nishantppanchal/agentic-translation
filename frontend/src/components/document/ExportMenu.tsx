@@ -1,75 +1,130 @@
 "use client";
 
-import { ChevronDown, Download } from "lucide-react";
+import { ChevronDown, Download, NotebookPen } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuLabel,
+  DropdownMenuSeparator,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
-import type { ExportFormat } from "@/lib/types";
+import type { ClientNotesState, ExportFormat } from "@/lib/types";
+import { ClientNotes } from "./ClientNotes";
 
-/** Download menu: the translation as Word (DOCX) or Markdown, grouped as the backend lists them. */
-export function ExportMenu({ sessionId, version, refreshKey }: { sessionId: string; version?: number; refreshKey: string }) {
+/** Downloads, grouped as the backend lists them (the translated Office file, Word, Markdown, the client notes),
+ * and "Notes for the client…", which writes them. */
+export function ExportMenu({
+  sessionId,
+  filename,
+  version,
+  latest,
+  refreshKey,
+  notes,
+  onNotesSaved,
+}: {
+  sessionId: string;
+  filename: string;
+  version?: number;
+  latest: number;
+  refreshKey: string;
+  notes: ClientNotesState | null; // the notes for the client stored with the document
+  onNotesSaved: () => void; // reload the document (its notes, and the "notes" download)
+}) {
   const [formats, setFormats] = useState<ExportFormat[]>([]);
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
+  const [notesOpen, setNotesOpen] = useState(false);
+  const notesRef = useRef<{ write: () => void }>(null);
+  const [reload, setReload] = useState(0);
 
   useEffect(() => {
-    api.exportFormats(sessionId).then(setFormats).catch(() => setFormats([]));
-  }, [sessionId, refreshKey]);
-
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
-    document.addEventListener("mousedown", close);
-    return () => document.removeEventListener("mousedown", close);
-  }, [open]);
+    api
+      .exportFormats(sessionId)
+      // the notes download appears once notes are written ("Notes for the client…" below writes them)
+      .then((all) => setFormats(all.filter((f) => f.id !== "notes" || f.available)))
+      .catch(() => setFormats([]));
+  }, [sessionId, refreshKey, reload]);
 
   const groups = [...new Set(formats.map((f) => f.group))];
   return (
-    <div className="relative" ref={ref}>
-      <button
-        onClick={() => setOpen(!open)}
-        className="flex items-center gap-1 rounded-md px-1.5 py-1 text-muted hover:bg-sidebar hover:text-fg"
-        title="Export"
-      >
-        <Download size={16} />
-        <ChevronDown size={12} />
-      </button>
-      {open && (
-        <div className="absolute top-8 right-0 z-30 w-72 rounded-lg border border-border bg-panel p-1.5 text-sm shadow-lg">
-          {groups.map((g) => (
-            <div key={g} className="mb-1 last:mb-0">
-              <div className="px-2 pt-1 pb-0.5 text-[10px] font-medium tracking-wide text-muted uppercase">{g}</div>
+    <>
+      <DropdownMenu>
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <DropdownMenuTrigger asChild>
+              <button
+                className="flex h-8 items-center gap-0.5 rounded-md px-2 text-muted-foreground transition-colors hover:bg-accent hover:text-foreground data-[state=open]:bg-accent data-[state=open]:text-foreground"
+                aria-label="Download"
+              >
+                <Download size={16} />
+                <ChevronDown size={12} className="opacity-60" />
+              </button>
+            </DropdownMenuTrigger>
+          </TooltipTrigger>
+          <TooltipContent>Download{version ? ` v${version}` : ""}</TooltipContent>
+        </Tooltip>
+        <DropdownMenuContent align="end" className="w-80">
+          {groups.map((g, gi) => (
+            <div key={g}>
+              {gi > 0 && <DropdownMenuSeparator />}
+              <DropdownMenuLabel className="text-[10px] font-semibold tracking-wider text-muted-foreground uppercase">{g}</DropdownMenuLabel>
               {formats
                 .filter((f) => f.group === g)
                 .map((f) =>
                   f.available ? (
-                    <a
-                      key={f.id}
-                      href={api.exportUrl(sessionId, version, "target", f.id)}
-                      onClick={() => setOpen(false)}
-                      className="flex items-center justify-between gap-2 rounded-md px-2 py-1.5 hover:bg-sidebar"
-                    >
-                      <span>
-                        {f.label}
-                        {f.note && <span className="mt-0.5 block text-[11px] text-warn-fg">{f.note}</span>}
-                      </span>
-                      <span className="text-[10px] text-muted uppercase">{f.id === "md" ? "md/zip" : f.ext}</span>
-                    </a>
+                    <DropdownMenuItem key={f.id} asChild>
+                      <a href={api.exportUrl(sessionId, f.id === "notes" ? undefined : version, "target", f.id)} className="flex items-start justify-between gap-3">
+                        <span className="min-w-0">
+                          {f.label}
+                          {f.note && <span className="mt-0.5 block text-[11px] text-warn-fg">{f.note}</span>}
+                        </span>
+                        <span className="shrink-0 pt-0.5 text-[10px] text-muted-foreground uppercase">{f.id === "md" ? "md/zip" : f.ext}</span>
+                      </a>
+                    </DropdownMenuItem>
                   ) : (
-                    <div
-                      key={f.id}
-                      className="flex cursor-not-allowed items-center justify-between rounded-md px-2 py-1.5 text-muted opacity-60"
-                      title={f.note ?? "Not available for this document"}
-                    >
-                      {f.label}
-                      <span className="text-[10px] uppercase">n/a</span>
-                    </div>
+                    <DropdownMenuItem key={f.id} disabled className="flex items-start justify-between gap-3">
+                      <span className="min-w-0">
+                        {f.label}
+                        {f.note && <span className="mt-0.5 block text-[11px]">{f.note}</span>}
+                      </span>
+                      <span className="shrink-0 pt-0.5 text-[10px] uppercase">n/a</span>
+                    </DropdownMenuItem>
                   ),
                 )}
             </div>
           ))}
-          {version && <div className="border-t border-border px-2 pt-1.5 text-[10px] text-muted">Exports version v{version}</div>}
-        </div>
-      )}
-    </div>
+          <DropdownMenuSeparator />
+          <DropdownMenuItem
+            onSelect={() => {
+              setNotesOpen(true);
+              if (!notes) notesRef.current?.write(); // nothing written yet: write them now
+            }}
+            className="items-start"
+          >
+            <NotebookPen className="mt-0.5" />
+            <span>
+              Notes for the client…
+              <span className="block text-[11px] text-muted-foreground">Decisions, assumptions and open queries, written for you to send</span>
+            </span>
+          </DropdownMenuItem>
+          {version && <div className="px-2 pt-1 pb-1.5 text-[10px] text-muted-foreground">Downloads version v{version}</div>}
+        </DropdownMenuContent>
+      </DropdownMenu>
+      <ClientNotes
+        ref={notesRef}
+        open={notesOpen}
+        onClose={() => setNotesOpen(false)}
+        sessionId={sessionId}
+        filename={filename}
+        saved={notes}
+        latest={latest}
+        onSaved={() => {
+          setReload((n) => n + 1);
+          onNotesSaved();
+        }}
+      />
+    </>
   );
 }

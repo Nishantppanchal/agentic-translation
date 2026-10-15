@@ -1,5 +1,5 @@
-"""M6: tasks (rewrite with alternatives, consistency), proposals with choices, comments, multilingual
-projects and the run queue."""
+"""M6: tasks (rewrite with alternatives, consistency), proposals with choices, multilingual projects and the run
+queue. Comments: test_comments.py."""
 
 from __future__ import annotations
 
@@ -23,7 +23,7 @@ from translator import projects
 from translator.agents import tasks
 from translator.api.routes.projects import router
 from translator.api.runs import RunManager
-from translator.document import edits, proposals
+from translator.document import proposals
 from translator.document import state as st
 from translator.models import structured
 from translator.projects import ProjectStore
@@ -134,7 +134,7 @@ def test_rewrite_with_alternatives_skips_locked_segments(monkeypatch):
 
 @pytest.mark.structured
 def test_retranslate_one_result_with_json(monkeypatch):
-    monkeypatch.setattr(structured, "enabled", lambda step: True)
+    monkeypatch.setattr(structured, "enabled", lambda step, state=None: True)
 
     def fake(callback_context, llm_request):
         structured.inject_schema(callback_context, llm_request)
@@ -194,31 +194,6 @@ def test_consistency_with_nothing_to_do():
         await sessions.append_event(s, Event(author="system", actions=EventActions(state_delta={st.seg_key(k): v for k, v in same.items()})))
         events, s = await _run(runner, sessions, s)
         assert any("nothing to fix" in t for t in _said(events)) and not s.state.get("doc:proposal")
-
-    asyncio.run(main())
-
-
-# --------------------------------------------------------------------------- #
-# Comments
-# --------------------------------------------------------------------------- #
-
-
-def test_comments_add_resolve_and_delete():
-    async def main():
-        sessions = InMemorySessionService()
-        s = await sessions.create_session(app_name="t", user_id="u", state={
-            "doc:status": "ready", "doc:seg_ids": ["p1.1"], "doc:versions": [], st.seg_key("p1.1"): SEGS["p1.1"]})
-        seg = await edits.add_comment(sessions, s, "p1.1", "  Client prefers 'installation'  ", "reviewer")
-        [c] = seg["comments"]
-        assert (c["role"], c["text"], c["resolved"]) == ("reviewer", "Client prefers 'installation'", False)
-        with pytest.raises(edits.EditConflict):
-            await edits.add_comment(sessions, s, "p1.1", "  ")
-        seg = await edits.update_comment(sessions, s, "p1.1", c["id"], resolved=True)
-        assert seg["comments"][0]["resolved"] and seg["target"] == "The plant is accepted."  # text untouched
-        seg = await edits.update_comment(sessions, s, "p1.1", c["id"], delete=True)
-        assert seg["comments"] == []
-        with pytest.raises(KeyError):
-            await edits.update_comment(sessions, s, "p1.1", "nope", resolved=True)
 
     asyncio.run(main())
 

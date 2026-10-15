@@ -1,9 +1,17 @@
 "use client";
 
-import { Eye, EyeOff, Gauge, Loader2, Play, ShieldCheck, Wand2 } from "lucide-react";
+import { Eye, EyeOff, Gauge, ListOrdered, Loader2, Play, ShieldCheck, Wand2 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useMemo, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Progress } from "@/components/ui/progress";
+import { Skeleton } from "@/components/ui/skeleton";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { rise } from "@/lib/motion";
 import type { DocumentState, LqaResult, QaIssue, Severity } from "@/lib/types";
 import type { QaState } from "../cat/useQa";
+import { Markdown } from "./Markdown";
 
 const CATEGORY_LABEL: Record<string, string> = {
   accuracy: "Accuracy",
@@ -16,90 +24,131 @@ const CATEGORY_LABEL: Record<string, string> = {
 };
 const SEVERITIES: Severity[] = ["minor", "major", "critical"];
 const PENALTY: Record<Severity, number> = { minor: 1, major: 5, critical: 25 };
-const SEV_STYLE: Record<string, string> = {
+export const SEV_STYLE: Record<string, string> = {
   error: "bg-del text-del-fg",
   warning: "bg-warn text-warn-fg",
-  critical: "bg-del-fg text-white",
+  critical: "bg-del-fg text-del",
   major: "bg-del text-del-fg",
   minor: "bg-warn text-warn-fg",
 };
 
 export const qeStyle = (qe: number) => (qe >= 90 ? "text-ins-fg" : qe >= 70 ? "text-warn-fg" : "text-del-fg");
 
+/** A severity chip: error, warning, minor, major, critical. */
+export function SeverityBadge({ severity }: { severity: string }) {
+  return (
+    <span className={`mt-px shrink-0 rounded-full px-1.5 py-px text-[10px] font-medium tracking-wide uppercase ${SEV_STYLE[severity] ?? "bg-muted text-muted-foreground"}`}>
+      {severity}
+    </span>
+  );
+}
+
 function SegLink({ id, onOpen }: { id: string; onOpen: (id: string) => void }) {
   return (
-    <button onClick={() => onOpen(id)} className="shrink-0 font-mono text-[11px] text-muted hover:text-accent" title="Open in the segment editor">
-      {id}
-    </button>
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button onClick={() => onOpen(id)} className="shrink-0 font-mono text-[11px] text-muted-foreground hover:text-primary">
+          {id}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent>Open in the segment editor</TooltipContent>
+    </Tooltip>
+  );
+}
+
+function Section({ icon, title, meta, action, children }: { icon: React.ReactNode; title: string; meta?: React.ReactNode; action?: React.ReactNode; children: React.ReactNode }) {
+  return (
+    <section className="rounded-xl border border-border bg-card p-4 shadow-xs">
+      <div className="mb-2 flex flex-wrap items-center gap-x-2 gap-y-1">
+        <span className="text-muted-foreground">{icon}</span>
+        <h3 className="text-sm font-semibold">{title}</h3>
+        {meta && <span className="text-xs text-muted-foreground">{meta}</span>}
+        {action && <span className="ml-auto">{action}</span>}
+      </div>
+      {children}
+    </section>
   );
 }
 
 function QaSection({ qa, onOpen }: { qa: QaState; onOpen: (id: string) => void }) {
-  const [check, setCheck] = useState<string | null>(null);
+  const [check, setCheck] = useState<string>("");
   const [showIgnored, setShowIgnored] = useState(false);
   const report = qa.report;
-  if (!report) return <p className="text-sm text-muted">Running checks…</p>;
+  if (!report)
+    return (
+      <Section icon={<ShieldCheck size={16} />} title="Automatic QA" meta="Running checks…">
+        <div className="space-y-2">
+          <Skeleton className="h-4 w-full" />
+          <Skeleton className="h-4 w-5/6" />
+        </div>
+      </Section>
+    );
   const { summary } = report;
   const shown = report.issues.filter((i) => (showIgnored || !i.ignored) && (!check || i.check === check));
   const checks = report.checks.filter((c) => summary.by_check[c.id] > 0);
 
   return (
-    <section>
-      <div className="mb-2 flex items-center gap-2">
-        <ShieldCheck size={16} className="text-muted" />
-        <h3 className="font-semibold">Automatic QA</h3>
-        <span className="text-xs text-muted">
+    <Section
+      icon={<ShieldCheck size={16} />}
+      title="Automatic QA"
+      meta={
+        <>
           {summary.errors} error{summary.errors === 1 ? "" : "s"} · {summary.warnings} warning{summary.warnings === 1 ? "" : "s"}
           {summary.ignored ? ` · ${summary.ignored} ignored` : ""}
-        </span>
-        {summary.ignored > 0 && (
-          <button onClick={() => setShowIgnored((v) => !v)} className="ml-auto flex items-center gap-1 text-xs text-muted hover:text-fg">
-            {showIgnored ? <EyeOff size={12} /> : <Eye size={12} />} {showIgnored ? "Hide" : "Show"} ignored
-          </button>
-        )}
-      </div>
-      <p className="mb-2 text-xs text-muted">
+        </>
+      }
+      action={
+        summary.ignored > 0 && (
+          <Button variant="ghost" size="xs" onClick={() => setShowIgnored((v) => !v)}>
+            {showIgnored ? <EyeOff /> : <Eye />} {showIgnored ? "Hide" : "Show"} ignored
+          </Button>
+        )
+      }
+    >
+      <p className="mb-3 text-xs text-muted-foreground">
         Numbers and dates, termbase and forbidden terms, markup, punctuation, consistency and length — checked on every change.
         Errors are sent to the AI reviewer as must-fix issues; warnings may be false alarms, so ignore the ones that are fine.
       </p>
       {checks.length > 0 && (
-        <div className="mb-2 flex flex-wrap gap-1.5 text-xs">
-          <button onClick={() => setCheck(null)} className={`rounded-full px-2.5 py-0.5 ${!check ? "bg-fg text-bg" : "bg-sidebar text-muted hover:text-fg"}`}>
+        <ToggleGroup type="single" value={check} onValueChange={setCheck} className="mb-2 flex-wrap justify-start gap-1" aria-label="Filter by check">
+          <ToggleGroupItem value="" className="h-6 rounded-full px-2.5 text-xs data-[state=on]:bg-foreground data-[state=on]:text-background">
             All
-          </button>
+          </ToggleGroupItem>
           {checks.map((c) => (
-            <button
+            <ToggleGroupItem
               key={c.id}
-              onClick={() => setCheck(c.id === check ? null : c.id)}
-              className={`rounded-full px-2.5 py-0.5 ${check === c.id ? "bg-fg text-bg" : "bg-sidebar text-muted hover:text-fg"}`}
+              value={c.id}
+              className="h-6 rounded-full bg-muted px-2.5 text-xs data-[state=on]:bg-foreground data-[state=on]:text-background"
             >
-              {c.label} {summary.by_check[c.id]}
-            </button>
+              {c.label} <span className="tabular-nums opacity-70">{summary.by_check[c.id]}</span>
+            </ToggleGroupItem>
           ))}
-        </div>
+        </ToggleGroup>
       )}
       {shown.length === 0 ? (
-        <p className="rounded-md bg-ins px-3 py-2 text-sm text-ins-fg">No open QA issues.</p>
+        <p className="rounded-lg bg-ins px-3 py-2 text-sm text-ins-fg">No open QA issues.</p>
       ) : (
         <ul className="divide-y divide-border">
-          {shown.map((i: QaIssue) => (
-            <li key={i.id} className={`group flex items-start gap-2 py-1.5 text-xs ${i.ignored ? "opacity-50" : ""}`}>
-              <span className={`mt-0.5 shrink-0 rounded px-1.5 text-[10px] font-medium uppercase ${SEV_STYLE[i.severity]}`}>{i.severity}</span>
-              <SegLink id={i.segment_id} onOpen={onOpen} />
-              <span className="shrink-0 text-muted">{i.label}</span>
-              <span className="flex-1">{i.message}</span>
-              <button
-                onClick={() => qa.ignore([i.id], !i.ignored)}
-                className="shrink-0 text-muted opacity-0 group-hover:opacity-100 hover:text-fg"
-                title={i.ignored ? "Show this issue again" : "Ignore (it comes back if the text changes)"}
-              >
-                {i.ignored ? "Restore" : "Ignore"}
-              </button>
-            </li>
-          ))}
+          <AnimatePresence initial={false}>
+            {shown.map((i: QaIssue) => (
+              <motion.li key={i.id} {...rise} layout="position" className={`group flex items-start gap-2 py-2 text-xs ${i.ignored ? "opacity-50" : ""}`}>
+                <SeverityBadge severity={i.severity} />
+                <SegLink id={i.segment_id} onOpen={onOpen} />
+                <span className="shrink-0 text-muted-foreground">{i.label}</span>
+                <span className="flex-1">{i.message}</span>
+                <button
+                  onClick={() => qa.ignore([i.id], !i.ignored)}
+                  className="shrink-0 rounded px-1 text-muted-foreground opacity-0 transition-opacity group-hover:opacity-100 hover:text-foreground focus-visible:opacity-100"
+                  title={i.ignored ? "Show this issue again" : "Ignore (it comes back if the text changes)"}
+                >
+                  {i.ignored ? "Restore" : "Ignore"}
+                </button>
+              </motion.li>
+            ))}
+          </AnimatePresence>
         </ul>
       )}
-    </section>
+    </Section>
   );
 }
 
@@ -107,58 +156,66 @@ function Scorecard({ lqa, latest, onOpen }: { lqa: LqaResult; latest: number; on
   const rows = Object.entries(lqa.matrix);
   return (
     <div>
-      <div className="flex flex-wrap items-end gap-4">
+      <div className="flex flex-wrap items-end gap-5">
         <div>
-          <div className={`text-4xl font-semibold tabular-nums ${lqa.passed ? "text-ins-fg" : "text-del-fg"}`}>{lqa.score.toFixed(1)}</div>
-          <div className="text-xs text-muted">MQM quality score</div>
+          <div className={`text-4xl font-semibold tracking-tight tabular-nums ${lqa.passed ? "text-ins-fg" : "text-del-fg"}`}>{lqa.score.toFixed(1)}</div>
+          <div className="text-xs text-muted-foreground">MQM quality score</div>
         </div>
-        <span className={`mb-1 rounded px-2 py-0.5 text-xs font-semibold ${lqa.passed ? "bg-ins text-ins-fg" : "bg-del text-del-fg"}`}>
-          {lqa.passed ? "PASS" : "FAIL"} · threshold {lqa.threshold}
-        </span>
-        <div className="mb-1 text-xs text-muted">
-          {lqa.penalty} penalty point{lqa.penalty === 1 ? "" : "s"} in {lqa.words} source words
-          <br />
-          v{lqa.version ?? "?"} · {lqa.model} · {new Date(lqa.at * 1000).toLocaleString()}
-          {lqa.version !== null && lqa.version < latest && <span className="text-warn-fg"> · translation changed since (v{latest})</span>}
+        <div className="mb-1 min-w-48 flex-1">
+          <div className="mb-1 flex items-center justify-between text-xs">
+            <span className={`rounded-full px-2 py-0.5 font-semibold ${lqa.passed ? "bg-ins text-ins-fg" : "bg-del text-del-fg"}`}>
+              {lqa.passed ? "PASS" : "FAIL"}
+            </span>
+            <span className="text-muted-foreground">threshold {lqa.threshold}</span>
+          </div>
+          <div className="relative">
+            <Progress value={Math.max(0, Math.min(100, lqa.score))} className={`h-2 ${lqa.passed ? "[&>div]:bg-ins-fg" : "[&>div]:bg-del-fg"} bg-muted`} />
+            <span className="absolute -top-0.5 h-3 w-px bg-foreground/60" style={{ left: `${lqa.threshold}%` }} aria-hidden />
+          </div>
         </div>
       </div>
+      <div className="mt-2 text-xs text-muted-foreground">
+        {lqa.penalty} penalty point{lqa.penalty === 1 ? "" : "s"} in {lqa.words} source words · v{lqa.version ?? "?"} · {lqa.model} ·{" "}
+        {new Date(lqa.at * 1000).toLocaleString()}
+        {lqa.version !== null && lqa.version < latest && <span className="text-warn-fg"> · the translation has changed since (v{latest})</span>}
+      </div>
       <table className="mt-3 w-full text-left text-xs">
-        <thead className="text-muted">
+        <thead className="text-muted-foreground">
           <tr className="border-b border-border">
-            <th className="py-1 font-medium">Category</th>
+            <th className="py-1.5 font-medium">Category</th>
             {SEVERITIES.map((s) => (
-              <th key={s} className="py-1 text-right font-medium capitalize">
+              <th key={s} className="py-1.5 text-right font-medium capitalize">
                 {s} <span className="font-normal">×{PENALTY[s]}</span>
               </th>
             ))}
-            <th className="py-1 text-right font-medium">Points</th>
+            <th className="py-1.5 text-right font-medium">Points</th>
           </tr>
         </thead>
         <tbody>
           {rows.map(([cat, counts]) => {
             const points = SEVERITIES.reduce((n, s) => n + counts[s] * PENALTY[s], 0);
             return (
-              <tr key={cat} className="border-b border-border">
-                <td className="py-1">{CATEGORY_LABEL[cat] ?? cat}</td>
+              <tr key={cat} className="border-b border-border last:border-0">
+                <td className="py-1.5">{CATEGORY_LABEL[cat] ?? cat}</td>
                 {SEVERITIES.map((s) => (
-                  <td key={s} className={`py-1 text-right tabular-nums ${counts[s] ? "font-semibold" : "text-muted"}`}>
+                  <td key={s} className={`py-1.5 text-right tabular-nums ${counts[s] ? "font-semibold" : "text-muted-foreground"}`}>
                     {counts[s]}
                   </td>
                 ))}
-                <td className={`py-1 text-right tabular-nums ${points ? "font-semibold" : "text-muted"}`}>{points}</td>
+                <td className={`py-1.5 text-right tabular-nums ${points ? "font-semibold" : "text-muted-foreground"}`}>{points}</td>
               </tr>
             );
           })}
         </tbody>
       </table>
-      <p className="mt-1 text-[11px] text-muted">Score = 100 − penalty points per 1000 source words (MQM weights: minor 1, major 5, critical 25).</p>
+      <p className="mt-1.5 text-[11px] text-muted-foreground">Score = 100 − penalty points per 1000 source words (MQM weights: minor 1, major 5, critical 25).</p>
       {lqa.errors.length > 0 && (
-        <ul className="mt-3 space-y-1.5">
+        <ul className="mt-3 divide-y divide-border">
           {lqa.errors.map((e, k) => (
-            <li key={k} className="flex items-start gap-2 text-xs">
-              <span className={`mt-0.5 shrink-0 rounded px-1.5 text-[10px] font-medium uppercase ${SEV_STYLE[e.severity]}`}>{e.severity}</span>
+            <li key={k} className="flex items-start gap-2 py-1.5 text-xs">
+              <SeverityBadge severity={e.severity} />
               <SegLink id={e.segment_id} onOpen={onOpen} />
-              <span className="shrink-0 text-muted">{CATEGORY_LABEL[e.category ?? "other"]}</span>
+              <span className="shrink-0 text-muted-foreground">{CATEGORY_LABEL[e.category ?? "other"]}</span>
               <span>
                 {e.span && <q className="rounded bg-del px-0.5 text-del-fg">{e.span}</q>} {e.note}
               </span>
@@ -225,72 +282,70 @@ export function QualityView({
   };
 
   return (
-    <div className="space-y-8 text-sm">
+    <div className="space-y-4 text-sm">
       <QaSection qa={qa} onOpen={onOpenSegment} />
       {fixable > 0 && (
-        <div className="-mt-5 flex items-center gap-2 rounded-md bg-accent-soft px-3 py-2 text-xs">
-          <Wand2 size={14} className="text-accent" />
+        <div className="flex items-center gap-3 rounded-xl border border-primary/30 bg-primary-soft px-4 py-3 text-xs">
+          <Wand2 size={16} className="shrink-0 text-primary" />
           <span className="flex-1">
             {fixable} consistency or terminology issue{fixable === 1 ? "" : "s"}. The agent can unify repeated sentences (your confirmed
             translations win) and apply the termbase — as a proposal you review.
           </span>
-          <button
-            onClick={fix}
-            disabled={!canRun}
-            className="rounded-md bg-accent px-2.5 py-1 font-medium text-white disabled:opacity-40"
-          >
+          <Button size="sm" onClick={fix} disabled={!canRun}>
             Fix consistency
-          </button>
+          </Button>
         </div>
       )}
 
-      <section>
-        <div className="mb-2 flex items-center gap-2">
-          <Gauge size={16} className="text-muted" />
-          <h3 className="font-semibold">Quality score (LQA)</h3>
-          <button
+      <Section
+        icon={<Gauge size={16} />}
+        title="Quality score (LQA)"
+        action={
+          <Button
+            variant="outline"
+            size="sm"
             onClick={run}
             disabled={!canRun || starting}
-            className="ml-auto flex items-center gap-1 rounded-md border border-border px-2 py-1 text-xs hover:border-accent disabled:opacity-40"
             title="An independent AI assessor annotates errors with MQM categories and severities. Nothing is changed."
           >
-            {starting ? <Loader2 size={12} className="animate-spin" /> : <Play size={12} />} {doc.lqa ? "Run again" : "Run LQA"}
-          </button>
-        </div>
-        {error && <div className="mb-2 rounded bg-del px-2 py-1 text-xs text-del-fg">{error}</div>}
+            {starting ? <Loader2 className="animate-spin" /> : <Play />} {doc.lqa ? "Run again" : "Run LQA"}
+          </Button>
+        }
+      >
+        {error && <div className="mb-2 rounded-md bg-del px-2 py-1 text-xs text-del-fg">{error}</div>}
         {doc.lqa ? (
           <Scorecard lqa={doc.lqa} latest={latest} onOpen={onOpenSegment} />
         ) : (
-          <p className="text-xs text-muted">
-            Not assessed yet. LQA scores the current version the way an LSP reviewer would: every error gets an MQM category
-            and severity, and the document passes or fails against the project&apos;s threshold. Set <code>LQA_MODEL</code> for a
-            second opinion from a different model.
+          <p className="text-xs text-muted-foreground">
+            Not assessed yet. LQA scores the current version the way an LSP reviewer would: every error gets an MQM category and
+            severity, and the document passes or fails against the project&apos;s threshold.
           </p>
         )}
-      </section>
+      </Section>
 
-      <section>
-        <h3 className="mb-1 font-semibold">Review queue</h3>
-        <p className="mb-2 text-xs text-muted">
+      <Section icon={<ListOrdered size={16} />} title="Review queue">
+        <p className="mb-2 text-xs text-muted-foreground">
           Segments with the lowest AI quality estimate first (from the last review or LQA), so a human reviewer starts where it
           matters. Reviewed segments drop off.
         </p>
         {queue.length === 0 ? (
-          <p className="text-xs text-muted">No scored segments waiting.</p>
+          <p className="text-xs text-muted-foreground">No scored segments waiting.</p>
         ) : (
           <ul className="divide-y divide-border">
             {queue.map((s) => (
               <li key={s.id} className="flex items-center gap-3 py-1.5 text-xs">
                 <span className={`w-8 shrink-0 text-right font-semibold tabular-nums ${qeStyle(s.qe ?? 0)}`}>{s.qe}</span>
                 <SegLink id={s.id} onOpen={onOpenSegment} />
-                <span className="min-w-0 flex-1 truncate text-muted">{s.target ?? s.source}</span>
+                <span className="min-w-0 flex-1 truncate text-muted-foreground">
+                  <Markdown text={s.target ?? s.source} inline />
+                </span>
                 {issueCount.get(s.id) ? <span className="shrink-0 text-warn-fg">{issueCount.get(s.id)} QA</span> : null}
-                <span className="shrink-0 capitalize text-muted">{s.status}</span>
+                <span className="shrink-0 text-muted-foreground capitalize">{s.status}</span>
               </li>
             ))}
           </ul>
         )}
-      </section>
+      </Section>
     </div>
   );
 }

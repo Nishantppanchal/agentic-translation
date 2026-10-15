@@ -76,12 +76,25 @@ def glossary_text(state: Mapping[str, Any]) -> str:
     return "\n".join(lines)
 
 
+BACKED = {"tm": "as in the translation memory", "dictionary": "the dictionary agrees"}
+
+
 def termbase_text(state: Mapping[str, Any]) -> str:
+    """The running termbase for prompts; a term the analysis found backed by the TM or the dictionary says so."""
     glossary = {g.casefold() for g in state.get("doc:glossary") or {}}
     termbase = {k: v for k, v in (state.get("doc:termbase") or {}).items() if k.casefold() not in glossary}
     if not termbase:
         return "(none yet)"
-    return "\n".join(f"- {src} → {tgt}" for src, tgt in termbase.items())
+    backed = {k["term"].casefold(): k for k in state.get("doc:key_terms") or [] if k.get("decision") in BACKED}
+
+    def badge(src: str, tgt: str) -> str:
+        key = backed.get(src.casefold())
+        if not key or (key.get("target") or "").casefold() != tgt.casefold():
+            return ""
+        ref = next((e.get("source") for e in key.get("dictionary") or [] if e.get("source")), "")
+        return f"  ({BACKED[key['decision']]}{': ' + ref if key['decision'] == 'dictionary' and ref else ''})"
+
+    return "\n".join(f"- {src} → {tgt}{badge(src, tgt)}" for src, tgt in termbase.items())
 
 
 def without_terms(termbase: dict[str, str], terms: set[str]) -> dict[str, str]:
@@ -227,8 +240,10 @@ def proposal_text(state: Mapping[str, Any]) -> str:
 #   new → draft → confirmed (by the translator) → reviewed (by a second, human reviewer); plus `locked`.
 # The AI reviewer's verdict is a separate marker, `ai_check`: "passed" | "issues" | None, and never
 # changes the status (in an LSP, "reviewed" means a person checked it).
-#   origin: copy (not translatable) | mt (pipeline) | agent (accepted proposal) | human (direct edit)
-#           | tm_exact | tm_fuzzy (translation memory, later milestone)
+#   origin (how the current text was made): copy (not translatable) | mt (the pipeline's translator, also when
+#           it adapted a fuzzy TM match) | tm (reused from the translation memory) | agent (accepted proposal)
+#           | human (direct edit). `match`: the TM score behind it (101 / 100 for `tm`, the fuzzy score for an
+#           adapted match), cleared whenever the text changes. `tm_saved`: this text is in the project's TM.
 # --------------------------------------------------------------------------- #
 
 STATUSES = ("new", "draft", "confirmed", "reviewed")
@@ -247,11 +262,20 @@ def normalize(seg: dict) -> dict:
     out.setdefault("flags", [])
     out.setdefault("comments", [])
     out.setdefault("updated_at", None)
+    out.setdefault("match", None)
+    out.setdefault("tm_saved", False)
+    if out.get("origin") in OLD_ORIGINS:  # documents from before origin "tm"
+        out["origin"] = OLD_ORIGINS[out["origin"]]
     return out
 
 
-def apply_target(seg: dict, target: str, *, origin: str, status: str = "draft", flags: list[str] | None = None) -> dict:
-    """The one way to change a segment's translation: sets origin/status, recomputes flags, stamps the time."""
+OLD_ORIGINS = {"tm_exact": "tm", "tm_fuzzy": "mt", "tm_context": "tm"}
+
+
+def apply_target(seg: dict, target: str, *, origin: str, status: str = "draft", flags: list[str] | None = None,
+                 match: int | None = None) -> dict:
+    """The one way to change a segment's translation: sets origin/status (and the TM `match` behind the new text,
+    if any), recomputes flags, stamps the time. The new text isn't in the TM until a person confirms it."""
     from ..quality.qa import check_segment  # local import: qa depends on documents, not on state
 
     out = normalize(seg)
@@ -261,6 +285,8 @@ def apply_target(seg: dict, target: str, *, origin: str, status: str = "draft", 
     out["flags"] = flags if flags is not None else check_segment(out, target)
     out["ai_check"] = None  # any earlier AI review was of the old text
     out["qe"] = None
+    out["match"] = match
+    out["tm_saved"] = False
     out["updated_at"] = time.time()
     return out
 

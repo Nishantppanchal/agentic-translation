@@ -96,11 +96,12 @@ def test_figures_are_kept_in_place_with_translated_legend(scanned, monkeypatch):
     if scanned:  # no embedded picture on a scan: PP-DocLayoutV3 finds it (the diagram at 150–450 × 150–350 pt)
         from translator.ocr import layout
 
-        async def boxes(png, tool_context=None):
-            return [(tuple(v * 150 / 72 for v in (150, 150, 450, 350)), "image")]
+        async def detect(png, tool_context=None):
+            box = [v * 150 / 72 for v in (150, 150, 450, 350)]
+            return {"width": 1275, "height": 1650, "regions": [{"label": "image", "score": 0.9, "box": box}]}
 
         monkeypatch.setattr(layout, "available", lambda: True)
-        monkeypatch.setattr(layout, "figure_boxes", boxes)
+        monkeypatch.setattr(layout, "detect_layout", detect)
 
     async def main():
         s, artifacts = await _run(_pdf(scanned))
@@ -150,3 +151,71 @@ def test_figure_marker_placement():
     assert place_figure_marker("A paragraph.", 2, None) == "A paragraph.\n\n[[FIGURE 2]]"
     # Missing marker but known anchor: inserted at the right spot.
     assert place_figure_marker("Intro.\n\nOutro text here.", 1, "Outro text here") == "Intro.\n\n[[FIGURE 1]]\n\nOutro text here."
+
+
+def test_a_text_block_the_layout_took_for_a_picture_is_read_as_text(monkeypatch):
+    """On a scan, the layout model labels both the first paragraph and the diagram `image`. The OCR model looks at
+    each crop first: the paragraph is text, so it is not outlined in red but transcribed with the page."""
+    from translator.ocr import layout
+
+    scale = 150 / 72
+
+    async def detect(png, tool_context=None):
+        regions = [{"label": "image", "score": 0.8, "box": [v * scale for v in (60, 40, 540, 130)]},  # the paragraph
+                   {"label": "image", "score": 0.9, "box": [v * scale for v in (150, 150, 450, 350)]}]  # the diagram
+        return {"width": 1275, "height": 1650, "regions": regions}
+
+    monkeypatch.setattr(layout, "available", lambda: True)
+    monkeypatch.setattr(layout, "detect_layout", detect)
+    prompts = fake_ocr(monkeypatch, f"{INTRO}\n\n[[FIGURE 1]]\n\n{OUTRO}", legends={1: ("text", INTRO), 2: "Schaltschrank"})
+
+    async def main():
+        s, _ = await _run(_pdf(scanned=True))
+        page_prompt = next(p for p in prompts if "Transcribe page 1" in p)
+        assert "1 figure(s) outlined in red" in page_prompt  # only the diagram is marked
+        segs = st.get_segments(s.state)
+        assert [x["kind"] for x in segs] == ["paragraph", "figure", "paragraph"]
+        assert segs[0]["source"] == INTRO and segs[1]["source"] == "Schaltschrank"
+        [report] = s.state["doc:ocr_report"]
+        assert report["figures"] == 1 and report["figures_as_text"] == [{"label": "image", "reason": "vision"}]
+
+    asyncio.run(main())
+
+
+def test_the_figure_check_can_be_turned_off(monkeypatch):
+    """FIGURE_CHECK=off trusts the layout model (after the size and text checks): both regions stay pictures."""
+    from translator.ocr import layout
+
+    scale = 150 / 72
+
+    async def detect(png, tool_context=None):
+        regions = [{"label": "image", "score": 0.8, "box": [v * scale for v in (60, 40, 540, 130)]},
+                   {"label": "image", "score": 0.9, "box": [v * scale for v in (150, 150, 450, 350)]}]
+        return {"width": 1275, "height": 1650, "regions": regions}
+
+    monkeypatch.setattr(layout, "available", lambda: True)
+    monkeypatch.setattr(layout, "detect_layout", detect)
+    monkeypatch.setattr(get_settings(), "figure_check", "off")
+    prompts = fake_ocr(monkeypatch, f"[[FIGURE 1]]\n\n[[FIGURE 2]]\n\n{OUTRO}", legends={1: ("text", INTRO), 2: "Schaltschrank"})
+
+    async def main():
+        s, _ = await _run(_pdf(scanned=True))
+        assert "2 figure(s) outlined in red" in next(p for p in prompts if "Transcribe page 1" in p)
+        assert s.state["doc:ocr_report"][0]["figures"] == 2
+
+    asyncio.run(main())
+
+
+def test_a_pictures_own_alt_text_describes_it_in_the_markdown():
+    """Office files: a picture's alt text (kind "alt") becomes the image's description, not a body paragraph; one
+    whose picture wasn't read stays out of the body as a comment."""
+    segs = [
+        {"id": "p1.1", "page": 1, "kind": "alt", "source": "接线示意图", "target": "Wiring sketch"},
+        {"id": "p1.2", "page": 1, "kind": "figure", "source": "主变压器", "target": "Main transformer", "image": "figure-p1-1.png", "figure": 1},
+        {"id": "p1.3", "page": 1, "kind": "paragraph", "source": "正文", "target": "Body text"},
+        {"id": "p1.4", "page": 1, "kind": "alt", "source": "标志", "target": "Logo [small]"},
+    ]
+    md = assemble_markdown(segs)
+    assert "![Wiring sketch](figures/figure-p1-1.png)\n\n> Main transformer" in md
+    assert "Body text" in md and "<!-- alt text: Logo [small] -->" in md
+    assert md.count("Wiring sketch") == 1

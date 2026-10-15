@@ -1,16 +1,19 @@
 "use client";
 
-import { Cpu } from "lucide-react";
 import { useEffect, useState } from "react";
+import { ModelLogo } from "@/components/settings/ModelLogo";
+import { EFFORT_LABEL, useModelCatalog } from "@/components/settings/ModelChoices";
+import { HoverCard, HoverCardContent, HoverCardTrigger } from "@/components/ui/hover-card";
 import { api } from "@/lib/api";
-import type { Usage } from "@/lib/types";
+import type { Effort, Usage } from "@/lib/types";
 
 const fmtTokens = (n: number) => (n >= 1000 ? `${(n / 1000).toFixed(n >= 10000 ? 0 : 1)}k` : String(n));
 
-/** Tokens spent on this document so far (all agents), with a per-step breakdown on hover. */
+/** Tokens spent on this document so far (all agents), with a per-step breakdown — by model and reasoning level —
+ * on hover. */
 export function UsageChip({ sessionId, refreshKey }: { sessionId: string; refreshKey: string }) {
   const [usage, setUsage] = useState<Usage | null>(null);
-  const [open, setOpen] = useState(false);
+  const { models } = useModelCatalog();
 
   useEffect(() => {
     let cancelled = false;
@@ -25,33 +28,49 @@ export function UsageChip({ sessionId, refreshKey }: { sessionId: string; refres
 
   if (!usage || usage.total.calls === 0) return null;
   const t = usage.total;
+  const model = (id: string) => models?.find((m) => m.id === id || m.model_name === id);
   return (
-    <div className="relative" onMouseEnter={() => setOpen(true)} onMouseLeave={() => setOpen(false)}>
-      <span className="flex items-center gap-1 rounded-full bg-sidebar px-2 py-0.5 text-[11px] text-muted">
-        <Cpu size={12} />
-        {fmtTokens(t.tokens)} tokens
-      </span>
-      {open && (
-        <div className="absolute top-7 right-0 z-30 w-80 rounded-lg border border-border bg-panel p-3 text-xs shadow-lg">
-          <div className="mb-2 font-medium">Tokens used on this document</div>
-          <table className="w-full">
-            <tbody>
-              {usage.rows.map((r) => (
-                <tr key={`${r.step}-${r.model}`} className="align-top">
-                  <td className="py-0.5 pr-2">
+    <HoverCard openDelay={150} closeDelay={100}>
+      <HoverCardTrigger asChild>
+        <button
+          className="flex h-7 items-center gap-1 rounded-full bg-muted px-2.5 text-[11px] text-muted-foreground tabular-nums transition-colors hover:text-foreground"
+          aria-label={`${t.tokens} tokens used on this document`}
+        >
+          {fmtTokens(t.tokens)} tokens
+        </button>
+      </HoverCardTrigger>
+      <HoverCardContent align="end" className="w-96 p-3 text-xs">
+        <div className="mb-2 flex items-baseline justify-between">
+          <span className="font-medium">Tokens used on this document</span>
+          <span className="text-muted-foreground tabular-nums">
+            {fmtTokens(t.tokens)} · {t.calls} call{t.calls === 1 ? "" : "s"}
+          </span>
+        </div>
+        <table className="w-full">
+          <tbody className="divide-y divide-border">
+            {usage.rows.map((r) => {
+              const m = model(r.model);
+              return (
+                <tr key={`${r.step}-${r.model}-${r.effort ?? ""}`} className="align-top">
+                  <td className="py-1 pr-2">
                     {r.step}
-                    <div className="truncate text-[10px] text-muted">{r.model}</div>
+                    <div className="flex items-center gap-1 truncate text-[10px] text-muted-foreground">
+                      <ModelLogo model={m} size={11} />
+                      {m?.label ?? r.model}
+                      {r.effort ? ` · ${EFFORT_LABEL[r.effort as Effort] ?? r.effort}` : ""}
+                      {r.reasoning_tokens ? ` · ${fmtTokens(r.reasoning_tokens)} thinking` : ""}
+                    </div>
                   </td>
-                  <td className="py-0.5 pr-2 text-right text-muted">{r.calls}×</td>
-                  <td className="py-0.5 text-right" title={`${r.prompt_tokens} in · ${r.completion_tokens} out`}>
+                  <td className="py-1 pr-2 text-right text-muted-foreground tabular-nums">{r.calls}×</td>
+                  <td className="py-1 text-right tabular-nums" title={`${r.prompt_tokens} in · ${r.completion_tokens} out`}>
                     {fmtTokens(r.tokens)}
                   </td>
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
+              );
+            })}
+          </tbody>
+        </table>
+      </HoverCardContent>
+    </HoverCard>
   );
 }

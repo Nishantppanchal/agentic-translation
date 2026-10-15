@@ -16,12 +16,13 @@ from google.adk.events import Event, EventActions
 from google.adk.sessions import DatabaseSessionService, Session
 from google.genai import types
 
-from .. import projects
+from .. import projects, references
 from ..agents.editor import editor_agent
 from ..agents.pipeline import ingest_workflow
 from ..agents.tasks import ops_workflow
 from ..config import TARGET_LANG, get_settings
-from ..document import source_check
+from ..document import comments, source_check
+from ..models import routing
 from ..document import state as st
 from .runs import Emit, RunManager
 from .timeline import pending_interrupt, stream_events
@@ -73,13 +74,17 @@ def summary(session: Session) -> dict[str, Any]:
         "running": runs.is_running(session.id),
         "counts": st.status_counts(s),
         "format": s.get("doc:format"),
+        "title": s.get("doc:title") or None,  # an English title from the analysis
+        "abstract": s.get("doc:abstract") or None,  # and a two-sentence summary of what it says
     }
 
 
 def document_view(session: Session) -> dict[str, Any]:
     s = session.state
+    placed, orphans = comments.place(s)
     return {
-        "segments": [st.normalize(x) for x in st.get_segments(s)],
+        "segments": [{**st.normalize(x), "comments": placed.get(x["id"], [])} for x in st.get_segments(s)],
+        "orphan_comments": orphans,
         "human_dirty": s.get("doc:human_dirty") or [],
         "glossary": s.get("doc:glossary") or {},
         "termbase": s.get("doc:termbase") or {},
@@ -95,6 +100,14 @@ def document_view(session: Session) -> dict[str, Any]:
         "versions": s.get("doc:versions") or [],
         "ocr_report": s.get("doc:ocr_report") or [],
         "review_report": s.get("doc:review_report") or [],
+        "settings": {"models": routing.choices(s), "dictionary": references.dictionary_status(s)},
+        # Word / PowerPoint / Excel: what a "page" is (part, slide, sheet), their labels, what reading left out.
+        "unit": s.get("doc:unit"),
+        "page_labels": s.get("doc:page_labels"),
+        "office": s.get("doc:office"),
+        "title": s.get("doc:title") or None,
+        "abstract": s.get("doc:abstract") or None,
+        "client_notes": s.get("doc:client_notes"),
     }
 
 

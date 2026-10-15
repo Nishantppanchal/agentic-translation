@@ -8,32 +8,32 @@ agent can refine a pending proposal over several turns.
 
 from __future__ import annotations
 
-import time
-import uuid
 from typing import Any
 
 from google.adk.models.llm_request import LlmRequest
 from google.adk.tools import BaseTool, ToolContext
 from google.genai import types
 
-from ..document import proposals, source_check
+from .. import office
+from ..document import comments, proposals, source_check
 from ..document import state as st
 from ..document.pages import IMAGE_EXTS, guess_mime, render_page
-from ..integrations import dictionary
 from ..models.replies import term_from
 from ..ocr import layout
 from ..quality import qa
 from ..text import match_case, term_pattern
-from . import prompts
+from .reference_tools import ReferenceToolset
 
 MAX_RESULTS = 20
 PROPOSED = "Proposed — the user will review the diff and accept or reject it."
 
 
-def _view(seg: dict) -> dict:
+def _view(seg: dict, state=None) -> dict:
     view = {"id": seg["id"], "page": seg["page"], "source": seg["source"], "translation": seg.get("target") or ""}
     if seg.get("pending"):
         view["pending_approval"] = True
+    if state is not None and (notes := [f"{c['role']}: {c['text']}" for c in comments.for_segment(state, seg["id"]) if not c.get("resolved")]):
+        view["open_comments"] = notes
     return view
 
 
@@ -68,7 +68,7 @@ def search_segments(query: str, tool_context: ToolContext) -> dict:
     """
     q = query.casefold()
     hits = [
-        _view(s)
+        _view(s, tool_context.state)
         for s in st.effective_segments(tool_context.state)
         if q in s["source"].casefold() or q in (s.get("target") or "").casefold()
     ]
@@ -85,7 +85,7 @@ def get_segments(segment_ids: list[str], tool_context: ToolContext) -> dict:
     for sid in segment_ids:
         seg = st.get_segment(tool_context.state, sid.strip())
         if seg:
-            found.append(_view(st.effective_segment(tool_context.state, seg)))
+            found.append(_view(st.effective_segment(tool_context.state, seg), tool_context.state))
         else:
             missing.append(sid)
     return {"segments": found, "missing": missing}
@@ -137,13 +137,13 @@ def add_comment(segment_id: str, text: str, tool_context: ToolContext) -> dict:
       segment_id: The segment, e.g. "p2.4".
       text: The comment.
     """
-    key = st.seg_key(segment_id.strip())
-    seg = st.get_segment(tool_context.state, segment_id.strip())
-    if not seg or not text.strip():
-        return {"status": "error", "message": f"No segment {segment_id}." if not seg else "Empty comment."}
-    seg = st.normalize(seg)
-    comment = {"id": uuid.uuid4().hex[:8], "role": "agent", "text": text.strip(), "at": time.time(), "resolved": False}
-    tool_context.state[key] = {**seg, "comments": [*seg["comments"], comment]}
+    try:
+        delta, _ = comments.add(tool_context.state, segment_id.strip(), text, "agent")
+    except KeyError:
+        return {"status": "error", "message": f"No segment {segment_id}."}
+    except ValueError as exc:
+        return {"status": "error", "message": str(exc)}
+    tool_context.state[comments.FIELD] = delta[comments.FIELD]
     return {"status": "added", "segment_id": segment_id}
 
 
@@ -266,6 +266,17 @@ def _unread_text(tool_context: ToolContext, before: str, after: str) -> dict | N
                        "as they wrote them."}
 
 
+def _from_file(state, seg: dict | None = None) -> dict | None:
+    """Word, PowerPoint and Excel uploads: the source is the file's own text, read exactly — nothing to fix or read
+    again. Except the text inside the file's pictures (figure segments), which the OCR model read."""
+    if office.detect(state.get("doc:filename") or "") and not (seg and seg.get("kind") == "figure"):
+        return {"status": "error", "message": "This document's source is the text of the uploaded "
+                f"{office.LABEL[office.detect(state.get('doc:filename'))]} itself, read exactly (no OCR): there is "
+                "nothing to fix or read again (only the text read inside its pictures, the figure segments, can be "
+                "corrected). Change the translation instead."}
+    return None
+
+
 def get_page_source(page_number: int, tool_context: ToolContext) -> dict:
     """The SOURCE text of one page as OCR markdown: `[[HEADER]]` / `[[FOOTER]]` lines, `[[FIGURE n]]` for pictures,
     `#` headings, pipe tables, paragraphs separated by a blank line. Use it before proposing a page fix.
@@ -273,6 +284,8 @@ def get_page_source(page_number: int, tool_context: ToolContext) -> dict:
     Args:
       page_number: The page (1-based).
     """
+    if refusal := _from_file(tool_context.state):
+        return refusal
     state = tool_context.state
     if page_number not in source_check.pages(state):
         return {"status": "error", "message": f"No page {page_number}; pages: {source_check.pages(state)}."}
@@ -292,6 +305,8 @@ def propose_page_source(page_number: int, corrected_markdown: str, reason: str, 
       corrected_markdown: The complete corrected page.
       reason: One sentence: what you fixed.
     """
+    if refusal := _from_file(tool_context.state):
+        return refusal
     state = tool_context.state
     if (refused := _not_in_review(state)) is not None:
         return refused
@@ -314,7 +329,10 @@ async def reread_page(page_number: int, instruction: str, tool_context: ToolCont
       instruction: What to do differently, from what the user said, e.g. "two columns: read the left column to
         the end, then the right one; the red stamp is not part of the text".
     """
-    from ..models.llm import build_model, error_text
+    if refusal := _from_file(tool_context.state):
+        return refusal
+    from ..models.llm import error_text
+    from .reread import read_page_again
 
     state = tool_context.state
     if page_number not in source_check.pages(state):
@@ -322,20 +340,11 @@ async def reread_page(page_number: int, instruction: str, tool_context: ToolCont
     image = await _page_image(tool_context, page_number)
     if image is None:
         return {"status": "error", "message": f"No page image for page {page_number}."}
-    request = LlmRequest(contents=[types.Content(role="user", parts=[
-        image,
-        types.Part(text=f"Transcribe page {page_number}." + prompts.REREAD_PAGE.format(
-            instruction=instruction.strip(), previous=source_check.page_markdown(state, page_number)))])])
-    request.config.system_instruction = prompts.VISION_OCR
     try:
-        replies = [r async for r in build_model("ocr").generate_content_async(request)]
+        markdown = await read_page_again(image, page_number, instruction, source_check.page_markdown(state, page_number),
+                                         state=state)
     except Exception as e:
         return {"status": "error", "message": f"Reading the page again failed: {error_text(e)}"}
-    from ..models.replies import clean
-
-    # Not the model's thinking: a reasoning model's arrives as thought parts (OpenRouter's `reasoning`, vLLM's
-    # reasoning parser) and would otherwise open the page.
-    markdown = clean("".join(p.text or "" for r in replies if r.content for p in r.content.parts or [] if not p.thought))
     state[READINGS] = [*state.get(READINGS, []), markdown]
     if source_check.in_review(state):
         return _stage_page(state, page_number, markdown, f"Read again: {instruction.strip()}", "reread")
@@ -407,21 +416,6 @@ class LookAtPage(BaseTool):
 look_at_page = LookAtPage()
 
 
-async def look_up_term(term: str, tool_context: ToolContext) -> dict:
-    """Look a source-language term up in the dictionary service: English translations with their definition,
-    domain and source. Use it before explaining or choosing a translation for a specialised term.
-
-    Args:
-      term: The term as it appears in the source text.
-    """
-    state = tool_context.state
-    lang = state.get("doc:detected_lang") or state.get("doc:source_lang")
-    entries = (await dictionary.lookup([term.strip()], lang)).get(term.strip(), [])
-    if not entries:
-        return {"status": "not found", "term": term, "note": "The dictionary has no entry; rely on context."}
-    return {"status": "found", "term": term, "entries": entries}
-
-
 def fix_source_segment(segment_id: str, corrected_source: str, tool_context: ToolContext) -> dict:
     """Propose a correction to an OCR error in the SOURCE text. Then propose the matching translation too.
 
@@ -430,6 +424,8 @@ def fix_source_segment(segment_id: str, corrected_source: str, tool_context: Too
       corrected_source: The corrected source-language text.
     """
     seg = st.get_segment(tool_context.state, segment_id.strip())
+    if refusal := _from_file(tool_context.state, seg):
+        return refusal
     if not seg:
         return {"status": "error", "message": f"No segment {segment_id}."}
     if (refused := _unread_text(tool_context, seg["source"], corrected_source)) is not None:
@@ -450,6 +446,8 @@ async def inspect_page_layout(page_number: int, tool_context: ToolContext) -> di
     Args:
       page_number: The page to inspect (1-based).
     """
+    if refusal := _from_file(tool_context.state):
+        return refusal
     if not layout.available():
         return {"status": "unavailable", "message": "The layout server is not configured or failed to start."}
     state = tool_context.state
@@ -509,4 +507,5 @@ EDITOR_TOOLS = [
     propose_page_source,
     reread_page,
     look_at_page,
-] + ([look_up_term] if dictionary.enabled() else [])  # only offered when a dictionary is set up
+    ReferenceToolset(),  # the dictionary, the TM and the termbase, as this document has them
+]

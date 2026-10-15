@@ -44,6 +44,11 @@ def pages(state) -> list[int]:
     return sorted({s["page"] for s in st.get_segments(state) if s.get("page")})
 
 
+def figure_number(seg: dict) -> int:
+    """n of a figure segment's `[[FIGURE n]]` on its page."""
+    return seg.get("figure") or int((_FIGURE_IMAGE.search(seg.get("image") or "") or [0, 0])[1] or 0)
+
+
 def page_markdown(state, page: int) -> str:
     """A page's source in the OCR's own markdown: `[[HEADER]]` / `[[FOOTER]]` lines, `[[FIGURE n]]` for pictures."""
     out = []
@@ -51,8 +56,7 @@ def page_markdown(state, page: int) -> str:
         if s["kind"] in ("header", "footer"):
             out.append(f"[[{s['kind'].upper()}]] {s['source']}")
         elif s["kind"] == "figure":
-            n = s.get("figure") or int((_FIGURE_IMAGE.search(s.get("image") or "") or [0, 0])[1] or 0)
-            out.append(f"[[FIGURE {n}]]")
+            out.append(f"[[FIGURE {figure_number(s)}]]")
         else:
             out.append(s["source"])
     return "\n\n".join(out)

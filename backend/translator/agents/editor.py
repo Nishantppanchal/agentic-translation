@@ -8,17 +8,18 @@ keeps the pipeline's bulky OCR/translation events out of its context window.
 
 from __future__ import annotations
 
-from google.adk.agents import LlmAgent
 from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.genai import types
 
 from .. import projects
+from ..document import comments
 from ..document import state as st
-from ..models.config import step_model
 from ..models.llm import build_model
 from . import prompts
+from . import reference_tools
 from .editor_tools import EDITOR_TOOLS
+from .workers import StepAgent
 
 EDITOR_NAME = "editor"
 FULL_DOC_CHARS = 14000  # include the whole document in the prompt below this size
@@ -33,7 +34,7 @@ def _document_view(state) -> str:
             f'[{s["id"]}]{" (text inside figure " + str(s.get("figure")) + ")" if s.get("kind") == "figure" else ""}'
             f'{" (pending approval)" if s.get("pending") else ""}'
             f'{" (flags: " + ", ".join(s["flags"]) + ")" if s.get("flags") else ""}'
-            f'{"".join(chr(10) + "COMMENT (" + c["role"] + "): " + c["text"] for c in s.get("comments") or [] if not c.get("resolved"))}\n'
+            "\n"
             f'SOURCE: {s["source"]}\nTRANSLATION: {s.get("target") or ""}'
             for s in segments
         )
@@ -76,6 +77,8 @@ def editor_instruction(ctx: ReadonlyContext) -> str:
         instructions=projects.instructions_for(state),
         termbase=st.termbase_text(state),
         questions=st.questions_text(state),
+        comments=comments.open_text(state),
+        references=reference_tools.available(state),
         proposal=st.proposal_text(state),
         last_outcome=_last_outcome(state),
         document_view=_document_view(state),
@@ -106,12 +109,12 @@ async def note_proposal_request(callback_context: CallbackContext) -> types.Cont
     return None
 
 
-editor_agent = LlmAgent(
+editor_agent = StepAgent(
     name=EDITOR_NAME,
+    step="editor",
     model=build_model("editor"),
     instruction=editor_instruction,
     tools=EDITOR_TOOLS,
     include_contents="none",
     after_agent_callback=note_proposal_request,
-    generate_content_config=types.GenerateContentConfig(temperature=step_model("editor").temperature),
 )

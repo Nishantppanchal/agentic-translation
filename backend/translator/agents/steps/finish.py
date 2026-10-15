@@ -34,7 +34,8 @@ async def polish(ctx: Context, node_input: Any):
     delta: dict[str, Any] = {}
     for sid, text in fixes.items():
         if (seg := current.get(sid)) is not None:
-            delta[st.seg_key(sid)] = st.apply_target(seg, text, origin=seg.get("origin") or "mt", status=seg.get("status") or "draft")
+            # New wording from the pipeline: machine translation now, whatever it was before (a TM label would lie).
+            delta[st.seg_key(sid)] = st.apply_target(seg, text, origin="mt", status=seg.get("status") or "draft")
     if delta:
         refined = list(ctx.state.get("doc:refined") or [])
         delta["doc:refined"] = refined + [sid for sid in fixes if sid not in refined]

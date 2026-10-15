@@ -39,7 +39,8 @@ def run(coro):
 def test_normalize_upgrades_old_segments():
     old = {"id": "p1.1", "source": "x", "target": "y", "translatable": True}
     assert st.normalize(old) | {} == {**old, "origin": "mt", "status": "draft", "locked": False, "ai_check": None, "qe": None,
-                                      "flags": [], "comments": [], "updated_at": None}
+                                      "flags": [], "comments": [], "updated_at": None, "match": None,
+                                      "tm_saved": False}
     copy = st.normalize({"id": "p1.2", "source": "2026", "target": "2026", "translatable": False})
     assert (copy["status"], copy["origin"], copy["locked"]) == ("confirmed", "copy", True)
 

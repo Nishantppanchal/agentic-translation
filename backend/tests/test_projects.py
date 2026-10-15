@@ -19,8 +19,8 @@ from google.genai import types
 from translator.api.routes.projects import router
 
 from translator import projects
-from translator.agents import pipeline, steps, workers
-from translator.document import edits
+from translator.agents import pipeline, workers
+from translator.document import edits, memory
 from translator.document import state as st
 from translator.projects import ProjectStore
 
@@ -100,13 +100,41 @@ def test_tm_fuzzy_for_chinese_counts_characters(store):
 
 def test_tm_update_replaces_target_and_bulk_reports(store):
     pid = store.create_project("P")["id"]
-    assert store.add_unit(pid, "Satz eins.", "Sentence one.") is True
-    assert store.add_unit(pid, "Satz eins.", "Sentence 1.") is False  # same source + context → update
+    assert store.add_unit(pid, "Satz eins.", "Sentence one.", ref="a.pdf#p1.1") == "added"
+    assert store.add_unit(pid, "Satz eins.", "Sentence 1.", ref="b.pdf#p2.1") == "updated"  # same source + context
+    [m] = store.lookup(pid, "Satz eins.")
+    assert (m["target"], m["ref"], m["approval"]) == ("Sentence 1.", "b.pdf#p2.1", "segment")
+    assert store.add_unit(pid, "Satz eins.", "Sentence 1.", ref="c.pdf#p9.9") == "unchanged"
+    assert store.lookup(pid, "Satz eins.")[0]["ref"] == "b.pdf#p2.1"  # confirming the same wording keeps where it came from
+    statuses = store.add_units(pid, [{"source": "Satz eins.", "target": "S1", "approval": "bulk"},  # weaker: kept
+                                     {"source": "Satz zwei.", "target": "S2"}, {"source": "", "target": "x"}])
+    assert statuses == ["kept", "added", "skipped"]
     assert store.lookup(pid, "Satz eins.")[0]["target"] == "Sentence 1."
-    added, updated = store.add_units(pid, [{"source": "Satz eins.", "target": "S1"}, {"source": "Satz zwei.", "target": "S2"},
-                                          {"source": "", "target": "x"}])
-    assert (added, updated) == (1, 1)
+    assert store.add_unit(pid, "Satz zwei.", "S2", approval="review") == "unchanged"  # the approval rises
+    assert store.lookup(pid, "Satz zwei.")[0]["approval"] == "review"
     assert [u["source"] for u in store.concordance(pid, "zwei")] == ["Satz zwei."]
+
+
+def test_an_older_tm_database_is_migrated(tmp_path):
+    import sqlite3
+
+    path = tmp_path / "projects.db"
+    db = sqlite3.connect(path)
+    db.executescript("""
+        create table projects (id text primary key, name text not null, source_lang text default '',
+          instructions text default '', created_at real);
+        create table tm_units (id integer primary key, project_id text not null, source text not null,
+          target text not null, source_key text not null, prev_key text default '', origin text default '',
+          created_at real, updated_at real, unique(project_id, source_key, prev_key));
+        insert into projects (id, name) values ('p', 'P');
+        insert into tm_units (project_id, source, target, source_key, prev_key, origin)
+          values ('p', 'Satz eins.', 'Sentence one.', 'satzeins', '', 'a.pdf#p1.1'),
+                 ('p', 'Satz zwei.', 'Sentence two.', 'satzzwei', '', 'import');""")
+    db.commit()
+    db.close()
+    store = ProjectStore(path)
+    assert [(m["ref"], m["approval"]) for m in (store.lookup("p", "Satz eins.")[0], store.lookup("p", "Satz zwei.")[0])] == [
+        ("a.pdf#p1.1", "segment"), ("import", "import")]
 
 
 # --------------------------------------------------------------------------- #
@@ -174,19 +202,20 @@ def test_pipeline_reuses_exact_matches_and_shows_fuzzy_ones(store, monkeypatch):
 
         # 100% and 101% are reused without a model call; 101% counts as confirmed.
         assert (segs["p1.1"]["target"], segs["p1.1"]["origin"], segs["p1.1"]["match"], segs["p1.1"]["status"]) == (
-            "# Acceptance report", "tm_exact", 100, "draft")
-        assert (segs["p1.2"]["origin"], segs["p1.2"]["match"], segs["p1.2"]["status"]) == ("tm_exact", 101, "confirmed")
+            "# Acceptance report", "tm", 100, "draft")
+        assert (segs["p1.2"]["origin"], segs["p1.2"]["match"], segs["p1.2"]["status"]) == ("tm", 101, "confirmed")
         [prompt] = prompts
         assert "Abnahmeprotokoll</seg>" not in prompt and "Mängel abgenommen.\n</seg>" not in prompt
         # The fuzzy match is a reference to adapt; the result records where it came from.
         assert "% · Der Erdungsanschluss der Kabelpritsche ist bis zum 15.03. herzustellen. → The earthing connection" in prompt
-        assert (segs["p1.3"]["origin"], segs["p1.3"]["target"]) == ("tm_fuzzy", "EN " + segs["p1.3"]["source"])
+        # The adapted fuzzy match is machine translation, with the score of the match behind it.
+        assert (segs["p1.3"]["origin"], segs["p1.3"]["target"]) == ("mt", "EN " + segs["p1.3"]["source"])
         assert 75 <= segs["p1.3"]["match"] < 100
-        assert segs["p1.4"]["origin"] == "mt" and "match" not in segs["p1.4"]
+        assert segs["p1.4"]["origin"] == "mt" and segs["p1.4"]["match"] is None
         assert s.state["doc:tm_stats"] == {"context": 1, "exact": 1, "fuzzy": 1, "words": 11}
         # With auto-confirm off, the 101% match is reused but left for a person to confirm.
         store.update_project(pid, auto_confirm_context=False)
-        delta, _, _ = steps.translate._tm_pass(s.state, [{**segs[k], "target": None, "status": "new", "origin": None} for k in ("p1.1", "p1.2")])
+        delta, _, _ = memory.prefill(s.state, [{**segs[k], "target": None, "status": "new", "origin": None} for k in ("p1.1", "p1.2")])
         assert delta[st.seg_key("p1.2")]["status"] == "draft" and delta[st.seg_key("p1.2")]["match"] == 101
         store.update_project(pid, auto_confirm_context=True)
         # Project style guide and only the relevant terms, with the forbidden variant.
@@ -195,7 +224,8 @@ def test_pipeline_reuses_exact_matches_and_shows_fuzzy_ones(store, monkeypatch):
         assert "Schaltschrank" not in prompt
 
         # A person confirms p1.4 → it is written to the TM with its context; the next lookup is 101%.
-        await edits.edit_segment(sessions, s, "p1.4", target="A follow-up inspection takes place on 12.05.", confirm=True)
+        seg = await edits.edit_segment(sessions, s, "p1.4", target="A follow-up inspection takes place on 12.05.", confirm=True)
+        assert seg["tm_saved"] and seg["match"] is None
         [m] = store.lookup(pid, segs["p1.4"]["source"], segs["p1.3"]["source"], limit=1)
         assert (m["score"], m["target"]) == (101, "A follow-up inspection takes place on 12.05.")
         # Unconfirmed drafts never reach the TM.
@@ -246,20 +276,24 @@ def test_project_api_crud(client, store):
     assert client.get(f"/api/projects/{pid}/terms").json()[0]["forbidden"] == ["approval"]
     units = [{"source": "Satz eins.", "target": "Sentence one."}, {"source": "Satz zwei.", "target": "Sentence two."},
              {"source": " ", "target": "skipped: no source"}]
-    assert client.post(f"/api/projects/{pid}/tm", json=units).json() == {"added": 2, "updated": 0}
-    assert client.post(f"/api/projects/{pid}/tm", json=units[:1]).json() == {"added": 0, "updated": 1}
+    assert client.post(f"/api/projects/{pid}/tm", json=units).json() == {"added": 2, "updated": 0, "unchanged": 0, "kept": 0}
+    assert client.post(f"/api/projects/{pid}/tm", json=[{**units[0], "target": "Sentence 1."}]).json()["updated"] == 1
+    # An import with the sentence before it gives context (101%) matches.
+    client.post(f"/api/projects/{pid}/tm", json=[{"source": "Satz drei.", "target": "Sentence three.", "prev_source": "Satz zwei."}])
+    assert store.lookup(pid, "Satz drei.", "Satz zwei.")[0]["score"] == 101
     tm = client.get(f"/api/projects/{pid}/tm", params={"q": "zwei"}).json()
-    assert tm["total"] == 2 and [u["target"] for u in tm["units"]] == ["Sentence two."]
+    assert tm["total"] == 3 and [u["target"] for u in tm["units"]] == ["Sentence two."]
     client.delete(f"/api/projects/{pid}/tm/{tm['units'][0]['id']}")
-    assert client.get(f"/api/projects/{pid}").json()["tm_units"] == 1
+    assert client.get(f"/api/projects/{pid}").json()["tm_units"] == 2
 
     assert client.delete(f"/api/projects/{pid}").json() == {"ok": True}
     assert client.get(f"/api/projects/{pid}").status_code == 404
 
 
-def test_only_one_by_one_confirmation_fills_the_tm(store):
-    """Bulk confirm ("Confirm AI-checked") isn't a person checking each sentence, so it stays out of the TM;
-    confirming a segment on its own does go in. A deleted project is ignored."""
+def test_confirming_fills_the_tm_and_bulk_units_never_confirm_by_themselves(store):
+    """Confirming saves to the TM, one by one or in bulk (as CAT tools do). A unit saved by a bulk click is tagged
+    "bulk": a 101% match from it arrives as a draft, while one confirmed on its own starts confirmed. A deleted
+    project is ignored."""
     pid = store.create_project("P", "German")["id"]
 
     def seg(sid, source, target, **extra):
@@ -273,16 +307,56 @@ def test_only_one_by_one_confirmation_fills_the_tm(store):
                 "p1.3": seg("p1.3", "Dritter Satz im Bericht.", "Third sentence.", ai_check="issues")}
         s = await sessions.create_session(app_name="t", user_id="u", state={
             "doc:status": "ready", "doc:seg_ids": list(segs), "doc:versions": [], "doc:project_id": pid,
-            **{st.seg_key(k): v for k, v in segs.items()}})
+            "doc:filename": "a.pdf", **{st.seg_key(k): v for k, v in segs.items()}})
         assert await edits.confirm_segments(sessions, s) == ["p1.1", "p1.2"]  # only what the AI check passed
-        assert store.units(pid) == []  # bulk: not in the TM
         s = await sessions.get_session(app_name="t", user_id="u", session_id=s.id)
+        assert st.get_segment(s.state, "p1.1")["tm_saved"]
+        assert {(u["source"], u["approval"], u["ref"]) for u in store.units(pid)} == {
+            ("Erster Satz im Bericht.", "bulk", "a.pdf#p1.1"), ("Zweiter Satz im Bericht.", "bulk", "a.pdf#p1.2")}
         await edits.edit_segment(sessions, s, "p1.3", target="The third sentence.", confirm=True)
         assert store.lookup(pid, "Dritter Satz im Bericht.", "Zweiter Satz im Bericht.")[0]["score"] == 101
-        assert [u["source"] for u in store.units(pid)] == ["Dritter Satz im Bericht."]
+
+        # The next document: 101% matches. The one-by-one unit starts confirmed, the bulk one as a draft.
+        nxt = [seg("q1.1", "Erster Satz im Bericht.", None), seg("q1.2", "Zweiter Satz im Bericht.", None),
+               seg("q1.3", "Dritter Satz im Bericht.", None)]
+        delta, _, stats = memory.prefill({"doc:project_id": pid}, nxt)
+        status = {k.removeprefix(st.SEG): v["status"] for k, v in delta.items()}
+        assert status == {"q1.1": "draft", "q1.2": "draft", "q1.3": "confirmed"} and stats["context"] == 2
 
         store.delete_project(pid)
         s = await sessions.get_session(app_name="t", user_id="u", session_id=s.id)
-        await edits.edit_segment(sessions, s, "p1.3", target="The 3rd sentence.", confirm=True)  # no error
+        seg3 = await edits.edit_segment(sessions, s, "p1.3", target="The 3rd sentence.", confirm=True)  # no error
+        assert seg3["tm_saved"] is False
 
     asyncio.run(main())
+
+
+def test_accept_and_confirm_saves_the_agents_change_to_the_tm(store):
+    from google.adk.artifacts import InMemoryArtifactService
+
+    from translator.document import proposals
+
+    pid = store.create_project("P", "German")["id"]
+    seg = {"id": "p1.1", "page": 1, "kind": "paragraph", "source": "Die Anlage ist abgenommen.", "target": "The plant is accepted.",
+           "translatable": True, "status": "draft", "origin": "mt"}
+
+    async def main():
+        sessions, artifacts = InMemorySessionService(), InMemoryArtifactService()
+        s = await sessions.create_session(app_name="t", user_id="u", state={
+            "doc:status": "ready", "doc:seg_ids": ["p1.1"], "doc:versions": [], "doc:project_id": pid, "doc:filename": "a.pdf",
+            st.seg_key("p1.1"): seg, "doc:proposal": {"id": "x", "notes": [], "glossary": {}, "changes": [
+                {"segment_id": "p1.1", "field": "target", "before": seg["target"], "after": "The installation has been accepted."}]}})
+        await proposals.accept(sessions, artifacts, s, confirm=True)
+        s = await sessions.get_session(app_name="t", user_id="u", session_id=s.id)
+        new = st.get_segment(s.state, "p1.1")
+        assert (new["status"], new["origin"], new["tm_saved"]) == ("confirmed", "agent", True)
+        [unit] = store.units(pid)
+        assert (unit["target"], unit["approval"]) == ("The installation has been accepted.", "proposal")
+
+    asyncio.run(main())
+
+
+def test_the_tm_context_is_the_same_everywhere():
+    segs = [{"id": "p1.1", "source": "# Titel"}, {"id": "p1.2", "source": "2026", "translatable": False},
+            {"id": "p1.3", "source": "Satz."}]
+    assert memory.context_map(segs) == {"p1.1": "", "p1.3": "# Titel"}  # a copied page number isn't context

@@ -291,3 +291,33 @@ def test_noop_refine_skips_second_review(monkeypatch):
         assert len(reviews) == 2  # one review call per page
 
     asyncio.run(main())
+
+
+def test_late_questions_get_dictionary_senses_when_the_dictionary_is_on(monkeypatch):
+    """With the dictionary on, `clarify` looks up the translator's late terms before pausing (it once spread ADK's
+    State as a mapping and failed there)."""
+    from translator import references
+    from translator.integrations import dictionary
+
+    monkeypatch.setattr(references, "dictionary_on", lambda state: True)
+
+    async def lookup(terms, lang):
+        return {t: [{"term": t, "translation": "cable tray", "source": "Test dictionary"}] for t in terms}
+
+    monkeypatch.setattr(dictionary, "lookup", lookup)
+
+    async def main():
+        sessions, artifacts = InMemorySessionService(), InMemoryArtifactService()
+        ingest = Runner(app=App(name=APP, root_agent=pipeline.ingest_workflow), session_service=sessions, artifact_service=artifacts)
+        session = await sessions.create_session(app_name=APP, user_id="u", state={
+            "doc:filename": "test.pdf", "doc:source_artifact": "source.pdf", "doc:source_lang": "auto-detect",
+            "doc:target_lang": "English", "doc:questions": [], "doc:versions": []})
+        await artifacts.save_artifact(app_name=APP, user_id="u", session_id=session.id, filename="source.pdf",
+                                      artifact=types.Part.from_bytes(data=_pdf(), mime_type="application/pdf"))
+        await _run(ingest, session.id, types.Content(role="user", parts=[types.Part(text="Translate")]))
+        s = await sessions.get_session(app_name=APP, user_id="u", session_id=session.id)
+        assert s.state["doc:status"] == "awaiting_answers"
+        [q] = st.open_questions(s.state)
+        assert q["term"] == "Kabelpritsche" and q["dictionary"][0]["translation"] == "cable tray"
+
+    asyncio.run(main())

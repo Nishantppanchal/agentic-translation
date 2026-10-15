@@ -29,8 +29,12 @@ MAX_ENTRIES = 5  # per term
 _cache: dict[tuple[str, str], list[dict]] = {}  # (language, term) → entries, for this process
 
 
-def enabled() -> bool:
+def configured() -> bool:
+    """A dictionary service is set up (DICTIONARY_URL). Whether a document uses it: references.dictionary_on."""
     return bool(get_settings().dictionary_url)
+
+
+enabled = configured  # the older name
 
 
 def _entry(raw: Any) -> dict | None:

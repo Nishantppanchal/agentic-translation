@@ -14,12 +14,16 @@ and what the app should do with it.
 Written (relative to the output folder):
     fucha-baogao.pdf, fucha-baogao-scanned.pdf      复查报告: re-inspection of yanshou-baogao's defects
     vertragsauszug.pdf, vertragsauszug-scanned.pdf  German construction-contract excerpt
+    jiance-baogao.docx                              检测报告: earthing and insulation test report (Word, a wiring sketch)
+    anquan-peixun.pptx                              安全培训: safety training, four slides (PowerPoint, a safety sign)
+    quexian-qingdan.xlsx                            缺陷清单: defect list and a summary sheet with formulas (Excel, a sketch)
     demo/zh/termbase.csv                            zh→en project termbase (same format as demo/termbase.csv)
     demo/zh/memory.json                             confirmed translations of yanshou-baogao.pdf
     reference/<sample>.en.md                        English reference of each sample (and of yanshou-baogao.pdf)
 
 The output is deterministic (fixed timestamps, no randomness): running it twice gives identical bytes.
-Only PyMuPDF (a backend dependency) is used.
+Only the backend's own dependencies are used: PyMuPDF, python-docx, python-pptx, and xlsxwriter (a dependency of
+python-pptx) for the workbook, because openpyxl writes every string inline and Excel writes shared strings.
 """
 
 from __future__ import annotations
@@ -32,11 +36,25 @@ import json
 import re
 import sys
 import unicodedata
+import zipfile
 from collections.abc import Callable
 from pathlib import Path
 from typing import NamedTuple
 
 import pymupdf
+import xlsxwriter
+from docx import Document
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.opc.packuri import PackURI
+from docx.opc.part import Part
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
+from docx.shared import Cm, Pt
+from pptx import Presentation
+from pptx.dml.color import RGBColor as PptxColor
+from pptx.enum.text import MSO_ANCHOR, MSO_AUTO_SIZE, PP_ALIGN
+from pptx.util import Inches
+from pptx.util import Pt as PptxPt
 
 ROOT = Path(__file__).resolve().parents[2]
 STAMP = dt.datetime(2026, 5, 20, 9, 30)  # creation time written into every file (keeps the bytes stable)
@@ -378,6 +396,300 @@ VERTRAG_NOTES = """\
 # =========================================================================== #
 
 
+# =========================================================================== #
+# Content: jiance-baogao.docx (检测报告)
+# =========================================================================== #
+# A paragraph is a list of runs (text, format): "" plain, "b" bold, "i" italic, "link" hyperlink,
+# "fn" footnote reference, "del"/"ins" tracked deletion/insertion.
+
+JIANCE_CONDITIONS = ("测试条件：天气晴，环境温度25 ℃，相对湿度45%。",
+                     "Test conditions: clear weather, ambient temperature 25 °C, relative humidity 45%.")
+JIANCE_TABLE_HEAD = (["测量位置", "实测值", "标准要求", "结论"], ["Measuring point", "Measured value", "Requirement", "Result"])
+JIANCE_FOOTNOTE = ("DL/T 475—2017《接地装置特性参数测量导则》。",
+                   "DL/T 475-2017, *Guide for Measuring the Characteristic Parameters of Earthing Systems*.")
+
+# The test wiring sketch in section 2.1: a picture with Chinese labels (read by the vision model, translated as its
+# alt text and a caption). (Chinese, English) for each text in it, top to bottom.
+JIANCE_WIRING = [("接地电阻测试接线示意图", "Earthing resistance test wiring diagram"),
+                 ("接地电阻测试仪", "Earth resistance tester"), ("电压极P", "Potential electrode P"),
+                 ("电流极C", "Current electrode C"), ("被测接地网", "Earth grid under test"),
+                 ("P、C间距不小于40 m", "P–C spacing at least 40 m")]
+
+JIANCE = [
+    ("h1", "接地及绝缘电阻检测报告", "Earthing and Insulation Resistance Test Report"),
+    ("p", [("受甲方委托，乙方于2026年5月18日对北区变电站110 kV开关室的", ""), ("主接地网", "b"),
+           ("进行了检测。实测接地电阻为0.42 Ω，", ""), ("满足设计值0.5 Ω的要求", "i"), ("。", "")],
+     ("On behalf of the Client, the Contractor tested the **main earth grid** in the 110 kV switchgear room of the North "
+      "District Substation on 18 May 2026. The measured earthing resistance was 0.42 Ω, *which meets the design value of "
+      "0.5 Ω*.")),
+    ("h2", "一、检测依据", "1. Basis of Testing"),
+    ("p", [("检测按照经审批的", ""), ("检测方案", "link"), ("及DL/T 475—2017执行。", ""), ("", "fn")],
+     f"The tests were carried out in accordance with the approved [test plan]({LINK_URL}) and DL/T 475-2017.[^1]"),
+    ("p", [("检测前，运维单位已按操作票完成相关倒闸操作，并在被试设备两侧装设接地线。", "")],
+     ("Before testing, the O&M organisation carried out the necessary switching operations in accordance with the "
+      "switching order and applied earthing leads on both sides of the equipment under test.")),
+    ("h2", "二、检测结果", "2. Test Results"),
+    ("h3", "（一）接地电阻及接地导通测试", "2.1 Earthing resistance and earthing continuity"),
+    ("p", [(JIANCE_CONDITIONS[0], "")], JIANCE_CONDITIONS[1]),
+    ("picture", JIANCE_WIRING, None),
+    ("table",
+     [JIANCE_TABLE_HEAD[0], ["主接地网", "0.42 Ω", "≤0.5 Ω", "合格"], ["地下室电缆桥架", "0.08 Ω", "≤0.2 Ω", "合格"],
+      ["UPS屏柜", "0.35 Ω", "≤0.2 Ω", "不合格"]],
+     [JIANCE_TABLE_HEAD[1], ["Main earth grid", "0.42 Ω", "≤ 0.5 Ω", "Pass"], ["Basement cable tray", "0.08 Ω", "≤ 0.2 Ω", "Pass"],
+      ["UPS cabinet", "0.35 Ω", "≤ 0.2 Ω", "Fail"]]),
+    ("h3", "（二）绝缘电阻测试", "2.2 Insulation resistance"),
+    ("p", [(JIANCE_CONDITIONS[0], "")], JIANCE_CONDITIONS[1]),
+    ("table",
+     [JIANCE_TABLE_HEAD[0], ["110 kV开关柜A相", "2500 MΩ", "≥1000 MΩ", "合格"], ["110 kV开关柜B相", "2300 MΩ", "≥1000 MΩ", "合格"],
+      ["110 kV开关柜C相", "2400 MΩ", "≥1000 MΩ", "合格"]],
+     [JIANCE_TABLE_HEAD[1], ["110 kV switchgear panel, phase A", "2500 MΩ", "≥ 1000 MΩ", "Pass"],
+      ["110 kV switchgear panel, phase B", "2300 MΩ", "≥ 1000 MΩ", "Pass"],
+      ["110 kV switchgear panel, phase C", "2400 MΩ", "≥ 1000 MΩ", "Pass"]]),
+    ("h2", "三、结论", "3. Conclusion"),
+    ("p", [("UPS屏柜接地导通电阻超标，判定为不合格。乙方须", ""), ("尽快", "del"), ("于2026年6月15日前", "ins"),
+           ("完成消缺并复测。", "")],
+     ("The earthing continuity resistance of the UPS cabinet exceeds the limit, so the cabinet is assessed as failed. "
+      "The Contractor must clear the defect and repeat the test by 15 June 2026.")),
+    ("p", [("其余检测项目均合格，相关设备具备投运条件。", "")],
+     "All other test items passed; the equipment concerned is ready to be put into service."),
+    ("p", [("检测人员：赵磊", "")], "Tested by: Zhao Lei"),
+    ("p", [("审核：王建国", "")], "Reviewed by: Wang Jianguo"),
+]
+
+# The vendor's English, keyed by the segment source exactly as office.extract reads it. Planted errors are marked.
+JIANCE_VENDOR = {
+    "第 <x id=\"1\"/>1<x id=\"2\"/> 页": "Page <x id=\"1\"/>1<x id=\"2\"/>",
+    HEADER_ZH: HEADER_EN,
+    "接地及绝缘电阻检测报告": "Earthing and Insulation Resistance Test Report",
+    # planted: forbidden term "Party A" (termbase: 甲方 → Client)
+    "受甲方委托，乙方于2026年5月18日对北区变电站110 kV开关室的<g id=\"1\">主接地网</g>进行了检测。"
+    "实测接地电阻为0.42 Ω，<g id=\"2\">满足设计值0.5 Ω的要求</g>。":
+        "Commissioned by Party A, the Contractor tested the <g id=\"1\">main earth grid</g> in the 110 kV switchgear room of "
+        "the North District Substation on 18 May 2026. The measured earthing resistance was 0.42 Ω, "
+        "<g id=\"2\">meeting the design value of 0.5 Ω</g>.",
+    "一、检测依据": "1. Basis of testing",
+    # planted: the footnote mark <x id="2"/> is missing (the import refuses this segment)
+    "检测按照经审批的<g id=\"1\">检测方案</g>及DL/T 475—2017执行。<x id=\"2\"/>":
+        "Testing was carried out in accordance with the approved <g id=\"1\">test plan</g> and DL/T 475-2017.",
+    "检测前，运维单位已按操作票完成相关倒闸操作，并在被试设备两侧装设接地线。":
+        "Before testing, the O&M unit completed the relevant switching operations according to the switching order and "
+        "installed earthing leads on both sides of the equipment under test.",
+    "二、检测结果": "2. Test results",
+    "（一）接地电阻及接地导通测试": "2.1 Earthing resistance and earthing continuity test",
+    "测量位置": "Measuring point",
+    "实测值": "Measured value",
+    "标准要求": "Requirement",
+    "结论": "Result",
+    "主接地网": "Main earth grid",
+    "0.42 Ω": "0.42 Ω",
+    "≤0.5 Ω": "≤ 0.5 Ω",
+    "合格": "Pass",
+    "地下室电缆桥架": "Basement cable tray",
+    "0.08 Ω": "0.08 Ω",
+    "≤0.2 Ω": "≤ 0.2 Ω",
+    "UPS屏柜": "UPS cabinet",
+    "0.35 Ω": "0.53 Ω",  # planted: wrong number (transposed digits)
+    "不合格": "Fail",
+    "（二）绝缘电阻测试": "2.2 Insulation resistance test",
+    "110 kV开关柜A相": "110 kV switchgear panel, phase A",
+    "2500 MΩ": "2500 MΩ",
+    "≥1000 MΩ": "≥ 1000 MΩ",
+    "110 kV开关柜B相": "110 kV switchgear panel, phase B",
+    "2300 MΩ": "2300 MΩ",
+    "110 kV开关柜C相": "110 kV switchgear panel, phase C",
+    "2400 MΩ": "2400 MΩ",
+    "三、结论": "3. Conclusion",
+    # planted: wrong date (15 June in the source; the date is the tracked insertion)
+    "UPS屏柜接地导通电阻超标，判定为不合格。乙方须于2026年6月15日前完成消缺并复测。":
+        "The earthing continuity resistance of the UPS cabinet exceeds the limit and is assessed as failed. The Contractor "
+        "must eliminate the defect and retest by 15 May 2026.",
+    # planted: left untranslated
+    "其余检测项目均合格，相关设备具备投运条件。": "其余检测项目均合格，相关设备具备投运条件。",
+    "检测人员：赵磊": "Tested by: Zhao Lei",
+    "审核：王建国": "Checked by: Wang Jianguo",
+    "<x id=\"1\"/>DL/T 475—2017《接地装置特性参数测量导则》。":
+        "<x id=\"1\"/>DL/T 475-2017, Guide for Measuring the Characteristic Parameters of Earthing Systems.",
+}
+# planted: the repeated sentence translated two different ways (first and second occurrence)
+JIANCE_VENDOR_CONDITIONS = [
+    "Test conditions: clear weather, ambient temperature 25 °C, relative humidity 45%.",
+    "Test conditions: sunny, ambient temp. 25 °C, RH 45%.",
+]
+
+JIANCE_NOTES = """\
+- **Tracked changes:** the conclusion paragraph replaces 尽快 (“as soon as possible”, a tracked deletion) by
+  于2026年6月15日前 (“by 15 June 2026”, a tracked insertion). The app reads tracked changes as accepted, so the
+  source to translate contains the date and not 尽快.
+- **运维单位** = the O&M organisation (operation and maintenance); **消缺** = clear / eliminate the defect.
+- **操作票** = switching order (the written sequence for a switching operation); **倒闸操作** (termbase) =
+  switching operation.
+- **主接地网** = main earth grid; **接地导通** = earthing continuity (resistance between equipment and the grid).
+- The sentence 测试条件：… appears twice (before each table) and must be translated identically.
+- Footnote 1 (on DL/T 475—2017) is attached to the end of the paragraph in section 1."""
+
+# =========================================================================== #
+# Content: anquan-peixun.pptx (安全培训)
+# =========================================================================== #
+
+ANQUAN_INTERLOCK = ("严禁擅自解除防误闭锁装置。", "Never defeat an anti-maloperation interlock without authorisation.")
+
+# The safety sign on slide 2 (a picture): (Chinese, English) for each text in it, top to bottom.
+ANQUAN_SIGN = [("止步，高压危险！", "Stop! High voltage!"), ("禁止合闸", "Do not switch on"), ("有人工作", "People at work")]
+
+ANQUAN = [
+    {
+        "layout": 0,
+        "title": ("停电作业安全培训", "Safety Training for Outage Work"),
+        "body": [
+            ("北区变电站110 kV开关设备改造工程（UW-2291）",
+             "North District Substation 110 kV Switchgear Renovation Project (UW-2291)"),
+            ("严格执行两票三制，全面落实五防要求",
+             "Strict application of the Two Permits and Three Systems; full implementation of the Five Preventions"),
+        ],
+        "notes": [
+            ("开场：本次培训面向参与UW-2291项目停电作业的全体人员，时长约45分钟。",
+             "Opening: this training is for everyone involved in outage work on project UW-2291 and takes about 45 minutes."),
+            ("培训结束后进行闭卷考试，80分及格。", "It ends with a closed-book test; the pass mark is 80 points."),
+        ],
+    },
+    {
+        "layout": 1,
+        "title": ("作业前准备", "Before Work Starts"),
+        "picture": ANQUAN_SIGN,  # a safety sign beside the bullets: its text is in the picture
+        "body": [
+            ("开工前召开班前会，交代工作任务、安全措施和危险点",
+             "Hold a pre-shift briefing before work starts: explain the tasks, the safety measures and the hazards"),
+            ("倒闸操作由运维单位人员执行，施工人员不得擅自操作",
+             "Switching operations are carried out by O&M staff only; construction staff must never operate equipment"),
+            ("110 kV设备不停电时的安全距离为1.5 m", "Minimum safety clearance from live 110 kV equipment: 1.5 m"),
+            ("6月7日至6月10日为保电期，暂停一切计划停电作业",
+             "7 June to 10 June is a supply-assurance period: all planned outage work is suspended"),
+        ],
+        "notes": [
+            ("保电期间如遇紧急缺陷，须经运维单位和电网调度中心批准后方可处理。",
+             ("If an urgent defect arises during the supply-assurance period, it may only be dealt with after approval by "
+              "the O&M organisation and the network control centre.")),
+        ],
+    },
+    {
+        "layout": 1,
+        "title": ("什么是“五防”", "The “Five Preventions”"),
+        "body": [
+            ("防止误分、误合断路器", "Prevent opening or closing the wrong circuit breaker"),
+            ("防止带负荷拉、合隔离开关", "Prevent opening or closing a disconnector under load"),
+            ("防止带电挂（合）接地线（接地刀闸）",
+             "Prevent applying an earthing lead (or closing an earthing switch) on live equipment"),
+            ("防止带接地线（接地刀闸）合断路器（隔离开关）",
+             "Prevent closing a circuit breaker (or disconnector) while an earthing lead (or earthing switch) is applied"),
+            ("防止误入带电间隔", "Prevent entry into a live bay"),
+        ],
+        "notes": [
+            ("“五防”是防止电气误操作的五项基本要求，由防误闭锁装置实现。",
+             ("The Five Preventions are the five basic requirements for preventing electrical maloperation; they are "
+              "enforced by anti-maloperation interlocks.")),
+            ANQUAN_INTERLOCK,
+        ],
+    },
+    {
+        "layout": 1,
+        "title": ("什么是“两票三制”", "The “Two Permits and Three Systems”"),
+        "body": [
+            ("两票：工作票、操作票", "Two permits: the work permit and the switching order"),
+            ("三制：交接班制、巡回检查制、设备定期试验轮换制",
+             "Three systems: shift handover, patrol inspection, and periodic testing and changeover of equipment"),
+            ("无票作业一律按违章处理", "Any work without a permit is treated as a safety violation"),
+        ],
+        # A fixed-size text box (no autofit) that fits the Chinese exactly: the English needs about four times
+        # as many characters, so the app must set it to shrink on overflow.
+        "callout": ("安全第一、预防为主、综合治理", "Safety first, prevention foremost, comprehensive management"),
+        "notes": [
+            ("“两票三制”是电力安全生产的基本制度，本项目所有停电作业均须严格执行。",
+             ("The Two Permits and Three Systems are the basic rules of safe operation in the power industry; all outage "
+              "work on this project must follow them strictly.")),
+            ANQUAN_INTERLOCK,
+        ],
+    },
+]
+
+ANQUAN_NOTES = """\
+- **两票三制** and **五防** appear on slide 1 without explanation; slides 4 and 3 define them. Rendered
+  “Two Permits and Three Systems” (work permit and switching order; shift handover, patrol inspection, and
+  periodic testing and changeover of equipment) and “Five Preventions” (the five anti-maloperation rules).
+- **保电** (slide 2) = a supply-assurance period in which no planned outages are allowed.
+- **运维单位** = O&M organisation; **倒闸操作** (termbase) = switching operation; **操作票** = switching order.
+- **安全第一、预防为主、综合治理** is the official safety policy slogan; the English is about four times as long
+  as the Chinese, so the fixed-size text box on slide 4 overflows unless it shrinks.
+- The note 严禁擅自解除防误闭锁装置。 appears on slides 3 and 4 and must be translated identically."""
+
+# =========================================================================== #
+# Content: quexian-qingdan.xlsx (缺陷清单)
+# =========================================================================== #
+
+QX_HEAD = [("编号", "ID"), ("位置", "Location"), ("缺陷描述", "Defect description"), ("责任方", "Responsible party"),
+           ("整改期限", "Rectification deadline"), ("状态", "Status")]
+QX_DONE, QX_OPEN = ("已整改", "Rectified"), ("未整改", "Not rectified")
+QX_CONTRACTOR, QX_OM = ("乙方", "Contractor"), ("运维方", "O&M party")
+QX_BASEMENT, QX_SWITCHROOM, QX_UPSROOM = ("地下室", "Basement"), ("110 kV开关室", "110 kV switchgear room"), ("UPS室", "UPS room")
+QX_IMPORTANT = ("【重要】", "[Important]")  # the bold part of the rich-text cell
+QX_ROWS = [  # (no., location, description, responsible, deadline, status); description None = the rich-text cell
+    (1, QX_BASEMENT, ("地下室电缆桥架未接地", "Cable tray in the basement not earthed"), QX_CONTRACTOR, dt.date(2026, 4, 30), QX_DONE),
+    (2, QX_SWITCHROOM, ("出线间隔标识不完整", "Labelling of the outgoing feeder bays incomplete"), QX_CONTRACTOR,
+     dt.date(2026, 4, 15), QX_DONE),
+    (3, QX_UPSROOM, ("UPS直流母线遗留工作", "Outstanding work on the UPS DC busbar"), QX_CONTRACTOR, dt.date(2026, 6, 15), QX_OPEN),
+    (4, QX_UPSROOM, ("UPS屏柜接地导通电阻超标（实测0.35 Ω，要求≤0.2 Ω）",
+                     "Earthing continuity resistance of the UPS cabinet above the limit (measured 0.35 Ω, required ≤ 0.2 Ω)"),
+     QX_CONTRACTOR, dt.date(2026, 6, 15), QX_OPEN),
+    (5, ("主控室", "Main control room"), ("后台监控系统频繁误报信号，需运维方配合消缺",
+                                        ("Frequent false alarms on the station monitoring system; clearing the defect "
+                                         "needs the O&M party's support")),
+     QX_OM, dt.date(2026, 5, 31), QX_DONE),
+    (6, QX_SWITCHROOM, None, QX_OM, dt.date(2026, 6, 30), QX_OPEN),
+]
+QX_RICH = ("2号主变110 kV侧隔离开关触头发热，红外测温82 ℃",
+           "Contacts of the 110 kV-side disconnector of main transformer No. 2 overheating; infrared reading 82 °C")
+QX_DATE_FORMAT = 'yyyy"年"m"月"d"日"'
+# The defect location sketch beside the list (a picture at H2, with Chinese alt text): (Chinese, English) for each
+# text in it, top to bottom.
+QX_SKETCH = [("缺陷位置示意图", "Defect location sketch"), ("配电柜", "Distribution cabinet"), ("UPS屏柜", "UPS cabinet"),
+             ("缺陷4", "Defect 4"), ("电缆桥架", "Cable tray"), ("缺陷1（已整改）", "Defect 1 (rectified)")]
+QX_SUMMARY = [  # ((label, English), value or formula, number format, the value as the reference shows it)
+    (("统计项目", "Item"), ("数值", "Value"), None, None),
+    (("缺陷总数", "Total number of defects"), "=COUNTA(缺陷!A2:A7)", "0", "6"),
+    (("已整改数量", "Defects with rectification completed"), '=COUNTIF(缺陷!F:F,"已整改")', "0", "3"),
+    (("未整改数量", "Defects with rectification outstanding"), '=COUNTIF(缺陷!F:F,"未整改")', "0", "3"),
+    (("整改完成率", "Rectification completion rate"), "=B3/B2", "0%", "50%"),
+    (("乙方责任缺陷", "Defects for which the Contractor is responsible"), '=COUNTIF(缺陷!D:D,"乙方")', "0", "4"),
+    (("结算金额（元）", "Settlement amount (CNY)"), 625000, "#,##0.00", "625,000.00"),
+    (("质量保证金比例", "Retention money (share of the settlement amount)"), 0.05, "0%", "5%"),
+    (("质量保证金（元）", "Retention money (CNY)"), "=B7*B8", "#,##0.00", "31,250.00"),
+    (("统计日期", "Date of this summary"), dt.date(2026, 5, 20), QX_DATE_FORMAT, "20 May 2026"),
+]
+
+QUEXIAN_NOTES = """\
+- **已整改 / 未整改** (status) are shared strings used three times each, and the summary sheet's COUNTIF
+  formulas compare against them (as they compare against 乙方): translating those cells changes the
+  formulas' results unless the formulas are updated too.
+- **运维方** (responsible party) = the O&M party: the utility's operation and maintenance side, as opposed
+  to 乙方, the Contractor. **消缺** = clear / eliminate a defect.
+- The deadlines and the summary date are real Excel dates (displayed as 2026年4月30日); the settlement amount
+  and the 5% rate are numbers. Row 6's description is rich text: 【重要】 is bold."""
+
+
+def fixed_zip(data: bytes) -> bytes:
+    """Rewrite an Office zip with fixed timestamps (entries and docProps/core.xml) so the bytes are stable."""
+    src = zipfile.ZipFile(io.BytesIO(data))
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, "w") as z:
+        for info in src.infolist():
+            body = src.read(info.filename)
+            if info.filename == "docProps/core.xml":
+                body = re.sub(rb"(<dcterms:(?:created|modified)[^>]*>)[^<]*", rb"\g<1>2026-05-20T09:30:00Z", body)
+            entry = zipfile.ZipInfo(info.filename, ZIP_TIME)
+            entry.external_attr = 0o644 << 16
+            z.writestr(entry, body, compress_type=zipfile.ZIP_DEFLATED)
+    return out.getvalue()
+
+
 def esc(text: str) -> str:
     return html.escape(text, quote=False)
 
@@ -510,6 +822,58 @@ def fucha_diagram() -> bytes:
     return page.get_pixmap(dpi=150).tobytes("png")
 
 
+def sketch(size: tuple[int, int], title: str, boxes: list[tuple[tuple, str]], lines: list[tuple[tuple, tuple]],
+           labels: list[tuple[tuple, str, str]]) -> bytes:
+    """A labelled block diagram as a raster image (what a scanned or pasted drawing in an Office file looks like):
+    blue boxes with a label each, connecting lines, and free text (rect, text, colour)."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=size[0], height=size[1])
+    page.draw_rect(page.rect, color=(0.75, 0.75, 0.75), fill=(1, 1, 1), width=1)
+    css = "* {font-family: sans-serif; font-size: 13pt; text-align: center;}"
+    page.insert_htmlbox(pymupdf.Rect(10, 8, size[0] - 10, 34), f"<p>{title}</p>", css=css.replace("13pt", "16pt"))
+    for a, b in lines:
+        page.draw_line(a, b, color=(0.25, 0.25, 0.25), width=2)
+    for rect, label in boxes:
+        r = pymupdf.Rect(rect)
+        page.draw_rect(r, color=(0.1, 0.3, 0.7), fill=(0.9, 0.94, 1), width=2)
+        page.insert_htmlbox(r + (0, (r.height - 20) / 2, 0, 0), f"<p>{label}</p>", css=css)
+    for rect, text, colour in labels:
+        page.insert_htmlbox(pymupdf.Rect(rect), f"<p>{text}</p>", css=css.replace("13pt", "12pt") + f" p {{color: {colour};}}")
+    return page.get_pixmap(dpi=150).tobytes("png")
+
+
+def jiance_wiring() -> bytes:
+    zh = [z for z, _ in JIANCE_WIRING]
+    return sketch((460, 250), zh[0],
+                  [((20, 50, 170, 100), zh[1]), ((260, 50, 360, 100), zh[2]), ((360, 140, 450, 190), zh[3]),
+                   ((20, 160, 170, 210), zh[4])],
+                  [((95, 100), (95, 160)), ((170, 68), (260, 68)), ((170, 90), (220, 90)), ((220, 90), (220, 120)),
+                   ((220, 120), (405, 120)), ((405, 120), (405, 140))],
+                  [((180, 215, 450, 240), zh[5], "#555555")])
+
+
+def anquan_sign() -> bytes:
+    """A red-and-white safety sign."""
+    doc = pymupdf.open()
+    page = doc.new_page(width=260, height=200)
+    page.draw_rect(page.rect, color=(0.75, 0, 0), fill=(1, 1, 1), width=10)
+    page.draw_rect(pymupdf.Rect(20, 110, 240, 180), color=(0.75, 0, 0), fill=(0.75, 0, 0))
+    big = "* {font-family: sans-serif; font-size: 24pt; font-weight: bold; text-align: center; color: #c00000;}"
+    page.insert_htmlbox(pymupdf.Rect(15, 35, 245, 100), f"<p>{ANQUAN_SIGN[0][0]}</p>", css=big)
+    white = big.replace("24pt", "18pt").replace("#c00000", "#ffffff")
+    page.insert_htmlbox(pymupdf.Rect(20, 115, 240, 145), f"<p>{ANQUAN_SIGN[1][0]}</p>", css=white)
+    page.insert_htmlbox(pymupdf.Rect(20, 145, 240, 175), f"<p>{ANQUAN_SIGN[2][0]}</p>", css=white)
+    return page.get_pixmap(dpi=150).tobytes("png")
+
+
+def quexian_sketch() -> bytes:
+    zh = [z for z, _ in QX_SKETCH]
+    return sketch((420, 240), zh[0],
+                  [((20, 50, 150, 100), zh[1]), ((270, 50, 400, 100), zh[2]), ((140, 160, 280, 210), zh[4])],
+                  [((150, 75), (270, 75)), ((85, 100), (180, 160)), ((335, 100), (240, 160))],
+                  [((290, 102, 400, 122), zh[3], "#c00000"), ((10, 212, 210, 234), zh[5], "#0d8026")])
+
+
 def build_fucha() -> pymupdf.Document:
     doc = flow_pdf(FUCHA, title="缺陷复查报告——北区变电站", header=HEADER_ZH, footer="第 {page} 页 共 {pages} 页",
                    images={"fucha-fig1.png": fucha_diagram()}, figure_width=370)
@@ -528,6 +892,257 @@ def build_vertrag() -> pymupdf.Document:
 
 # =========================================================================== #
 # Chinese demo assets: termbase, translation memory
+# =========================================================================== #
+
+TERMBASE_ZH = [  # (Chinese, English, note, forbidden) — the ambiguous question terms are deliberately absent
+    ("北区变电站", "North District Substation", "Site name — always translated", "North Area Substation|Beiqu Substation"),
+    ("甲方", "Client", "Contract party — write “the Client”", "Party A"),
+    ("乙方", "Contractor", "Contract party — write “the Contractor”", "Party B"),
+    ("承包方", "Contractor", "The same party as 乙方", "contracting party|undertaker"),
+    ("电缆桥架", "cable tray", "Metal tray carrying cables", "cable bridge|cable rack"),
+    ("整改", "rectification", "Correcting a recorded defect (已整改 = rectified)", "reform|correction"),
+    ("验收", "acceptance", "Formal acceptance of the works", "check and accept|check before acceptance"),
+    ("接地", "earth", "British usage: earth / earthing / earthed — never ground", "grounding|grounded"),
+    ("质量保证金", "retention money", "Share of the settlement amount withheld until the defects are cleared",
+     "quality deposit|quality guarantee deposit|quality assurance deposit"),
+    ("质保金", "retention money", "Short form of 质量保证金", "quality deposit|warranty deposit"),
+    ("倒闸操作", "switching operation", "Opening and closing breakers and disconnectors to change the system state",
+     "gate switching|switchover operation"),
+    ("工程量清单", "bill of quantities", "", "engineering quantity list|quantity list"),
+    ("出线间隔", "outgoing feeder bay", "", "outlet interval|outgoing line interval"),
+    ("电网调度中心", "network control centre", "British spelling", "grid dispatching center|dispatch center"),
+    ("绝缘电阻", "insulation resistance", "", "isolation resistance"),
+]
+
+
+
+
+# =========================================================================== #
+# Word
+# =========================================================================== #
+
+FOOTNOTES_XML = """<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<w:footnotes xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">
+<w:footnote w:type="separator" w:id="-1"><w:p><w:r><w:separator/></w:r></w:p></w:footnote>
+<w:footnote w:type="continuationSeparator" w:id="0"><w:p><w:r><w:continuationSeparator/></w:r></w:p></w:footnote>
+<w:footnote w:id="1"><w:p><w:pPr><w:spacing w:after="0"/></w:pPr><w:r><w:rPr><w:vertAlign w:val="superscript"/></w:rPr>\
+<w:footnoteRef/></w:r><w:r><w:rPr><w:sz w:val="18"/></w:rPr><w:t>{text}</w:t></w:r></w:p></w:footnote>
+</w:footnotes>"""
+FOOTNOTES_CT = "application/vnd.openxmlformats-officedocument.wordprocessingml.footnotes+xml"
+
+
+def w_el(tag: str, text: str | None = None, **attrs: str):
+    el = OxmlElement(tag)
+    for key, value in attrs.items():
+        el.set(qn(key.replace("_", ":", 1)), value)
+    if text is not None:
+        el.text = text
+        el.set(qn("xml:space"), "preserve")
+    return el
+
+
+def w_run(*children, rpr: list | None = None):
+    run = w_el("w:r")
+    if rpr:
+        props = w_el("w:rPr")
+        for child in rpr:
+            props.append(child)
+        run.append(props)
+    for child in children:
+        run.append(child)
+    return run
+
+
+def add_runs(paragraph, runs: list[tuple[str, str]]) -> None:
+    for text, fmt in runs:
+        if fmt == "link":
+            rid = paragraph.part.relate_to(LINK_URL, RT.HYPERLINK, is_external=True)
+            link = w_el("w:hyperlink", r_id=rid)
+            link.append(w_run(w_el("w:t", text), rpr=[w_el("w:color", w_val="0563C1"), w_el("w:u", w_val="single")]))
+            paragraph._p.append(link)
+        elif fmt == "fn":
+            paragraph._p.append(w_run(w_el("w:footnoteReference", w_id="1"), rpr=[w_el("w:vertAlign", w_val="superscript")]))
+        elif fmt in ("del", "ins"):
+            change = w_el(f"w:{fmt}", w_id="91" if fmt == "del" else "92", w_author="王建国", w_date="2026-05-19T10:00:00Z")
+            change.append(w_run(w_el("w:delText" if fmt == "del" else "w:t", text)))
+            paragraph._p.append(change)
+        else:
+            run = paragraph.add_run(text)
+            if fmt == "b":
+                run.bold = True
+            elif fmt == "i":
+                run.italic = True
+
+
+def page_field(paragraph, before: str, after: str) -> None:
+    """`before` PAGE `after` — a live page-number field (the result "1" is what Word shows until it updates)."""
+    paragraph.add_run(before)
+    for child in (w_el("w:fldChar", w_fldCharType="begin"), w_el("w:instrText", " PAGE "),
+                  w_el("w:fldChar", w_fldCharType="separate"), w_el("w:t", "1"), w_el("w:fldChar", w_fldCharType="end")):
+        paragraph._p.append(w_run(child))
+    paragraph.add_run(after)
+
+
+def chinese_styles(doc) -> None:
+    """Chinese fonts (SimSun body, SimHei headings) and zh-CN as the document language."""
+    defaults = doc.styles.element.find(qn("w:docDefaults")).find(qn("w:rPrDefault")).find(qn("w:rPr"))
+    lang = defaults.find(qn("w:lang"))
+    lang.set(qn("w:val"), "zh-CN")
+    lang.set(qn("w:eastAsia"), "zh-CN")
+    for name, font in (("Normal", "SimSun"), ("Heading 1", "SimHei"), ("Heading 2", "SimHei"), ("Heading 3", "SimHei")):
+        rpr = doc.styles[name].element.get_or_add_rPr()
+        rfonts = rpr.find(qn("w:rFonts"))
+        if rfonts is None:
+            rfonts = w_el("w:rFonts")
+            rpr.insert(0, rfonts)
+        rfonts.attrib.pop(qn("w:eastAsiaTheme"), None)  # a theme font would win over the explicit one
+        rfonts.set(qn("w:eastAsia"), font)
+    doc.styles["Heading 1"].font.size = Pt(16)
+
+
+def shade(cell, fill: str) -> None:
+    props = cell._tc.get_or_add_tcPr()
+    props.append(w_el("w:shd", w_val="clear", w_color="auto", w_fill=fill))
+
+
+def build_jiance() -> bytes:
+    doc = Document()
+    chinese_styles(doc)
+    section = doc.sections[0]
+    section.page_width, section.page_height = Cm(21), Cm(29.7)
+    section.left_margin = section.right_margin = Cm(2.5)
+    section.header.paragraphs[0].text = HEADER_ZH
+    page_field(section.footer.paragraphs[0], "第 ", " 页")
+    for kind, src, _ in JIANCE:
+        if kind in ("h1", "h2", "h3"):
+            doc.add_heading(src, level=int(kind[1]))
+        elif kind == "p":
+            add_runs(doc.add_paragraph(), src)
+        elif kind == "picture":
+            doc.add_paragraph().add_run().add_picture(io.BytesIO(jiance_wiring()), width=Cm(12))
+        elif kind == "table":
+            table = doc.add_table(rows=len(src), cols=len(src[0]))
+            table.style = "Table Grid"
+            for r, row in enumerate(src):
+                for c, text in enumerate(row):
+                    cell = table.cell(r, c)
+                    cell.text = text
+                    if r == 0:
+                        cell.paragraphs[0].runs[0].bold = True
+                        shade(cell, "E9E9E9")
+            doc.add_paragraph()  # space after the table (empty: not a segment)
+    footnotes = Part(PackURI("/word/footnotes.xml"), FOOTNOTES_CT, FOOTNOTES_XML.format(text=JIANCE_FOOTNOTE[0]).encode(),
+                     doc.part.package)
+    doc.part.relate_to(footnotes, RT.FOOTNOTES)
+    props = doc.core_properties
+    props.title, props.author, props.last_modified_by = "接地及绝缘电阻检测报告", "赵磊", "王建国"
+    props.created = props.modified = STAMP
+    props.revision = 2
+    buf = io.BytesIO()
+    doc.save(buf)
+    return fixed_zip(buf.getvalue())
+
+
+# =========================================================================== #
+# PowerPoint
+# =========================================================================== #
+
+
+def build_anquan() -> bytes:
+    prs = Presentation()  # the default 4:3 template, like unterweisung.pptx
+    for spec in ANQUAN:
+        slide = prs.slides.add_slide(prs.slide_layouts[spec["layout"]])
+        slide.shapes.title.text = spec["title"][0]
+        body = slide.placeholders[1].text_frame
+        body.text = spec["body"][0][0]
+        for zh, _ in spec["body"][1:]:
+            body.add_paragraph().text = zh
+        if spec.get("picture"):  # the sign to the right of the bullets
+            body_ph = slide.placeholders[1]
+            body_ph.left, body_ph.top, body_ph.width, body_ph.height = body_ph.left, body_ph.top, Inches(5.6), body_ph.height
+            slide.shapes.add_picture(io.BytesIO(anquan_sign()), Inches(6.35), Inches(2.3), width=Inches(3.2))
+        if callout := spec.get("callout"):
+            body_ph = slide.placeholders[1]  # make room below the bullets (set all four: it inherits them otherwise)
+            body_ph.left, body_ph.top, body_ph.width, body_ph.height = body_ph.left, body_ph.top, body_ph.width, Inches(3.6)
+            box = slide.shapes.add_textbox(Inches(2.7), Inches(5.75), Inches(4.6), Inches(0.62))
+            box.fill.solid()
+            box.fill.fore_color.rgb = PptxColor(0xFF, 0xF2, 0xCC)
+            box.line.color.rgb = PptxColor(0xC0, 0x00, 0x00)
+            frame = box.text_frame
+            frame.word_wrap = True
+            frame.auto_size = MSO_AUTO_SIZE.NONE  # fixed size: the English must shrink to fit
+            frame.vertical_anchor = MSO_ANCHOR.MIDDLE
+            para = frame.paragraphs[0]
+            para.alignment = PP_ALIGN.CENTER
+            run = para.add_run()
+            run.text = callout[0]
+            run.font.size, run.font.bold = PptxPt(20), True
+            run.font.color.rgb = PptxColor(0xC0, 0x00, 0x00)
+        slide.notes_slide.notes_text_frame.text = "\n".join(zh for zh, _ in spec["notes"])
+    props = prs.core_properties
+    props.title, props.author, props.last_modified_by = "停电作业安全培训", "张伟", "张伟"
+    props.created = props.modified = STAMP
+    props.revision = 1
+    buf = io.BytesIO()
+    prs.save(buf)
+    return fixed_zip(buf.getvalue())
+
+
+# =========================================================================== #
+# Excel
+# =========================================================================== #
+
+
+def build_quexian() -> bytes:
+    buf = io.BytesIO()
+    wb = xlsxwriter.Workbook(buf, {"in_memory": True})
+    wb.set_properties({"title": "缺陷清单", "author": "李志强", "created": STAMP})
+    base = {"border": 1, "border_color": "#999999", "valign": "top"}
+    head = wb.add_format({**base, "bold": True, "bg_color": "#DDEBF7"})
+    cell = wb.add_format(base)
+    wrap = wb.add_format({**base, "text_wrap": True})
+    date = wb.add_format({**base, "num_format": QX_DATE_FORMAT})
+    bold = wb.add_format({"bold": True})
+
+    ws = wb.add_worksheet("缺陷")
+    ws.write_row(0, 0, [zh for zh, _ in QX_HEAD], head)
+    for r, (no, (place, _), desc, (party, _), due, (status, _)) in enumerate(QX_ROWS, start=1):
+        ws.write_number(r, 0, no, cell)
+        ws.write_string(r, 1, place, cell)
+        if desc:
+            ws.write_string(r, 2, desc[0], wrap)
+        else:  # rich text: the 【重要】 prefix is bold
+            ws.write_rich_string(r, 2, bold, QX_IMPORTANT[0], QX_RICH[0], wrap)
+        ws.write_string(r, 3, party, cell)
+        ws.write_datetime(r, 4, dt.datetime.combine(due, dt.time()), date)
+        ws.write_string(r, 5, status, cell)  # 已整改 / 未整改: shared strings, three uses each
+    for col, width in enumerate((7, 15, 52, 10, 17, 10)):
+        ws.set_column(col, col, width)
+    ws.freeze_panes(1, 0)
+    ws.insert_image("H2", "quexian-sketch.png", {"image_data": io.BytesIO(quexian_sketch()), "x_scale": 0.55, "y_scale": 0.55,
+                                                 "description": QX_SKETCH[0][0]})
+
+    summary = wb.add_worksheet("汇总")
+    for r, ((label, _), value, fmt, shown) in enumerate(QX_SUMMARY):
+        style = head if r == 0 else wb.add_format({**base, "num_format": fmt})
+        summary.write_string(r, 0, label, head if r == 0 else cell)
+        if isinstance(value, tuple):
+            summary.write_string(r, 1, value[0], style)
+        elif isinstance(value, str):  # a formula, with its result cached for readers that don't recalculate
+            cached = float(shown.rstrip("%").replace(",", "")) / (100 if shown.endswith("%") else 1)
+            summary.write_formula(r, 1, value, style, cached)
+        elif isinstance(value, dt.date):
+            summary.write_datetime(r, 1, dt.datetime.combine(value, dt.time()), style)
+        else:
+            summary.write_number(r, 1, value, style)
+    summary.set_column(0, 0, 20)
+    summary.set_column(1, 1, 18)
+    wb.close()
+    return fixed_zip(buf.getvalue())
+
+
+# =========================================================================== #
+# Chinese demo assets: termbase, translation memory, vendor XLIFF
 # =========================================================================== #
 
 TERMBASE_ZH = [  # (Chinese, English, note, forbidden) — the ambiguous question terms are deliberately absent
@@ -570,7 +1185,7 @@ def tm_units() -> list[tuple[str, str]]:
 
 
 def memory_json() -> str:
-    units = [{"source": source, "target": target, "origin": "yanshou-baogao.pdf (confirmed)"} for source, target in tm_units()]
+    units = [{"source": source, "target": target, "ref": "yanshou-baogao.pdf (confirmed)"} for source, target in tm_units()]
     return json.dumps(units, ensure_ascii=False, indent=1) + "\n"
 
 
@@ -610,6 +1225,60 @@ def ref_pdf(blocks: list[Block], header: str = "", footer: str = "") -> str:
     return furniture + markdown_of_blocks(blocks)
 
 
+def picture_reference(texts: list[tuple[str, str]], where: str) -> str:
+    """The text inside a picture, in English (the translated file has it as {where})."""
+    return f"*[Picture — the text in it, in English (the translated file has it as {where}):]*  \n" + "  \n".join(
+        f"*{en}*" for _, en in texts)
+
+
+def ref_jiance() -> str:
+    out = [f"> Header: {HEADER_EN}  \n> Footer: Page *n* (a live PAGE field)"]
+    for kind, src, en in JIANCE:
+        if kind == "table":
+            out.append(markdown_table(en))
+        elif kind in ("h1", "h2", "h3"):
+            out.append("#" * int(kind[1]) + " " + en)
+        elif kind == "picture":
+            out.append(picture_reference(src, "its alt text and a caption under it"))
+        else:
+            out.append(en)
+    out.append(f"[^1]: {JIANCE_FOOTNOTE[1]}")
+    return "\n\n".join(out)
+
+
+def ref_anquan() -> str:
+    out = []
+    for number, spec in enumerate(ANQUAN, start=1):
+        out.append(f"## Slide {number}: {spec['title'][1]}")
+        if spec["layout"] == 0:  # title slide: subtitle lines
+            out.append("  \n".join(en for _, en in spec["body"]))
+        else:
+            out.append("\n".join(f"- {en}" for _, en in spec["body"]))
+        if callout := spec.get("callout"):
+            out.append(f"Text box (fixed size, bold red on yellow): **{callout[1]}**")
+        if picture := spec.get("picture"):
+            out.append(picture_reference(picture, "its alt text and the slide's notes"))
+        out.append("Speaker notes:\n\n" + "\n>\n".join(f"> {en}" for _, en in spec["notes"]))
+    return "\n\n".join(out)
+
+
+def ref_quexian() -> str:
+    rows = [[en for _, en in QX_HEAD]]
+    for no, place, desc, party, due, status in QX_ROWS:
+        text = desc[1] if desc else f"**{QX_IMPORTANT[1]}** {QX_RICH[1]}"
+        rows.append([str(no), place[1], text, party[1], f"{due.day} {due:%B %Y}", status[1]])
+    summary = [["Item", "Value", "Formula"]] + [
+        [label[1], shown, f"`{value}`" if isinstance(value, str) and value.startswith("=") else ""]
+        for (label, value, _, shown) in QX_SUMMARY[1:]
+    ]
+    return ("## Sheet “缺陷” (Defects)\n\n" + markdown_table(rows)
+            + "\n\n" + picture_reference(QX_SKETCH, "its alt text, after its own alt text 缺陷位置示意图 translated: "
+                                           "“Defect location sketch — Text in the picture: …”")
+            + "\n\n## Sheet “汇总” (Summary)\n\n" + markdown_table(summary)
+            + "\n\nThe formulas stay as they are; translated sheet names and status texts would break them "
+              "(`缺陷!F:F` compares against “已整改” / “未整改”).")
+
+
 def references() -> dict[str, str]:
     pdf_about = "Source: `samples/{0}.pdf` ({1}, {2}; `samples/{0}-scanned.pdf` is the same document as an image-only scan)."
     yanshou_notes = ("- These translations are exactly the units of `samples/demo/zh/memory.json`.\n"
@@ -625,6 +1294,14 @@ def references() -> dict[str, str]:
             "vertragsauszug.pdf", pdf_about.format("vertragsauszug", "German", "2 pages"),
             ref_pdf(VERTRAG, "Substation North · Project UW-2291 · Contract Extract · Confidential", "Page 1 of 2 / Page 2 of 2"),
             VERTRAG_NOTES),
+        "jiance-baogao.en.md": reference(
+            "jiance-baogao.docx", "Source: `samples/jiance-baogao.docx` (Chinese, Word).", ref_jiance(), JIANCE_NOTES),
+        "anquan-peixun.en.md": reference(
+            "anquan-peixun.pptx", "Source: `samples/anquan-peixun.pptx` (Chinese, PowerPoint, 4 slides).", ref_anquan(),
+            ANQUAN_NOTES),
+        "quexian-qingdan.en.md": reference(
+            "quexian-qingdan.xlsx", "Source: `samples/quexian-qingdan.xlsx` (Chinese, Excel, 2 sheets).", ref_quexian(),
+            QUEXIAN_NOTES),
     }
 
 
@@ -650,6 +1327,9 @@ def main() -> int:
         doc = build()
         write(f"{name}.pdf", pdf_bytes(doc))
         write(f"{name}-scanned.pdf", scanned(doc))
+    write("jiance-baogao.docx", build_jiance())
+    write("anquan-peixun.pptx", build_anquan())
+    write("quexian-qingdan.xlsx", build_quexian())
     write("demo/zh/termbase.csv", termbase_csv())
     write("demo/zh/memory.json", memory_json())
     for name, text in references().items():

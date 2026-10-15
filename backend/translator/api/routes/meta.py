@@ -9,21 +9,21 @@ from fastapi import APIRouter, HTTPException
 from ...config import TARGET_LANG
 from ...integrations import dictionary
 from ...languages import LANGUAGES
-from ...models.config import STEPS
-from ...models.llm import model_name
+from ...models import routing
 
 router = APIRouter()
 
 
 @router.get("/api/config")
 async def config() -> dict[str, Any]:
-    return {"models": {step: model_name(step) for step in STEPS}, "languages": LANGUAGES, "target_lang": TARGET_LANG,
-            "dictionary": dictionary.enabled()}
+    """Languages, and the models new documents use (choices: GET /api/settings)."""
+    return {"models": {step: c["model"] for step, c in routing.choices(None).items()}, "languages": LANGUAGES,
+            "target_lang": TARGET_LANG, "dictionary": dictionary.configured()}
 
 
 @router.get("/api/dictionary")
 async def dictionary_lookup(term: str, lang: str = "") -> dict[str, Any]:
     """Look a term up in the dictionary service (DICTIONARY_URL); `lang` is the source language (name or code)."""
-    if not dictionary.enabled():
+    if not dictionary.configured():
         raise HTTPException(404, "No dictionary is set up (DICTIONARY_URL in backend/.env).")
     return {"term": term, "entries": (await dictionary.lookup([term], lang or None)).get(term, [])}

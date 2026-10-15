@@ -114,8 +114,11 @@ async def delete_term(pid: str, term_id: int) -> dict[str, bool]:
 # ---- translation memory ------------------------------------------------------ #
 
 
+# Plain `def`: FastAPI runs these in its thread pool, so the SQLite work doesn't block the event loop.
+
+
 @router.get("/{pid}/tm")
-async def concordance(pid: str, q: str = "", limit: int = 50) -> dict[str, Any]:
+def concordance(pid: str, q: str = "", limit: int = 50) -> dict[str, Any]:
     """Concordance search (source or target contains `q`); without `q`, the most recent units."""
     project = _project(pid)
     return {"total": project["tm_units"], "units": projects.get_store().concordance(pid, q, min(limit, 200))}
@@ -124,19 +127,22 @@ async def concordance(pid: str, q: str = "", limit: int = 50) -> dict[str, Any]:
 class UnitIn(BaseModel):
     source: str
     target: str
-    origin: str = "import"
+    prev_source: str = ""  # the sentence before it, for 101% (context) matches
+    ref: str = "import"  # where it comes from
 
 
 @router.post("/{pid}/tm")
-async def add_units(pid: str, units: list[UnitIn]) -> dict[str, int]:
-    """Add translation-memory units (a unit with the same source is updated)."""
+def add_units(pid: str, units: list[UnitIn]) -> dict[str, int]:
+    """Add translation-memory units. A unit with the same source after the same previous sentence is updated;
+    imported units never replace wording a person confirmed."""
     _project(pid)
-    added, updated = projects.get_store().add_units(pid, [u.model_dump() for u in units if u.source.strip() and u.target.strip()])
-    return {"added": added, "updated": updated}
+    rows = [{**u.model_dump(), "approval": "import"} for u in units if u.source.strip() and u.target.strip()]
+    statuses = projects.get_store().add_units(pid, rows)
+    return {k: statuses.count(k) for k in ("added", "updated", "unchanged", "kept")}
 
 
 @router.delete("/{pid}/tm/{unit_id}")
-async def delete_unit(pid: str, unit_id: int) -> dict[str, bool]:
+def delete_unit(pid: str, unit_id: int) -> dict[str, bool]:
     _project(pid)
     projects.get_store().delete_unit(pid, unit_id)
     return {"ok": True}

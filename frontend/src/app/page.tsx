@@ -1,15 +1,24 @@
 "use client";
 
-import { PanelRightOpen } from "lucide-react";
+import { Loader2, WifiOff } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useRef, useState } from "react";
+import { toast } from "sonner";
 import { ArtifactPanel, type Tab } from "@/components/document/ArtifactPanel";
 import { Chat } from "@/components/chat/Chat";
 import { useProposalPick } from "@/components/chat/proposalPick";
 import { ProjectCreate, ProjectView } from "@/components/projects/ProjectView";
-import { Sidebar } from "@/components/shell/Sidebar";
+import { ProjectsOverview } from "@/components/projects/ProjectsOverview";
+import { Modal } from "@/components/settings/Modal";
+import { SettingsDialog } from "@/components/settings/SettingsDialog";
+import { CommandPalette } from "@/components/shell/CommandPalette";
+import { docTitle, Sidebar } from "@/components/shell/Sidebar";
+import { TopBar } from "@/components/shell/TopBar";
 import { UploadPanel } from "@/components/shell/UploadPanel";
-import { api, projectsApi, subscribe } from "@/lib/api";
-import type { Answer, Progress, Project, QaIssue, SessionDetail, SessionSummary, StreamEvent, TimelineItem } from "@/lib/types";
+import { Button } from "@/components/ui/button";
+import { ease } from "@/lib/motion";
+import { api, projectsApi, subscribe, type SettingsUpdate } from "@/lib/api";
+import { OFFICE_FORMATS, type Answer, type Progress, type Project, type QaIssue, type SessionDetail, type SessionSummary, type StreamEvent, type TimelineItem } from "@/lib/types";
 
 // Source languages (everything is translated into English).
 const FALLBACK_LANGUAGES = ["German", "Chinese (Simplified)", "French", "Spanish", "Italian", "Portuguese", "Japanese", "Korean", "Hindi", "Arabic"];
@@ -36,7 +45,7 @@ export default function Home() {
   const [sessions, setSessions] = useState<SessionSummary[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [projects, setProjects] = useState<Project[]>([]);
-  const [projectView, setProjectView] = useState<string | null>(null); // a project id, or "new"
+  const [projectView, setProjectView] = useState<string | null>(null); // a project id, "new", or "all" (the Projects page)
   const [uploadProject, setUploadProject] = useState<string | null>(null); // preselected on the upload page
   const [detail, setDetail] = useState<SessionDetail | null>(null);
   const [timeline, setTimeline] = useState<TimelineItem[]>([]);
@@ -68,6 +77,12 @@ export default function Home() {
     }
   });
   const mainRef = useRef<HTMLElement>(null);
+  const [settingsOpen, setSettingsOpen] = useState(false);
+  const [paletteOpen, setPaletteOpen] = useState(false);
+  const [deleting, setDeleting] = useState<SessionSummary | null>(null); // asking before a document is deleted
+  const [deleteBusy, setDeleteBusy] = useState(false);
+  // Show the Reading view once per run, when translation starts; a tab picked after that is left alone.
+  const translatingShown = useRef(false);
 
   const unsubRef = useRef<(() => void) | null>(null);
   const refetchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -116,6 +131,7 @@ export default function Home() {
     (id: string) => {
       unsubRef.current?.();
       setRunning(true);
+      translatingShown.current = false;
       unsubRef.current = subscribe(id, (ev: StreamEvent) => {
         if (activeRef.current !== id) return;
         switch (ev.type) {
@@ -128,6 +144,11 @@ export default function Home() {
             if (ev.status) {
               const status = ev.status;
               setDetail((d) => (d ? { ...d, summary: { ...d.summary, status } } : d));
+              if (status === "translating" && !translatingShown.current) {
+                translatingShown.current = true;
+                setTab("translation");
+                setArtifactOpen(true);
+              }
             }
             break;
           case "state":
@@ -167,6 +188,7 @@ export default function Home() {
       if (!id) return;
       try {
         const d = await loadDetail(id);
+        if (d?.document.format && OFFICE_FORMATS.includes(d.document.format)) setTab("layout"); // the file itself, side by side
         if (d?.summary.running) attach(id);
       } catch (e) {
         setBackendError(String(e));
@@ -192,8 +214,8 @@ export default function Home() {
     return () => clearInterval(t);
   }, [sessions, refreshSessions]);
 
-  const onUpload = async (file: File, source: string, projectId: string | null) => {
-    const s = await api.createSession(file, source, projectId);
+  const onUpload = async (file: File, source: string, projectId: string | null, overrides?: SettingsUpdate) => {
+    const s = await api.createSession(file, source, projectId, overrides);
     refreshSessions();
     refreshProjects();
     await select(s.id);
@@ -261,10 +283,10 @@ export default function Home() {
     }
   };
 
-  const onAcceptProposal = async (changes: string[] | null, choices: Record<string, number> | null) => {
+  const onAcceptProposal = async (changes: string[] | null, choices: Record<string, number> | null, confirm = false) => {
     if (!activeId) return;
     try {
-      await api.acceptProposal(activeId, changes, choices);
+      await api.acceptProposal(activeId, changes, choices, confirm);
     } catch (e) {
       setTimeline((t) => [...t, { kind: "error", id: `err-${Date.now()}`, text: String(e), ts: Date.now() / 1000 }]);
     }
@@ -282,12 +304,23 @@ export default function Home() {
     await loadDetail(activeId);
   };
 
-  const onDelete = async (id: string) => {
-    if (!window.confirm("Delete this document and its history?")) return;
-    await api.deleteSession(id);
-    if (id === activeId) select(null);
-    refreshSessions();
-    refreshProjects();
+  // Deleting asks first (in a dialog, not the browser's confirm).
+  const onDelete = (id: string) => setDeleting(sessions.find((s) => s.id === id) ?? null);
+  const confirmDelete = async () => {
+    if (!deleting) return;
+    setDeleteBusy(true);
+    try {
+      await api.deleteSession(deleting.id);
+      if (deleting.id === activeId) select(null);
+      toast.success("Document deleted", { description: docTitle(deleting) });
+      setDeleting(null);
+    } catch (e) {
+      toast.error("Couldn't delete it", { description: String(e).replace(/^Error: /, "") });
+    } finally {
+      setDeleteBusy(false);
+      refreshSessions();
+      refreshProjects();
+    }
   };
 
   const openProject = (id: string | null) => {
@@ -309,6 +342,10 @@ export default function Home() {
   };
 
   const summary = detail?.summary ?? sessions.find((s) => s.id === activeId);
+  const docName = summary ? summary.title || summary.filename : null;
+  useEffect(() => {
+    document.title = activeId ? (docName ?? "Translate") : "New translation";
+  }, [activeId, docName]);
   const pick = useProposalPick(detail?.document.proposal ?? null);
 
   /** Ask the editor what a source segment says (an answer for someone who doesn't read the source language). */
@@ -353,20 +390,57 @@ export default function Home() {
         sessions={sessions}
         projects={projects}
         activeId={activeId}
-        activeProject={activeId ? null : projectView}
+        projectsActive={!activeId && !!projectView}
         onSelect={(id) => select(id)}
-        onSelectProject={(id) => openProject(id)}
-        onNewProject={() => openProject("new")}
+        onOpenProjects={() => openProject("all")}
         onNew={() => newDocument(null)}
         onDelete={onDelete}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenPalette={() => setPaletteOpen(true)}
       />
-      <main ref={mainRef} className="flex min-w-0 flex-1">
-        {backendError && !activeId && (
-          <div className="absolute top-3 left-1/2 z-10 -translate-x-1/2 rounded-lg bg-del px-3 py-1.5 text-xs text-del-fg">
-            Backend unreachable: {backendError}
+      <SettingsDialog open={settingsOpen} onClose={() => setSettingsOpen(false)} />
+      <CommandPalette
+        open={paletteOpen}
+        onOpenChange={setPaletteOpen}
+        sessions={sessions}
+        projects={projects}
+        onSelectDocument={(id) => select(id)}
+        onSelectProject={(id) => openProject(id)}
+        onNew={() => newDocument(null)}
+        onNewProject={() => openProject("new")}
+        onOpenSettings={() => setSettingsOpen(true)}
+      />
+      <Modal open={!!deleting} onClose={() => !deleteBusy && setDeleting(null)} title="Delete this document?" width={460}>
+        <p className="text-sm">{deleting ? docTitle(deleting) : ""}</p>
+        <p className="mt-1 text-sm text-muted-foreground">Its translation, versions and chat history are deleted. This can&apos;t be undone.</p>
+        <div className="mt-5 flex justify-end gap-2">
+          <Button variant="outline" onClick={() => setDeleting(null)} disabled={deleteBusy}>
+            Cancel
+          </Button>
+          <Button variant="destructive" onClick={confirmDelete} disabled={deleteBusy}>
+            {deleteBusy && <Loader2 className="animate-spin" />} Delete
+          </Button>
+        </div>
+      </Modal>
+      <main ref={mainRef} className="relative flex min-w-0 flex-1">
+        <AnimatePresence>
+          {backendError && !activeId && (
+            <motion.div
+              initial={{ opacity: 0, y: -8 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -8 }}
+              className="absolute top-3 left-1/2 z-10 flex -translate-x-1/2 items-center gap-2 rounded-full border border-del-fg/20 bg-del px-3 py-1.5 text-xs text-del-fg shadow-sm"
+              role="alert"
+            >
+              <WifiOff size={13} /> The backend is unreachable: {backendError.replace(/^(Type)?Error: /, "")}
+            </motion.div>
+          )}
+        </AnimatePresence>
+        {!activeId && projectView === "all" ? (
+          <div className="min-w-0 flex-1">
+            <ProjectsOverview projects={projects} sessions={sessions} onOpenProject={(id) => openProject(id)} onNewProject={() => openProject("new")} />
           </div>
-        )}
-        {!activeId && projectView === "new" ? (
+        ) : !activeId && projectView === "new" ? (
           <div className="flex-1">
             <ProjectCreate
               languages={languages}
@@ -388,7 +462,7 @@ export default function Home() {
               onDeleted={() => {
                 refreshProjects();
                 refreshSessions();
-                openProject(null);
+                openProject("all");
               }}
             />
           </div>
@@ -403,16 +477,26 @@ export default function Home() {
             />
           </div>
         ) : (
-          <>
+          <div className="flex min-w-0 flex-1 flex-col">
+            {summary && (
+              <TopBar
+                summary={summary}
+                settings={detail?.document.settings}
+                busy={running || !!summary.running}
+                onSettingsSaved={() => activeId && loadDetail(activeId)}
+                panelOpen={artifactOpen}
+                onTogglePanel={
+                  detail
+                    ? () => {
+                        if (artifactOpen) setWide(false); // hiding the document brings the chat back
+                        setArtifactOpen(!artifactOpen);
+                      }
+                    : null
+                }
+              />
+            )}
+            <div className="flex min-h-0 flex-1">
             <div className={`relative min-w-[340px] flex-1 ${wide && artifactOpen ? "hidden" : ""}`}>
-              {!artifactOpen && (
-                <button
-                  onClick={() => setArtifactOpen(true)}
-                  className="absolute top-3 right-3 z-10 flex items-center gap-1.5 rounded-lg border border-border bg-panel px-2.5 py-1.5 text-xs shadow-sm hover:border-accent"
-                >
-                  <PanelRightOpen size={14} /> Show translation
-                </button>
-              )}
               <Chat
                 sessionId={activeId}
                 proposal={detail?.document.proposal ?? null}
@@ -460,19 +544,34 @@ export default function Home() {
                   await api.runTask(activeId, kind);
                   attach(activeId);
                 }}
+                settings={detail?.document.settings ?? null}
+                onSettingsChanged={() => activeId && loadDetail(activeId).catch(() => {})}
               />
             </div>
             {artifactOpen && summary && detail && !wide && (
               <div
                 onPointerDown={startResize}
-                className="w-1 shrink-0 cursor-col-resize bg-border/60 transition-colors hover:bg-accent/50"
-                title="Drag to resize"
-              />
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Drag to resize the document panel"
+                className="group relative w-px shrink-0 cursor-col-resize bg-border"
+              >
+                {/* a wider grab area, and a highlight while hovering */}
+                <span className="absolute inset-y-0 -right-1.5 -left-1.5 z-10" />
+                <span className="absolute inset-y-0 -left-px w-[3px] bg-primary/40 opacity-0 transition-opacity group-hover:opacity-100" />
+              </div>
             )}
+            <AnimatePresence initial={false}>
             {artifactOpen && summary && detail && (
-              <div
+              <motion.div
+                key="panel"
+                initial={{ opacity: 0, x: 24 }}
+                animate={{ opacity: 1, x: 0 }}
+                exit={{ opacity: 0, x: 24 }}
+                transition={{ duration: 0.2, ease }}
                 className={wide ? "min-w-0 flex-1" : panelWidth ? "min-w-[420px] shrink-0" : "w-[60%] max-w-[1100px] min-w-[420px]"}
-                style={!wide && panelWidth ? { width: panelWidth } : undefined}
+                // The remembered width never squeezes the chat below its minimum (e.g. after the sidebar expands).
+                style={!wide && panelWidth ? { width: `min(${panelWidth}px, calc(100% - 344px))` } : undefined}
               >
                 <ArtifactPanel
                   key={summary.id} // per-document view state (picked version, compare range) starts fresh
@@ -489,7 +588,12 @@ export default function Home() {
                     setDraft(text);
                     document.querySelector<HTMLTextAreaElement>("textarea")?.focus();
                   }}
+                  onSend={(text) => {
+                    setWide(false);
+                    onSend(text);
+                  }}
                   editable={!running && !summary.running && ["ready", "error"].includes(summary.status)}
+                  canComment={!running && !summary.running}
                   wide={wide}
                   onToggleWide={() => setWide((w) => !w)}
                   onSegment={(seg, humanDirty) =>
@@ -526,9 +630,11 @@ export default function Home() {
                     attach(activeId);
                   }}
                 />
-              </div>
+              </motion.div>
             )}
-          </>
+            </AnimatePresence>
+            </div>
+          </div>
         )}
       </main>
     </div>

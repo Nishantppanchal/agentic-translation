@@ -150,7 +150,7 @@ def test_lqa_run_scores_the_document_and_updates_qe(monkeypatch):
 
 @pytest.mark.structured
 def test_lqa_run_with_json_output(monkeypatch):
-    monkeypatch.setattr(structured, "enabled", lambda role: True)
+    monkeypatch.setattr(structured, "enabled", lambda role, state=None: True)
     schemas = []
 
     def fake(callback_context, llm_request):

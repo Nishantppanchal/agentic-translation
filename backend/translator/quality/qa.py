@@ -325,6 +325,10 @@ def _terminology(seg: dict, ctx: Context):
 
 _HEADING = re.compile(r"^\s{0,3}(#{1,6})\s")
 _LIST_ITEM = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s", re.M)
+_OBJECT_MARK = re.compile(r"\[\^(\d+)\]")
+_LINK = re.compile(r"(?<!\\)\[[^\]^][^\]]*\]\([^)]*\)")
+
+
 @check("markup", "Markup", "markup")
 def _markup(seg: dict, ctx: Context):
     source, target = seg["source"], seg.get("target") or ""
@@ -343,6 +347,20 @@ def _markup(seg: dict, ctx: Context):
         yield "warning", "Number of list items differs from the source.", "list"
     if source.count("**") != target.count("**"):
         yield "warning", "Bold markup (**) differs from the source.", "bold"
+    # Word / PowerPoint: [^n] stands for a footnote mark, a picture or a field in the sentence (office/markup.py).
+    s_obj, t_obj = _OBJECT_MARK.findall(source), _OBJECT_MARK.findall(target)
+    if sorted(s_obj) != sorted(t_obj):
+        missing = [f"[^{n}]" for n in dict.fromkeys(s_obj) if t_obj.count(n) < s_obj.count(n)]
+        extra = [f"[^{n}]" for n in dict.fromkeys(t_obj) if t_obj.count(n) > s_obj.count(n)]
+        problems = []
+        if missing:
+            problems.append("missing " + " ".join(missing))
+        if extra:
+            problems.append("extra " + " ".join(extra))
+        yield "error", ("Keep each marker of the source exactly once (footnote marks, pictures, fields): "
+                        + "; ".join(problems) + "."), "objects"
+    if len(_LINK.findall(source)) != len(_LINK.findall(target)):
+        yield "warning", "Number of links ([text](url)) differs from the source.", "links"
 
 
 _END_STRIP = re.compile(r"[\s*_`\"'’”»)\]）」』|]+$")

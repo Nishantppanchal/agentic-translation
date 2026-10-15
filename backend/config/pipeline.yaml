@@ -1,18 +1,29 @@
 # Which model (an id from models.yaml) does each step.
-# A step can also be a mapping: {model: <id>, extra_body: {...}, temperature: 0.1} — extra_body is added to the
-# model's own, e.g. {thinking_token_budget: 2000} to cap a reasoning model's thinking on vLLM (the server needs
-# --reasoning-parser; one without it gets the call again uncapped).
+# A step can also be a mapping: {model: <id>, effort: low, extra_body: {...}, temperature: 0.1}
+# - effort: instant | low | medium | high, for a model with `thinking: true` (sent as reasoning_effort; see
+#   models.example.yaml). Not set: the model's own `effort` in models.yaml, else medium. A thinking model always
+#   gets a level, and the app shows which one "Default" stands for.
+# - extra_body is added to the model's own, e.g. {thinking_token_budget: 2000} to cap a reasoning model's thinking
+#   on vLLM (the server needs --reasoning-parser; one without it gets the call again uncapped).
+# These are the defaults: people can choose other models and levels in the app (Settings → Models, or a
+# document's own settings, or the chat box for the chat).
 
-default: claude-haiku        # every step not listed below
+default: {model: claude-haiku, effort: low}   # every step not listed below
 
 steps:
-  ocr: qwen-flash            # reads each page image (and the text inside pictures, and pages read again in the chat)
-  ocr_check: qwen-flash      # compares the reading with the page image
-  # analyse:                 # brief, key terms and the questions before translating
+  ocr: {model: qwen-flash, effort: instant}   # reads each page image (and the text inside pictures, and pages read again in the chat)
+  ocr_check: {model: qwen-flash, effort: low} # compares the reading with the page image
+  # analyse:                 # brief, key terms, the questions, and the document's title and summary
   # translate:
-  review: qwen-flash         # a second model reviewing the translation
+  review: {model: qwen-flash, effort: low}    # a second model reviewing the translation
   # refine:                  # fixes what the review found
   # polish:                  # consistency fixes before Ready (and the consistency task)
   # rewrite:                 # tasks: rewrite with an instruction, alternatives
   # editor:                  # the chat
-  lqa: qwen-flash            # independent quality scoring (MQM)
+  lqa: {model: qwen-flash, effort: low}       # independent quality scoring (MQM)
+  # The AI assist features (each its own model and level; Settings → Models can change them too):
+  suggest: {model: claude-haiku, effort: instant}   # the suggested follow-up prompts in the chat
+  complete: {model: claude-haiku, effort: instant}  # Tab completions in the chat box (keep it fast)
+  notes: {model: claude-haiku, effort: low}         # the notes for the client
+  # The others run on the steps above: the document's title and summary on `analyse` (the same call), Explain and
+  # Ask on a selection on `editor` (the chat), and Rewrite / Other options on `rewrite`.

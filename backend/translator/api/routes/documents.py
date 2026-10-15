@@ -16,12 +16,13 @@ from google.adk.sessions import Session
 from google.genai import types
 from sse_starlette.sse import EventSourceResponse
 
-from ... import exports, projects
+from ... import exports, office, projects, references
 from ...agents.steps.read import source_format
 from ...config import TARGET_LANG
 from ...document import edits
 from ...document import state as st
 from ...document.pages import SUPPORTED_EXTS, guess_mime, load_pages
+from ...models import routing
 from ..downloads import content_disposition
 from ..services import (
     APP_NAME,
@@ -39,6 +40,7 @@ from ..services import (
     summary,
 )
 from ..timeline import history
+from . import settings as settings_routes
 
 router = APIRouter()
 
@@ -57,8 +59,10 @@ async def list_sessions() -> list[dict[str, Any]]:
     return sorted(out, key=lambda x: x["updated_at"], reverse=True)
 
 
-async def _create_document(filename: str, data: bytes, source_lang: str, pages: int, project: dict | None) -> Session:
-    """One document = one session, with its own ingest run."""
+async def _create_document(filename: str, data: bytes, source_lang: str, pages: int, project: dict | None,
+                           models: dict | None = None, dictionary_on: bool | None = None) -> Session:
+    """One document = one session, with its own ingest run. It keeps the models (and dictionary choice) it was
+    uploaded with: the defaults then, plus what the upload changed."""
     source_artifact = f"source{Path(filename).suffix.lower()}"
     session = await session_service.create_session(
         app_name=APP_NAME,
@@ -79,6 +83,8 @@ async def _create_document(filename: str, data: bytes, source_lang: str, pages: 
             "doc:versions": [],
             "doc:ocr_report": [],
             "doc:review_report": [],
+            routing.DOC_MODELS: routing.snapshot(models),
+            references.DOC_DICTIONARY: references.dictionary_on(None) if dictionary_on is None else dictionary_on,
             **({"doc:project_id": project["id"]} if project else {}),
         },
     )
@@ -100,9 +106,17 @@ async def create_session(
     file: UploadFile = File(...),
     source_lang: str = Form("auto-detect"),
     project_id: str = Form(""),
+    models: str = Form(""),  # JSON {step: {model, effort}}: this document's own choices (the rest: Settings)
+    dictionary: str = Form(""),  # "true" / "false": use the dictionary for this document (blank: Settings)
 ) -> dict[str, Any]:
     """Upload a document to translate into English."""
     filename = Path(file.filename or "document").name
+    try:
+        chosen = settings_routes.check_models(json.loads(models)) if models.strip() else None
+    except ValueError as exc:
+        raise HTTPException(422, f"models: {exc}") from exc
+    dictionary_on = {"true": True, "false": False}.get(dictionary.strip().lower())
+    settings_routes.check_dictionary(dictionary_on)
     project = projects.get_store().project(project_id) if project_id else None
     if project_id and not project:
         raise HTTPException(404, "Project not found")
@@ -111,21 +125,29 @@ async def create_session(
     if source_lang == TARGET_LANG:
         raise HTTPException(400, f"The document is already in {TARGET_LANG}.")
     ext = Path(filename).suffix.lower()
-    if ext not in SUPPORTED_EXTS:
-        raise HTTPException(400, f"Unsupported file type {ext or '?'}. Use a PDF, an image (PNG, JPG, WebP), TXT or MD.")
+    if reason := office.unsupported(filename):
+        raise HTTPException(400, reason)
+    fmt = office.detect(filename)
+    if ext not in SUPPORTED_EXTS and not fmt:
+        raise HTTPException(400, f"Unsupported file type {ext or '?'}. Use a PDF, an image (PNG, JPG, WebP), a Word, "
+                                 "PowerPoint or Excel file (.docx, .pptx, .xlsx), TXT or MD.")
     data = await file.read()
     if not data:
         raise HTTPException(400, "Empty file")
+    pages = 1
     try:
-        if ext == ".pdf":
+        if fmt:
+            await asyncio.to_thread(office.check, data, fmt)
+            pages = 0  # set when the text is read
+        elif ext == ".pdf":
             with pymupdf.open(stream=data, filetype="pdf") as doc:
                 pages = doc.page_count
-        else:
-            pages = 1
+    except ValueError as exc:
+        raise HTTPException(400, str(exc)) from exc
     except Exception as exc:
         raise HTTPException(400, f"Could not read file: {exc}") from exc
 
-    session = await _create_document(filename, data, source_lang, pages, project)
+    session = await _create_document(filename, data, source_lang, pages, project, chosen, dictionary_on)
     return summary(await load_session(session.id))
 
 
@@ -163,7 +185,15 @@ async def retry_ingest(session_id: str) -> dict[str, bool]:
             "doc:versions": [],
             "doc:termbase": {},
             "doc:key_terms": [],
+            "doc:tm_stats": None,
+            "doc:tm_refs": {},
+            "doc:office": None,
+            "doc:page_labels": None,
+            "doc:unit": None,
             "doc:brief": "",
+            "doc:title": None,
+            "doc:abstract": None,
+            "doc:client_notes": None,
             "doc:proposal": None,
             "doc:ocr_report": [],
             "doc:review_report": [],
@@ -231,8 +261,7 @@ async def figure(session_id: str, name: str) -> Response:
 
 @router.get("/api/sessions/{session_id}/export/formats")
 async def export_formats(session_id: str) -> list[dict[str, Any]]:
-    await load_session(session_id)
-    return exports.available()
+    return exports.available(await load_session(session_id))
 
 
 @router.get("/api/sessions/{session_id}/export", response_model=None)

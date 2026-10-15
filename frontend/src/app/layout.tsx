@@ -1,5 +1,8 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { PrefsSync } from "@/components/shell/PrefsSync";
+import { Providers } from "@/components/shell/Providers";
+import { PREFS_SCRIPT } from "@/lib/prefsScript";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -13,14 +16,21 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "Agentic Translator",
+  title: "Translate",
   description: "Upload a document, get a reviewed translation, refine it by chatting.",
 };
 
 export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
-    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}>
-      <body className="h-full font-sans">{children}</body>
+    // suppressHydrationWarning: the inline script sets data-theme / data-sidebar before React hydrates.
+    <html lang="en" className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`} suppressHydrationWarning>
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: PREFS_SCRIPT }} />
+      </head>
+      <body className="h-full font-sans">
+        <PrefsSync />
+        <Providers>{children}</Providers>
+      </body>
     </html>
   );
 }

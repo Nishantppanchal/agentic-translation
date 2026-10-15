@@ -7,6 +7,7 @@ simple `<tag attr="...">...</tag>` formats far more reliably than strict JSON.
 from __future__ import annotations
 
 import html
+import json
 import re
 
 _THINK = re.compile(r"<think(?:ing)?>.*?</think(?:ing)?>", re.S | re.I)
@@ -152,6 +153,24 @@ def is_none_reply(text: str) -> bool:
     return not t or t in {"<none/>", "<none />", "none", "(none)", "no text"}
 
 
+def parse_figure_reply(text: str) -> tuple[str, str]:
+    """(kind, text) from the figure check: kind "picture" or "text". A reply that doesn't say (a model that ignores
+    the format, or JSON) is taken as a picture with the reply as its text — the safe reading: nothing is dropped."""
+    text = clean(text)
+    kind = (tag_body(text, "kind") or "").strip().lower()
+    body = tag_body(text, "text")
+    if not kind and text.startswith("{"):
+        try:
+            obj = json.loads(text)
+            kind, body = str(obj.get("kind") or "").lower(), str(obj.get("text") or "")
+        except (ValueError, AttributeError):
+            pass
+    if body is None:
+        body = "" if kind else text
+    body = "" if is_none_reply(body) else clean(body)
+    return ("text" if kind.startswith("text") else "picture"), body
+
+
 def parse_ocr_check(text: str) -> tuple[bool, list[str], str | None]:
     """Returns (ok, issues, corrected_markdown_or_None)."""
     text = clean(text)
@@ -163,3 +182,8 @@ def parse_ocr_check(text: str) -> tuple[bool, list[str], str | None]:
         corrected = clean(corrected)
     ok = verdict.startswith("ok") or (not verdict and corrected is None)
     return ok and not corrected, issues, corrected or None
+
+
+def parse_suggestions(text: str) -> list[dict]:
+    """`<suggestion label="...">the request</suggestion>` → [{"label", "prompt"}] (AI assist)."""
+    return [{"label": attrs.get("label", "").strip(), "prompt": clean(body)} for attrs, body in _tags(clean(text), "suggestion")]

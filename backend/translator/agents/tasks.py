@@ -73,7 +73,7 @@ async def rewrite(ctx: Context, node_input: Any):
         yield say("Nothing to rewrite: the selected segments are locked, empty or not translatable.")
         return
     source_lang, target_lang = doc_langs(ctx.state)
-    use_json = structured.enabled("rewrite")
+    use_json = structured.enabled("rewrite", ctx.state)
     batches = page_batches(segments, settings.page_max_chars)
     what = f"{n} alternative translations" if n > 1 else "a revised translation"
     yield say(f"Rewriting {len(segments)} segment{'s' if len(segments) != 1 else ''}: {instruction}"
@@ -157,7 +157,7 @@ async def consistency_fixes(ctx: Context) -> tuple[dict[str, str], dict[str, int
     if not same and not term_groups:
         return {}, counts
     source_lang, target_lang = doc_langs(ctx.state)
-    use_json = structured.enabled("polish")
+    use_json = structured.enabled("polish", ctx.state)
     fmt = prompts.REFINE_FORMAT_JSON if use_json else prompts.REFINE_FORMAT_TAGS
 
     def parse(out: str) -> dict[str, str]:

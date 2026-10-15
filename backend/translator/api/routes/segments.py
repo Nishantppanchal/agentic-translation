@@ -9,7 +9,7 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from ... import projects
-from ...document import edits, find_replace
+from ...document import edits, find_replace, memory
 from ...document import state as st
 from ...quality import qa
 from .. import usage
@@ -62,15 +62,9 @@ class ConfirmIn(BaseModel):
 async def segment_tm(session_id: str, segment_id: str) -> dict[str, Any]:
     """Top translation-memory matches for one segment (101 = same source and same previous segment)."""
     session = await load_session(session_id)
-    pid = projects.project_id(session.state)
-    order = [x for x in st.get_segments(session.state) if x.get("translatable", True)]
-    i = next((i for i, x in enumerate(order) if x["id"] == segment_id), None)
-    if i is None:
+    if st.get_segment(session.state, segment_id) is None:
         raise HTTPException(404, f"No segment {segment_id}")
-    if not pid:
-        return {"matches": []}
-    prev = order[i - 1]["source"] if i else ""
-    return {"matches": await asyncio.to_thread(projects.get_store().lookup, pid, order[i]["source"], prev, 5)}
+    return {"matches": await asyncio.to_thread(memory.lookup, session.state, segment_id, 5)}
 
 
 class CommentIn(BaseModel):
@@ -191,4 +185,8 @@ async def replace_apply(session_id: str, body: ReplaceIn) -> dict[str, Any]:
 @router.get("/api/sessions/{session_id}/usage")
 async def get_usage(session_id: str) -> dict[str, Any]:
     session = await load_session(session_id)
-    return await asyncio.to_thread(usage.summarize, session.events)
+
+    def summary() -> dict[str, Any]:  # the pipeline's calls (session events) and the assist's (projects.db)
+        return usage.summarize(session.events, projects.get_store().assist_usage(session.id))
+
+    return await asyncio.to_thread(summary)

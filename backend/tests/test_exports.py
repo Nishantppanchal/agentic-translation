@@ -66,7 +66,7 @@ def test_export_build_uses_the_version_snapshot():
             "doc:versions": [{"version": 1, "note": "Draft", "changed": ["p1.1"], "artifact_version": 0}]})
         await artifacts.save_artifact(app_name="t", user_id="u", session_id=s.id, filename=st.TRANSLATION_ARTIFACT,
                                       artifact=types.Part(text=json.dumps({"p1.1": "The plant is accepted and released."})))
-        assert [f["id"] for f in exports.available()] == ["docx", "md"]
+        assert [f["id"] for f in exports.available()] == ["docx", "md", "notes"]  # notes: once written (test_assist)
 
         content, media, name = await exports.build(artifacts, s, "docx", 1)
         assert media.endswith("wordprocessingml.document") and name == "a.English-v1.docx"

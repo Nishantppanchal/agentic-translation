@@ -71,12 +71,15 @@ def test_the_vision_engine_keeps_pictures_and_reads_their_text(monkeypatch):
     def vision(callback_context, llm_request):
         text = _prompt(llm_request)
         seen.append(text)
-        if "cropped from a document" in text:
-            return _reply("Schaltschrank")  # the text inside the picture
         assert "outlined in red" in text  # the picture is marked on the page
         return _reply(f"{INTRO}\n\n[[FIGURE 1]]\n\n{OUTRO}")
 
+    def look(callback_context, llm_request):
+        assert "cropped from a document" in _prompt(llm_request)
+        return _reply("<kind>picture</kind>\n<text>\nSchaltschrank\n</text>")  # a picture, with this text inside
+
     monkeypatch.setattr(workers.ocr_reader, "before_model_callback", vision)
+    monkeypatch.setattr(workers.figure_reader, "before_model_callback", look)
     monkeypatch.setattr(workers.ocr_checker, "before_model_callback", lambda *_: _reply("<verdict>ok</verdict>"))
 
     async def main():

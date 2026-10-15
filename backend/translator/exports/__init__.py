@@ -1,7 +1,10 @@
-"""Downloads of a document version: a Word document, or Markdown (zipped with its figures when it has any)."""
+"""Downloads of a document version: a Word document, or Markdown (zipped with its figures when it has any). A Word,
+PowerPoint or Excel upload is downloaded as itself, with the translation written in (office/). The notes for the
+client (written on request, agents/assist.py) download as Markdown."""
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import zipfile
@@ -10,14 +13,15 @@ from pathlib import Path
 from google.adk.artifacts import BaseArtifactService
 from google.adk.sessions import Session
 
+from .. import office
 from ..document import state as st
 from ..document.pages import assemble_markdown
 from ..languages import lang_code
 from .docx import to_docx
 
 FORMATS = [
-    {"id": "docx", "label": "Word document", "ext": "docx"},
-    {"id": "md", "label": "Markdown (+ figures)", "ext": "md"},
+    {"id": "docx", "label": "Word document", "ext": "docx", "group": "Document"},
+    {"id": "md", "label": "Markdown (+ figures)", "ext": "md", "group": "Text"},
 ]
 MEDIA = {
     "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
@@ -36,8 +40,34 @@ async def _artifact(artifact_service: BaseArtifactService, session: Session, nam
     )
 
 
-def available() -> list[dict]:
-    return [{**f, "available": True} for f in FORMATS]
+NOTES = {"id": "notes", "label": "Notes for the client (.md)", "ext": "md", "group": "Notes"}
+
+
+def available(session: Session | None = None) -> list[dict]:
+    filename = session.state.get("doc:filename", "") if session is not None else ""
+    notes = {**NOTES, "available": bool(session is not None and (session.state.get("doc:client_notes") or {}).get("text"))}
+    if fmt := office.detect(filename):
+        return [{"id": "office", "label": f"Translated {office.LABEL[fmt]} (original layout)", "ext": Path(filename).suffix.lstrip("."),
+                 "group": "Translated file", "available": True},
+                {"id": "md", "label": "Markdown (text only)", "ext": "md", "group": "Text", "available": True}, notes]
+    return [*({**f, "available": True} for f in FORMATS), notes]
+
+
+async def office_file(artifact_service: BaseArtifactService, session: Session, segments: list[dict], field: str = "target",
+                      marks: bool = False) -> tuple[bytes, dict]:
+    """A Word / PowerPoint / Excel upload with the translation written in (`field="source"`: the original)."""
+    s = session.state
+    part = await _artifact(artifact_service, session, s["doc:source_artifact"])
+    if part is None or part.inline_data is None:
+        raise ExportError("The uploaded file is missing.")
+    data = part.inline_data.data
+    fmt = office.detect(s.get("doc:filename", ""))
+    if field == "source":
+        if not marks:
+            return data, {}
+        segments = [{**x, "target": None} for x in segments]
+    content, report = await asyncio.to_thread(office.write, data, fmt, segments, marks=marks)
+    return content, report.as_dict()
 
 
 def latest_version(session: Session) -> int | None:
@@ -76,8 +106,19 @@ async def build(artifact_service: BaseArtifactService, session: Session, fmt: st
     target_lang = s.get("doc:target_lang", "")
     lang = lang_code(target_lang) if field == "target" else lang_code(s.get("doc:detected_lang") or s.get("doc:source_lang"))
     label = f"{stem}.{target_lang if field == 'target' else 'source'}{f'-v{version}' if version else ''}"
+    if fmt == "notes":
+        notes = (s.get("doc:client_notes") or {}).get("text")
+        if not notes:
+            raise ExportError("There are no notes for the client yet: write them first (Notes for the client).")
+        return notes.encode(), MEDIA["md"], f"{stem}.client-notes.md"
     segments = await segments_at(artifact_service, session, version)
     images = await figures(artifact_service, session, segments)
+    if fmt == "office":
+        filename = s.get("doc:filename", "")
+        if not office.detect(filename):
+            raise ExportError("Only Word, PowerPoint and Excel uploads can be downloaded as the original file.")
+        content, _report = await office_file(artifact_service, session, segments, field)
+        return content, office.media_type(filename), f"{label}{Path(filename).suffix.lower()}"
     if fmt == "docx":
         return to_docx(segments, field, lang, images), MEDIA["docx"], f"{label}.docx"
     if fmt == "md":

@@ -23,6 +23,7 @@ class Figure:
     png: bytes  # cropped figure
     anchor: str | None = None  # PDFs: start of the first text block below the figure (for exact placement)
     kind: str = "image"  # image | chart | seal (as the layout model labelled it)
+    source: str = "pdf"  # pdf (an image embedded in the PDF) | layout (found by the layout model)
 
 
 @dataclass
@@ -40,6 +41,21 @@ class Page:
         below = next((b for b in self.text_blocks if b[1] >= box[3] - 3), None)
         return " ".join(below[4].split())[:60] if below else None
 
+    def text_layer_outside(self, boxes: list[tuple[float, float, float, float]]) -> str:
+        """The text layer without the text inside these boxes (the figures, whose text the OCR leaves out)."""
+        if not boxes:
+            return self.text_layer
+
+        def inside(b) -> bool:
+            own = max(0.0, b[2] - b[0]) * max(0.0, b[3] - b[1])
+            for x in boxes:
+                w, h = min(b[2], x[2]) - max(b[0], x[0]), min(b[3], x[3]) - max(b[1], x[1])
+                if own and w > 0 and h > 0 and w * h >= 0.5 * own:
+                    return True
+            return False
+
+        return "\n".join(b[4].strip() for b in self.text_blocks if not inside(b))
+
     @property
     def has_text_layer(self) -> bool:
         # Dense scripts (Chinese, Japanese, ...) carry about twice the text per character.
@@ -53,7 +69,11 @@ class Page:
 
 
 def guess_mime(filename: str) -> str:
+    from .. import office
+
     ext = Path(filename).suffix.lower()
+    if office.detect(filename):
+        return office.media_type(filename)
     if ext == ".pdf":
         return "application/pdf"
     if ext in IMAGE_EXTS:
@@ -427,17 +447,28 @@ def page_batches(segments: list[dict], max_chars: int) -> list[list[dict]]:
 def assemble_markdown(segments: list[dict], field: str = "target", page_breaks: bool = True) -> str:
     out: list[str] = []
     page = None
+    alt: str | None = None  # a picture's own alt text (Office files): it describes the picture that follows
     for seg in segments:
         if page_breaks and seg["page"] != page and page is not None:
             out.append(f"<!-- page {seg['page']} -->")
         page = seg["page"]
+        if alt is not None and seg.get("kind") != "figure":  # its picture wasn't read: keep the text, out of the body
+            out.append(f"<!-- alt text: {alt} -->")
+            alt = None
+        if seg.get("kind") == "alt":
+            alt = " ".join((seg.get(field) or seg["source"]).split())
+            continue
         if seg.get("kind") in FURNITURE:
             out.append(f"<!-- {seg['kind']}: {seg.get(field) or seg['source']} -->")
             continue
         if seg.get("kind") == "figure":
             text = seg.get(field) or seg["source"]
             legend = "\n".join(f"> {line}" for line in text.splitlines() if line.strip())
-            out.append(f"![Figure {seg.get('figure', '')}](figures/{seg['image']})" + (f"\n\n{legend}" if legend else ""))
+            label = (alt or f"Figure {seg.get('figure', '')}").replace("[", "(").replace("]", ")")
+            out.append(f"![{label}](figures/{seg['image']})" + (f"\n\n{legend}" if legend else ""))
+            alt = None
             continue
         out.append(seg.get(field) or seg["source"])
+    if alt is not None:
+        out.append(f"<!-- alt text: {alt} -->")
     return "\n\n".join(out) + "\n"

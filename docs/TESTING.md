@@ -98,6 +98,10 @@ What the model gets wrong differs between runs; the lists below are what a live 
 - [ ] **Accept**: the page is split into segments again (19 in the live run), with section 3 as one segment.
 - [ ] **Continue to translation**: the run goes on to Analyse and translates. The stamp comes out as *CHECKED 14.03.2026 · Site management UW-2291*. Compare with the reference.
 
+**3.3 A picture that is really text.** Any scan with a figure works, e.g. `samples/wartungsbericht-scanned.pdf` (a wiring diagram).
+- [ ] The OCR line in the chat says how many figures were kept; if the layout model took a block of text for a picture, it also says *N region(s) taken for a picture read as text*, and the page line in **Source & notes** says *read as text, not as a picture*.
+- [ ] In **Source & notes → Page images & OCR**, under the figure: **This is text, not a picture**. Press it (to try the flow; the diagram really is a picture): after a few seconds the chat card shows a page fix marked *picture → text* with the diagram's labels in place of `[[FIGURE 1]]`. **Reject** it.
+
 **3.2 Chinese: reading the page again.** Upload `samples/review/jianli-tongzhi-shuanglan-scanned.pdf`.
 - *What it is:* a supervision notice, 监理通知单——地下室电缆桥架接地 (earthing of the basement cable tray), in two columns. Section 五 (安全措施, safety measures) runs across the column break mid-sentence. A red round seal (北区变电站改造工程监理部 / 监理专用章: Supervision Office, North District Substation Renovation Project / supervision seal) is printed over the attachments line (八、附件) and the signature.
 - [ ] Look for:
@@ -179,10 +183,34 @@ What the model gets wrong differs between runs; the lists below are what a live 
 
 **5.3 Confirming fills the TM.** In Segments, click into a draft and press **⌘/Ctrl+Enter** on 3 segments.
 - [ ] Their status becomes *Confirmed*, and the next draft is focused.
-- [ ] Project → Translation memory: 3 more units.
-- [ ] Upload the same file again into the project. Those 3 segments are reused (101% if the previous segment is also the same).
+- [ ] Project → Translation memory: 3 more units. Each row shows **in TM**.
+- [ ] Upload the same file again into the project. Those 3 segments are reused (101% if the previous segment is also the same). A 101% match from a segment you confirmed one by one starts *Confirmed*; one from **Confirm AI-checked** (bulk) starts as a *Draft*.
+- [ ] A segment the translator adapted from a fuzzy match is labelled *MT · TM 87%* (its score), not *TM*.
 
 ---
+
+## 5b. Word, PowerPoint and Excel
+
+**5b.1 Word.** Upload `samples/jiance-baogao.docx` into the Chinese project.
+- [ ] No source check: the chat says *Read the Word document: 51 segments in 2 parts; 2 tracked changes accepted*, plus a note on the tracked changes, and *Read the text in 1 picture* (the wiring sketch). The document opens in **Document → Layout**: the original on the left.
+- [ ] After the questions and the translation, the right side shows the English file: same page layout, the table with its grey header row, the bold *main earth grid* and the italic clause, the link on *test plan*, the footnote, the header, and the footer *Page 1*.
+- [ ] **Sync scroll:** scroll the left side; the right follows to the same paragraph. Click a paragraph on the right: the Segments tab opens on it.
+- [ ] Segments tab: rows say where they are (*Header*, *Table 1 · R2C3*, *Footnote 1*). The footer row reads `第 [^1]1[^2] 页` with chips for the page field.
+- [ ] Download → *Translated Word document (original layout)* opens in Word with no revision marks, the footnote and link working, the language English (UK).
+- [ ] **The picture:** Reading shows the wiring sketch (p1.10) with its labels in English under it. In the downloaded file, a small italic caption under the sketch lists the labels in English (main transformer, earth grid, …), and the picture's alt text (right-click → *Edit Alt Text*) starts *Text in the picture:*.
+
+**5b.2 PowerPoint.** Upload `samples/anquan-peixun.pptx`.
+- [ ] Layout shows the slides side by side; the speaker notes of the current slide are underneath, original and translation.
+- [ ] Slide 4's slogan box (安全第一、预防为主、综合治理) is far longer in English: in the translated slide it shrinks to fit; the chip lists *Shrunk to fit*.
+- [ ] 五防 / 两票三制 on slide 1 read the same as their definitions on slides 3 and 4.
+- [ ] **The picture:** slide 2's safety sign (p2.6) is read and translated (*Stop! High voltage danger!*). In the downloaded deck, slide 2's speaker notes end with *Text in pictures (English): Picture 1: …*, and the sign's alt text has the English; the slide itself looks unchanged.
+
+**5b.3 Excel.** Upload `samples/quexian-qingdan.xlsx`.
+- [ ] Layout shows the sheet as a grid with tabs (缺陷, 汇总); the sheet names stay Chinese, dates and numbers unchanged.
+- [ ] 已整改 / 未整改 are translated once each, everywhere. In the downloaded workbook, 汇总 still counts 3 and 3 (the COUNTIF texts were translated with the cells).
+- [ ] **The picture and its alt text:** the defect sketch at H2 gives two segments — *Alt text* (p1.21, 缺陷位置示意图) and the picture's own text (p1.22). In the downloaded workbook the picture's alt text reads *Defect location diagram — Text in the picture: …*.
+
+**5b.4 Old formats.** Upload a `.doc` (or rename any file to `.doc`): refused with *save it as .docx in Word, or export it to PDF*.
 
 ## 6. Segment editor
 
@@ -191,12 +219,16 @@ Use `fucha-baogao.pdf` or `nachbegehung.pdf` (any translated document works).
 - [ ] **Translator / Reviewer** switch: Ctrl+Enter confirms (Translator) or marks *Reviewed* (Reviewer).
 - [ ] **Keyboard:** Alt+↓/↑ move between segments; Esc reverts an edit; Alt+S copies the source; Alt+1 inserts the first TM match (when the TM panel shows one).
 - [ ] **Terms:** project terms are underlined in the source. Hovering shows the target and the forbidden variants.
-- [ ] **Comments:** add a comment as reviewer, resolve it. The **Comments** filter shows open ones.
+- [ ] **Comments:** hover a row → **comment** → type, Enter. Switch to Reviewer and add another; resolve one. The **Comments** filter shows open ones.
+- [ ] **Comments before translating:** on a PDF at the source check (status *Check source*), open **Document → Reading**, hover a passage → **Comment**: you can post. While the agents run, the thread says "Comments open when the agents finish".
+- [ ] **Comments survive a source fix:** comment on a paragraph, then in the chat ask for a page fix that splits a different paragraph on that page and accept it. The comment is still on its paragraph (its id may have changed).
+- [ ] **Comments in Reading:** a passage with an open comment has an accent bar and a "1 comment" chip; the chip opens the thread. Ask the chat "what do the comments say?": it lists them.
 - [ ] **Lock** a segment: it can't be edited, and agents skip it.
 - [ ] **QA issues under the segment:** a segment with a QA problem shows it right under the row (no need to click in): severity, check, message, **Fix** and **Ignore**. Click **Fix** → the chat gets the request and the agent proposes the correction.
 - [ ] **Filters:** To do / QA issues / Confirmed / Lowest score first (by AI quality estimate).
 - [ ] **Save version (n)** after edits → a new version appears in History.
-- [ ] **Confirm AI-checked (n)** confirms every draft that passed the AI review. Bulk-confirmed segments are **not** added to the translation memory (only one-by-one confirmations are): the project's TM count doesn't change.
+- [ ] **Confirm AI-checked (n)** confirms every draft that passed the AI review. The chat says *Confirmed n segments · n saved to the TM*; those rows show **in TM**, and in the project's Translation memory tab their units are marked **bulk**.
+- [ ] **Accept & confirm:** ask the chat for "More formal" on two segments, then press **Accept & confirm** on the proposal: both segments become *Confirmed* and show **in TM**.
 
 ---
 
@@ -305,7 +337,36 @@ Use `fucha-baogao.pdf` or `nachbegehung.pdf` (any translated document works).
 - [ ] Drag the divider between chat and document. The width is kept after a reload.
 - [ ] **Widen** hides the chat; again brings it back.
 - [ ] In the sidebar, collapse a project with the chevron; the active document's project stays open.
-- [ ] The token chip in the document header shows tokens per step (no dollars).
+- [ ] The token chip in the document toolbar shows tokens per step (no dollars), each model with its company's logo; after a chat with suggestions it also lists *Suggestions*.
+- [ ] **Sidebar:** the floating orb and TRANSLATE at the top (no product name). The button at the top right of the sidebar (or ⌘/Ctrl+\\) folds it to an icon rail and back. Drag its right edge: it gets wider or narrower (between about 210 and 420 px); double-click the edge: back to normal. Reload: width and folding stay as you left them, with no flash.
+- [ ] **Search and filter:** type part of a title or file name in the sidebar's search: the list narrows. Pick a project in the filter next to it (or click a document's project tag): only its documents; the chip above the list clears it.
+- [ ] **⌘K** (or Ctrl+K): the palette lists actions, documents and projects; type to filter; Enter opens one.
+- [ ] **Projects:** the sidebar's *Projects* opens the overview (one card per project with its counts); a card opens the project page.
+- [ ] **Titles and summaries:** after the analysis, a document's sidebar row and the top bar show an English title instead of the file name (e.g. *Re-inspection protocol, Substation North* for `nachbegehung.pdf`); click the summary line in the top bar to read it all.
+- [ ] **Theme:** the moon/sun/monitor button at the bottom of the sidebar cycles System → Light → Dark; **Settings → Appearance** has the same choice. Reload: no flash of the other theme. On *System*, change the OS appearance: the app follows.
+- [ ] **Settings → Models:** the gear in the sidebar. The diagram at the top shows every step with its model (company logo, name) and reasoning level. Hover the *Translating* row: Analysis, Translation, Refinement, Consistency and Rewrites light up, the rest dims. Click *Review* in the diagram: a small editor opens to change just that step. Rows: Reading, Translating, Reviewing, Chat, Assist; the model picker greys out models that can't read images for Reading and Chat, and shows *Reads images* / *Thinks*.
+- [ ] **What Default means:** each level row says *Default: Low (pipeline.yaml)* or *Default: Instant (models.yaml)*, and a dot marks that level. Pick *High* for Translating: it says *Chosen: High · Use default (Low)*; **Save**, reopen: it stuck, and the step has a dot and ring in the diagram. **Reset to pipeline.yaml** puts the defaults back. Closing with unsaved changes asks first.
+- [ ] **A model that doesn't think:** in `models.yaml`, a model without `thinking: true` says *This model doesn't reason* instead of the levels.
+- [ ] **One document's models:** on the upload page, a chip per group shows what new documents use (logo, model, level). Click one → change the Translating model → **Use for this document**. After uploading, the models chip in the top bar shows it; hover it for every group (*(default)* where nobody chose). Click it, change Reviewing, **Save**: the chat notes *Settings for this document: Review → …* (from the next run).
+- [ ] **Chat model:** under the chat input, *Claude Haiku 5.5 · Low* (with the logo). Click it, pick another model or level: *Applies from your next message*. While the agents work it is greyed out.
+- [ ] **Usage:** after a run with a reasoning level, the token chip's breakdown shows the level and the tokens spent thinking (e.g. *claude-haiku · high · 1.2k thinking*).
+- [ ] **References in the analysis:** start the dummy dictionary (`python3 dictionary-server/server.py`, `DICTIONARY_URL=http://localhost:8200/lookup` in `backend/.env`, restart). Upload `fucha-baogao.pdf` into the Chinese project, continue after the source check. The chat shows lookups: *Translation memory: 5 segments reused…*, *Termbase: N terms already decided*, *Translation memory: 4 of 20 key terms used before*, *Dictionary: 3 of 20 key terms found* — open one to see each term and its outcome. In a live run 消缺 became a question: *Dictionary disagrees: … gives defect elimination, not "defect cleared"*, with *defect elimination* recommended.
+- [ ] **Key terms:** Source & notes → Brief, terms & checks: terms say *as in the TM*, *dictionary agrees* or *asked*, with the dictionary senses and TM sentences under the meaning.
+- [ ] **Chat lookups:** ask "How was 缺陷 translated before, and what does the termbase say about 消缺?" The chat shows *Translation memory: …* and *Termbase: …* lookups (open them for the entries) and answers from them.
+- [ ] **Dictionary switch:** without `DICTIONARY_URL` it is greyed out with the reason. With the dummy dictionary running (README, *Dictionary service*), turn it off for a document: the analysis looks nothing up.
+- [ ] **Reading on translate:** upload `nachbegehung.pdf`. At the source check the panel shows the page images; press **Continue to translation** → the panel switches to **Document → Reading**. Switch to Segments while it translates: it stays there.
+
+- [ ] **Theme and colour:** light and dark both use the soft blue accent; the diff colours (green added, red removed) stay distinct from it.
+
+## 13b. AI assist
+
+- [ ] **Suggested follow-ups:** open a ready document (e.g. `nachbegehung.pdf`). Above the chat input, up to three ✦ chips appear (in a live run: *Explain the AI reviewer changes*, *Check the defect 3 deadline*, *Make the terminology consistent*). Click one: it is sent. After the answer, new chips appear. Turn **Settings → AI assist** off: no chips and no grey text.
+- [ ] **Tab completion:** type *Make the tone* and wait a moment: grey text continues it (e.g. *more formal, matching the German register*). Tab accepts it, Esc dismisses it, typing on replaces it. In an empty box, the grey text is the first suggestion: Tab fills it in.
+- [ ] **Ask about a selection:** in Document → Reading, select a few words of the translation: a small toolbar appears. **Explain** answers in the chat (no changes); **Other options** gives three alternatives as a proposal; **Rewrite ▾ → Shorter** gives a proposal; **Ask…** puts the passage in the chat box. On the source side (Side by side), **Explain** says what the source says in plain English.
+- [ ] **Rewrite on a passage:** hover a paragraph in Reading → **Rewrite ▾ → More formal**: a proposal for that segment only. The same menu is on each Segments row.
+- [ ] **Rendered changes:** proposals and version changes show the text as it reads (headings, bold, tables) with additions in green and removals in red; the small `</>` button shows the markdown diff instead. A change that only made a word bold says *Only the formatting changed*.
+- [ ] **Question cards:** the sentence a term is in shows as text (no `**`, `#` or `|`), with the term highlighted; the English line highlights the recommended option.
+- [ ] **Notes for the client:** download menu → *Notes for the client…*: a short note appears (summary, terminology decisions and where each came from, assumptions, open queries, what wasn't translated, quality). Copy and Download `.md` work; **Regenerate** writes it again. The download menu then also lists *Notes for the client (.md)*.
 
 ---
 

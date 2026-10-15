@@ -1,14 +1,18 @@
 """Ingest pipeline as an ADK Workflow graph.
 
-    START → ocr → check_source → analyse → ask → translate → clarify → review ─┬─(refine)→ refine → review
-                                                                               └─(done)──→ polish → finalize
+    START → route_source ─(ocr)───→ ocr → check_source ─┬→ memory → analyse → ask → translate → clarify → review ─┬─(refine)→ refine → review
+                         └(extract)→ extract ──────────┘                                                         └─(done)──→ polish → finalize
 
+* `route_source` PDFs, images and text files go to `ocr`; Word, PowerPoint and Excel files to `extract`, which
+              reads their text from the file (office/) — no OCR and no source check.
 * `ocr`       fans out per page: vision OCR agent, then OCR-checker agent (image vs text). The check is
               skipped where the transcription matches the PDF's own text layer on a page without
               pictures; each page's result is cached so a retry doesn't read it again. Text files are
               read as they are.
 * `check_source` human-in-the-loop: PDFs and images pause so the person can compare the reading with the
               page images and have the chat fix it (`document/source_check.py`) before anything is translated.
+* `memory`    the project's translation memory first: 100/101% matches fill their segments (no model call),
+              fuzzy matches become references for the translator (`document/memory.py`).
 * `analyse`   reads the WHOLE document before translating: writes the brief up front and fixes the key
               terms once (forward definitions included); terms whose options differ in meaning become
               questions, explained in plain English with English options and a recommendation.
@@ -35,7 +39,9 @@ from google.adk import Workflow
 from google.adk.workflow import START
 
 from .steps.analyse import analyse, ask
+from .steps.extract import extract, route_source
 from .steps.finish import finalize, polish
+from .steps.memory import memory
 from .steps.read import check_source, ocr
 from .steps.review import refine, review
 from .steps.translate import clarify, translate
@@ -46,8 +52,10 @@ PIPELINE_NAME = "ingest"
 ingest_workflow = Workflow(
     name=PIPELINE_NAME,
     edges=[
-        (START, ocr),
-        (ocr, check_source, analyse, ask, translate, clarify, review),
+        (START, route_source),
+        (route_source, {"ocr": ocr, "extract": extract}),
+        (ocr, check_source, memory, analyse, ask, translate, clarify, review),
+        (extract, memory),
         (review, {"refine": refine, "done": polish}),
         (refine, review),
         (polish, finalize),

@@ -10,7 +10,10 @@ TM matching (scores as translators know them from CAT tools):
   101  same source and same preceding segment (context match)
   100  same source
   75-99 fuzzy: candidates by a fast character ratio, rescored per word (per character for CJK)
-Only segments a *person* confirmed are written to the TM, so it stays clean.
+Only segments a *person* confirmed (or reviewed) are written to the TM, so it stays clean. Each unit records how:
+`approval` is segment (confirmed one by one), review (a reviewer's), proposal (an agent's change accepted with
+Confirm), bulk (one click over many segments) or import. A lower approval never overwrites a higher one's
+wording, and `ref` says where a unit came from (file#segment, or "import").
 """
 
 from __future__ import annotations
@@ -47,8 +50,16 @@ create table if not exists terms (
 create table if not exists tm_units (
   id integer primary key, project_id text not null references projects(id) on delete cascade,
   source text not null, target text not null, source_key text not null, prev_key text default '',
-  origin text default '', created_at real, updated_at real, unique(project_id, source_key, prev_key));
+  ref text default '', approval text default 'segment', prev_source text default '',
+  created_at real, updated_at real, unique(project_id, source_key, prev_key));
+create table if not exists app_settings (key text primary key, value text not null, updated_at real);
+create table if not exists assist_usage (
+  session_id text not null, step text not null, model_id text not null, effort text not null default '',
+  calls integer default 0, prompt_tokens integer default 0, completion_tokens integer default 0,
+  reasoning_tokens integer default 0, updated_at real, primary key (session_id, step, model_id, effort));
 """
+# How a unit was approved, weakest first: a weaker approval never replaces a stronger one's wording.
+APPROVALS = ("bulk", "import", "proposal", "segment", "review")
 # Columns added after the first release (added to existing databases on open).
 SETTINGS = {
     "auto_confirm_context": "integer default 1",  # 101% TM matches start as confirmed (CAT-tool default)
@@ -57,9 +68,10 @@ SETTINGS = {
 
 # Databases from the multilingual version (terms and TM units per target language): keep the English
 # entries (or untagged ones from before that) and drop the rest — English is the only target now.
-_MIGRATE = {
-    "terms": "id, project_id, source, target, note, forbidden, case_sensitive, status, created_at, updated_at",
-    "tm_units": "id, project_id, source, target, source_key, prev_key, origin, created_at, updated_at",
+_MIGRATE = {  # table: (columns in the new table, the same columns in the old one)
+    "terms": ("id, project_id, source, target, note, forbidden, case_sensitive, status, created_at, updated_at",) * 2,
+    "tm_units": ("id, project_id, source, target, source_key, prev_key, ref, created_at, updated_at",
+                 "id, project_id, source, target, source_key, prev_key, origin, created_at, updated_at"),
 }
 
 
@@ -93,16 +105,25 @@ class ProjectStore:
         for column, decl in SETTINGS.items():
             if column not in have:
                 self._db.execute(f"alter table projects add column {column} {decl}")
-        for table, cols in _MIGRATE.items():
+        for table, (cols, old_cols) in _MIGRATE.items():
             if "target_lang" not in {r["name"] for r in self._db.execute(f"pragma table_info({table})")}:
                 continue
             create = SCHEMA.split(f"create table if not exists {table} (", 1)[1].split(");", 1)[0]
             self._db.executescript(
                 f"begin; create table {table}_new ({create});"
-                f" insert or ignore into {table}_new ({cols}) select {cols} from {table}"
+                f" insert or ignore into {table}_new ({cols}) select {old_cols} from {table}"
                 f" where target_lang = '' or target_lang like '{TARGET_LANG}%' order by target_lang desc;"
                 f" drop table {table}; alter table {table}_new rename to {table}; commit;"
             )
+        # TM units before `ref` / `approval`: `origin` held the provenance.
+        tm = {r["name"] for r in self._db.execute("pragma table_info(tm_units)")}
+        if "origin" in tm and "ref" not in tm:
+            self._db.execute("alter table tm_units rename column origin to ref")
+        if "approval" not in tm:
+            self._db.execute("alter table tm_units add column approval text default 'segment'")
+            self._db.execute("update tm_units set approval = 'import' where ref = 'import'")
+        if "prev_source" not in tm:
+            self._db.execute("alter table tm_units add column prev_source text default ''")
 
     def _q(self, sql: str, args: tuple = ()) -> list[sqlite3.Row]:
         with self._lock:
@@ -111,6 +132,36 @@ class ProjectStore:
     def _w(self, sql: str, args: tuple = ()) -> sqlite3.Cursor:
         with self._lock:
             return self._db.execute(sql, args)
+
+    # ---- app settings (app_settings.py) ----------------------------------- #
+
+    def get_setting(self, key: str) -> Any:
+        rows = self._q("select value from app_settings where key = ?", (key,))
+        return json.loads(rows[0]["value"]) if rows else None
+
+    def set_setting(self, key: str, value: Any) -> None:
+        self._w("insert into app_settings (key, value, updated_at) values (?, ?, ?) on conflict(key) do update set "
+                "value = excluded.value, updated_at = excluded.updated_at", (key, json.dumps(value), time.time()))
+
+    # ---- AI assist usage (agents/assist.py) ---------------------------------- #
+    # Suggestions, completions and client notes are model calls outside a run: they leave no session event, so
+    # their tokens are counted here (and merged into the document's usage).
+
+    def record_assist_usage(self, session_id: str, step: str, model_id: str, effort: str | None, prompt_tokens: int,
+                            completion_tokens: int, reasoning_tokens: int) -> None:
+        self._w(
+            "insert into assist_usage (session_id, step, model_id, effort, calls, prompt_tokens, completion_tokens,"
+            " reasoning_tokens, updated_at) values (?, ?, ?, ?, 1, ?, ?, ?, ?) on conflict(session_id, step, model_id, effort)"
+            " do update set calls = calls + 1, prompt_tokens = prompt_tokens + excluded.prompt_tokens,"
+            " completion_tokens = completion_tokens + excluded.completion_tokens,"
+            " reasoning_tokens = reasoning_tokens + excluded.reasoning_tokens, updated_at = excluded.updated_at",
+            (session_id, step, model_id, effort or "", prompt_tokens, completion_tokens, reasoning_tokens, time.time()),
+        )
+
+    def assist_usage(self, session_id: str) -> list[dict]:
+        rows = self._q("select step, model_id, effort, calls, prompt_tokens, completion_tokens, reasoning_tokens"
+                       " from assist_usage where session_id = ?", (session_id,))
+        return [{**dict(r), "effort": r["effort"] or None} for r in rows]
 
     # ---- projects -------------------------------------------------------- #
 
@@ -231,39 +282,58 @@ class ProjectStore:
 
     # ---- translation memory ---------------------------------------------- #
 
-    def add_unit(self, pid: str, source: str, target: str, prev_source: str = "", origin: str = "") -> bool:
-        """Store a unit (same source + context replaces the old target). → True if it was new."""
-        unit = {"source": source, "target": target, "prev_source": prev_source, "origin": origin}
-        return self.add_units(pid, [unit])[0] == 1
+    def add_unit(self, pid: str, source: str, target: str, prev_source: str = "", ref: str = "",
+                 approval: str = "segment") -> str:
+        """Store one unit. → "added" | "updated" | "unchanged" | "kept" (see add_units)."""
+        unit = {"source": source, "target": target, "prev_source": prev_source, "ref": ref, "approval": approval}
+        return self.add_units(pid, [unit])[0]
 
-    def add_units(self, pid: str, units: list[dict]) -> tuple[int, int]:
-        """Bulk insert/update in one transaction. → (added, updated)."""
-        added = updated = 0
+    def add_units(self, pid: str, units: list[dict]) -> list[str]:
+        """Insert or update units in one transaction (same source after the same previous source = the same unit).
+        Per unit: "added"; "updated" (new wording); "unchanged" (same wording: its ref is kept, its approval may
+        rise); "kept" (a weaker approval doesn't replace a stronger one's wording); "skipped" (empty)."""
+        out: list[str] = []
         now = time.time()
+        rank = {a: i for i, a in enumerate(APPROVALS)}
         with self._lock:
             self._db.execute("begin")
             try:
                 for u in units:
                     key, prev = norm(u["source"]), norm(u.get("prev_source") or "")
-                    if not key or not (u.get("target") or "").strip():
+                    target = (u.get("target") or "").strip()
+                    if not key or not target:
+                        out.append("skipped")
                         continue
-                    exists = self._db.execute(
-                        "select 1 from tm_units where project_id = ? and source_key = ? and prev_key = ?", (pid, key, prev)
+                    approval = u.get("approval") if u.get("approval") in rank else "segment"
+                    row = self._db.execute(
+                        "select id, target, approval from tm_units where project_id = ? and source_key = ? and prev_key = ?",
+                        (pid, key, prev),
                     ).fetchone()
-                    self._db.execute(
-                        """insert into tm_units (project_id, source, target, source_key, prev_key, origin, created_at, updated_at)
-                           values (?, ?, ?, ?, ?, ?, ?, ?)
-                           on conflict(project_id, source_key, prev_key) do update set target = excluded.target,
-                             source = excluded.source, origin = excluded.origin, updated_at = excluded.updated_at""",
-                        (pid, u["source"], u["target"], key, prev, u.get("origin") or "", now, now),
-                    )
-                    updated, added = (updated + 1, added) if exists else (updated, added + 1)
+                    if row is None:
+                        self._db.execute(
+                            """insert into tm_units (project_id, source, target, source_key, prev_key, ref, approval,
+                                 prev_source, created_at, updated_at) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                            (pid, u["source"], target, key, prev, u.get("ref") or "", approval, u.get("prev_source") or "", now, now),
+                        )
+                        out.append("added")
+                    elif row["target"] == target:
+                        if rank[approval] > rank.get(row["approval"], 0):
+                            self._db.execute("update tm_units set approval = ?, updated_at = ? where id = ?", (approval, now, row["id"]))
+                        out.append("unchanged")
+                    elif rank[approval] < rank.get(row["approval"], 0):
+                        out.append("kept")
+                    else:
+                        self._db.execute(
+                            "update tm_units set target = ?, source = ?, ref = ?, approval = ?, updated_at = ? where id = ?",
+                            (target, u["source"], u.get("ref") or "", approval, now, row["id"]),
+                        )
+                        out.append("updated")
                 self._db.execute("commit")
             except Exception:
                 self._db.execute("rollback")
                 raise
             self._tm_version[pid] = self._tm_version.get(pid, 0) + 1
-        return added, updated
+        return out
 
     def _candidates(self, pid: str) -> tuple[list[str], list[sqlite3.Row]]:
         version = self._tm_version.get(pid, 0)
@@ -276,7 +346,7 @@ class ProjectStore:
         return keys, rows
 
     def lookup(self, pid: str, source: str, prev_source: str = "", limit: int = 5) -> list[dict]:
-        """Best TM matches for a segment: [{id, score, source, target, origin}], best first."""
+        """Best TM matches for a segment: [{id, score, source, target, ref, approval}], best first."""
         key = norm(source)
         if not key:
             return []
@@ -288,7 +358,7 @@ class ProjectStore:
                 r = rows[i]
                 score = 101 if prev and r["prev_key"] == prev else 100
                 if score > found.get(r["id"], {}).get("score", 0):
-                    found[r["id"]] = {"id": r["id"], "score": score, "source": r["source"], "target": r["target"], "origin": r["origin"]}
+                    found[r["id"]] = _match(r, score)
         words = _tokens(source)
         for _, _, i in process.extract(key, keys, scorer=fuzz.ratio, limit=20, score_cutoff=60):
             r = rows[i]
@@ -296,7 +366,7 @@ class ProjectStore:
                 continue
             score = min(99, round(100 * Levenshtein.normalized_similarity(words, _tokens(r["source"]))))
             if score >= FUZZY_MIN:
-                found[r["id"]] = {"id": r["id"], "score": score, "source": r["source"], "target": r["target"], "origin": r["origin"]}
+                found[r["id"]] = _match(r, score)
         best: dict[str, dict] = {}  # one entry per distinct source (prefer the higher score)
         for m in sorted(found.values(), key=lambda m: -m["score"]):
             best.setdefault(norm(m["source"]), m)
@@ -316,6 +386,11 @@ class ProjectStore:
     def delete_unit(self, pid: str, unit_id: int) -> None:
         self._w("delete from tm_units where project_id = ? and id = ?", (pid, unit_id))
         self._tm_version[pid] = self._tm_version.get(pid, 0) + 1
+
+
+def _match(row: sqlite3.Row, score: int) -> dict:
+    return {"id": row["id"], "score": score, "source": row["source"], "target": row["target"], "ref": row["ref"],
+            "approval": row["approval"]}
 
 
 _store: ProjectStore | None = None

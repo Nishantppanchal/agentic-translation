@@ -31,7 +31,7 @@ class Project:
     source_lang: str
     style_guide: str
     termbase: Path  # CSV: source;English;Note;Forbidden (variants separated by |)
-    memory: Path  # JSON: [{source, target, origin}]
+    memory: Path  # JSON: [{source, target, ref}] (ref: where the unit comes from)
     uploads: list[Path]
     notes: list[tuple[Path, str]]
 

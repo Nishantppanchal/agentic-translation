@@ -10,7 +10,7 @@ from pydantic import BaseModel
 
 from ...document import edits, proposals
 from ...document import state as st
-from ...models.llm import model_name
+from ...models import routing
 from ..services import (
     REQUEST_INPUT_TOOL,
     artifact_service,
@@ -78,6 +78,7 @@ async def answer_question(session_id: str, question_id: str, body: AnswerIn) -> 
 class AcceptIn(BaseModel):
     changes: list[str] | None = None  # "segment_id|field" keys to apply; None = all
     choices: dict[str, int] | None = None  # change key → chosen alternative (default: the first)
+    confirm: bool = False  # Accept & confirm: the new translations are confirmed (and saved to the TM)
 
 
 @router.post("/api/sessions/{session_id}/proposal/accept")
@@ -88,7 +89,8 @@ async def accept_proposal(session_id: str, body: AcceptIn) -> dict[str, Any]:
         raise HTTPException(409, "The agents are still working on this document.")
     await edits.flush_human_edits(session_service, artifact_service, session)
     try:
-        return await proposals.accept(session_service, artifact_service, session, body.changes, body.choices)
+        return await proposals.accept(session_service, artifact_service, session, body.changes, body.choices,
+                                      confirm=body.confirm)
     except ValueError as exc:
         raise HTTPException(409, str(exc)) from exc
 
@@ -114,7 +116,7 @@ async def run_lqa(session_id: str) -> dict[str, Any]:
     await edits.flush_human_edits(session_service, artifact_service, session)  # assess a saved version
     await set_state(session_id, {"doc:task": {"kind": "lqa"}})
     start_run(session_id, ops_runner, "Run an LQA assessment.", streaming=False)
-    return {"ok": True, "model": model_name("lqa")}
+    return {"ok": True, "model": routing.resolve("lqa", session.state).id}
 
 
 class TaskIn(BaseModel):

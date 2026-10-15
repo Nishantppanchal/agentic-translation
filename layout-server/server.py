@@ -7,8 +7,9 @@ Claude Code, ...) can use the same tool.
     uv run --project layout-server python layout-server/server.py
 
 Tool:
-  detect_layout  regions (text, title, table, image, chart, seal, header, footer…): the translator uses the
-                 pictures, charts and seals as figures, and the chat editor inspects pages with it
+  detect_layout  regions (text, title, table, image, chart, seal, header, footer…): the translator weighs the
+                 pictures, charts and seals against the text regions to find the figures, and the chat editor
+                 inspects pages with it
 
 Env:
   LAYOUT_MODEL      default PP-DocLayoutV3
@@ -66,16 +67,26 @@ def _get_model():
     return _model
 
 
+def _threshold(threshold: float | dict[str, float]) -> float | dict[int, float]:
+    """PaddleX wants a float, or {class id: float} with every class (a missing one falls back to 0.5)."""
+    if not isinstance(threshold, dict):
+        return float(threshold)
+    labels = _get_model().paddlex_predictor.config["label_list"]
+    default = float(threshold.get("default", 0.5))
+    return {i: float(threshold.get(label, default)) for i, label in enumerate(labels)}
+
+
 @mcp.tool()
-def detect_layout(image_base64: str, threshold: float = 0.5) -> dict:
+def detect_layout(image_base64: str, threshold: float | dict[str, float] = 0.5) -> dict:
     """Detect the layout of a document page image with PP-DocLayout.
 
     Finds regions such as doc_title, paragraph_title, text, table, image, chart, seal,
-    formula, header, footer, number (page number) and figure_title (caption).
+    display_formula, header, footer, number (page number) and figure_title (caption).
 
     Args:
       image_base64: The page image (PNG or JPEG), base64-encoded.
-      threshold: Minimum confidence (0-1) for a region to be returned.
+      threshold: Minimum confidence (0-1) for a region to be returned: one number, or per class
+        ({"image": 0.55, "default": 0.3}).
 
     Returns:
       {"model", "width", "height", "regions": [{"label", "score", "box": [x0, y0, x1, y1]}]},
@@ -86,7 +97,7 @@ def detect_layout(image_base64: str, threshold: float = 0.5) -> dict:
     if image is None:
         raise ToolError("Could not decode the image.")
     with _lock:
-        results = list(_get_model().predict(image, batch_size=1, layout_nms=True, threshold=threshold))
+        results = list(_get_model().predict(image, batch_size=1, layout_nms=True, threshold=_threshold(threshold)))
     boxes = results[0].json["res"]["boxes"] if results else []
     regions = [
         {"label": b["label"], "score": round(float(b["score"]), 3), "box": [round(float(c), 1) for c in b["coordinate"]]}

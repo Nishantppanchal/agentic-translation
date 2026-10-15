@@ -1,5 +1,6 @@
 export type DocStatus =
   | "uploaded"
+  | "reading" // a Word / PowerPoint / Excel file: its text is read from the file
   | "ocr"
   | "ocr_check"
   | "translating"
@@ -31,10 +32,13 @@ export interface SessionSummary {
   project_id?: string | null;
   project_name?: string | null;
   format?: DocFormat | null;
+  title?: string | null; // an English title the analysis gave the document
+  abstract?: string | null; // and a two-line summary of what it says
 }
 
 /** How the document was read: OCR (pdf, image) or as plain text / Markdown. */
-export type DocFormat = "pdf" | "image" | "text";
+export type DocFormat = "pdf" | "image" | "text" | "docx" | "pptx" | "xlsx";
+export const OFFICE_FORMATS: DocFormat[] = ["docx", "pptx", "xlsx"];
 
 export interface Project {
   id: string;
@@ -60,11 +64,16 @@ export interface Term {
   updated_at: number;
 }
 
+/** How a TM unit was approved: one by one (segment), by a reviewer, an agent's change accepted with Confirm, a
+ * bulk click (never confirms a later segment by itself) or an import. */
+export type TmApproval = "segment" | "review" | "proposal" | "bulk" | "import";
+
 export interface TmUnit {
   id: number;
   source: string;
   target: string;
-  origin: string;
+  ref: string; // where it comes from: "file.pdf#p1.2", "import"
+  approval: TmApproval;
   updated_at: number;
 }
 
@@ -73,7 +82,8 @@ export interface TmMatch {
   score: number; // 101 = same source and same previous segment · 100 = exact · 75-99 fuzzy
   source: string;
   target: string;
-  origin: string;
+  ref: string;
+  approval: TmApproval;
 }
 
 export interface TmStats {
@@ -97,7 +107,9 @@ export interface StatusCounts {
 
 export interface UsageRow {
   step: string;
-  model: string;
+  model: string; // the models.yaml id that answered (older documents: the server's model name)
+  effort?: Effort | null; // reasoning level sent
+  reasoning_tokens?: number; // of the completion tokens, those spent thinking
   calls: number;
   prompt_tokens: number;
   completion_tokens: number;
@@ -112,7 +124,9 @@ export interface Usage {
 export interface Segment {
   id: string;
   page: number;
-  kind: "heading" | "paragraph" | "list" | "table" | "code" | "figure" | "header" | "footer";
+  kind: "heading" | "paragraph" | "list" | "table" | "code" | "figure" | "header" | "footer" | "cell" | "note" | "alt"; // alt: a picture's alt text (Office)
+  where?: string; // Word / PowerPoint / Excel: where in the file ("Slide 3 · Title", "Sheet1!B4 · column …")
+  loc?: string; // Word / PowerPoint / Excel: the paragraph or cell in the file (for writing back)
   source: string;
   target: string | null;
   translatable: boolean;
@@ -123,8 +137,9 @@ export interface Segment {
   status: SegmentStatus;
   ai_check?: "passed" | "issues" | null; // the AI reviewer's verdict — not a human status
   locked: boolean;
-  origin: "mt" | "agent" | "human" | "copy" | "tm_exact" | "tm_fuzzy" | null;
-  match?: number | null; // translation-memory match % the segment started from
+  origin: "mt" | "agent" | "human" | "copy" | "tm" | null; // how the current text was made (tm: reused from the TM)
+  match?: number | null; // the TM match behind the current text: 101/100 for "tm", the fuzzy score an "mt" text adapted
+  tm_saved?: boolean; // this text is in the project's translation memory (a person confirmed it)
   qe?: number | null; // AI quality estimate 0-100 from the last review or LQA of this text
   updated_at: number | null;
   comments?: SegmentComment[];
@@ -178,6 +193,11 @@ export interface KeyTerm {
   meaning: string;
   asked: boolean;
   dictionary?: DictionaryEntry[]; // what the dictionary service says, if one is set up
+  tm?: { source: string; target: string; ref: string }[]; // translation-memory units that use the term
+  // how the target was decided: as in the TM, the dictionary agrees, asked you, AI's guess (conflict: the
+  // dictionary disagreed and there was no room to ask)
+  decision?: "tm" | "dictionary" | "asked" | "ai" | "conflict";
+  note?: string;
 }
 
 export interface Version {
@@ -195,6 +215,8 @@ export interface OcrPageReport {
   figures?: number;
   figure_source?: string; // "pdf" (embedded in the PDF), "layout" (found by PP-DocLayoutV3), or "pdf+layout"
   suggestions?: string[]; // the OCR check's possible misreadings that were NOT applied (for a person to check)
+  // regions the layout model took for pictures that were read as text instead (size / layout-text / text-layer / vision)
+  figures_as_text?: { label: string; reason: string }[];
 }
 
 export type Severity = "minor" | "major" | "critical";
@@ -310,7 +332,7 @@ export interface SourceFix {
   before: string;
   after: string;
   reason: string;
-  origin: "editor" | "reread";
+  origin: "editor" | "reread" | "figure"; // figure: "this is text, not a picture"
   word_changes: string[]; // words the fix adds or removes (none for a pure structure fix)
   moved?: string[]; // passages that change place (quoted): a word count can't show a wrong reading order
 }
@@ -332,6 +354,60 @@ export interface DocumentState {
   ocr_report: OcrPageReport[];
   source_fixes?: Record<string, SourceFix>; // page → pending fix
   review_report: ReviewEntry[];
+  orphan_comments?: OrphanComment[]; // comments whose text has changed since (still readable and deletable)
+  settings?: DocSettings;
+  unit?: "part" | "slide" | "sheet" | null; // Word / PowerPoint / Excel: what a "page" is
+  page_labels?: string[] | null; // "Part 1", "Slide 3", a sheet's name — by page number
+  office?: OfficeInfo | null;
+  client_notes?: ClientNotesState | null; // the notes for the client, once written
+}
+
+/** Notes for the client (Markdown), the version they were written for, and when. */
+export interface ClientNotesState {
+  text: string;
+  version: number | null;
+  at: number;
+}
+
+/** What reading a Word / PowerPoint / Excel file left out. */
+export interface OfficeInfo {
+  format: "docx" | "pptx" | "xlsx";
+  tracked_changes?: number;
+  not_translated?: Record<string, number>;
+}
+
+/** What writing the translation back into the file did. */
+export interface OfficeWriteReport {
+  written: number;
+  unchanged: number;
+  mismatch: string[]; // segments the file no longer matches (left as they were)
+  formatting_simplified: string[];
+  anchors_moved: string[]; // a footnote mark / picture the translation lost: put back near the end
+  autofit: { where: string; scale: number }[];
+  formulas_updated: number;
+}
+
+export interface SheetCell {
+  v: string;
+  seg?: string; // the segment whose text the cell shows
+  b?: boolean;
+  i?: boolean;
+  color?: string;
+  fill?: string;
+  align?: "center" | "right";
+  wrap?: boolean;
+  border?: boolean;
+}
+
+export interface SheetGrid {
+  sheets: { name: string; rows: SheetCell[][]; widths: number[]; heights: Record<string, number>; merges: string[];
+    objects: { kind: string; anchor: string }[]; truncated: boolean }[];
+  charts: number;
+}
+
+export interface OrphanComment extends SegmentComment {
+  seg_id: string;
+  anchor: string; // the source text the comment was made on
 }
 
 export type TimelineItem =
@@ -348,7 +424,36 @@ export type TimelineItem =
       ts: number;
     }
   | { kind: "version"; id: string; version: number; note: string; changed: string[]; ts: number }
+  | LookupItem
   | { kind: "error"; id: string; text: string; ts: number };
+
+/** One entry a lookup found: a dictionary sense, a TM unit (source → target) or a termbase entry. */
+export interface LookupEntry {
+  target: string;
+  source_text?: string;
+  score?: number | null; // TM match %
+  detail?: string; // definition, domain, note
+  ref?: string; // dictionary name, or where a TM unit comes from
+  badge?: string; // e.g. "bulk", "project · approved", "your answer"
+  forbidden?: string[];
+}
+
+/** A dictionary, TM or termbase lookup — by the pipeline (the analysis, the TM pass) or by the chat (a tool). */
+export interface LookupItem {
+  kind: "lookup";
+  id: string;
+  author: string;
+  ts: number;
+  source: "dictionary" | "tm" | "termbase";
+  via: "pipeline" | "tool";
+  status: "pending" | "done" | "off" | "unavailable" | "limit" | "error";
+  purpose: string;
+  queries: number;
+  hits: number;
+  results: { query: string; entries: LookupEntry[]; outcome?: string }[];
+  note?: string;
+  text?: string; // the pipeline's one-line summary
+}
 
 export interface SessionDetail {
   summary: SessionSummary;
@@ -365,12 +470,91 @@ export type StreamEvent =
   | { type: "error"; message: string };
 
 export interface ExportFormat {
-  id: "docx" | "md";
+  id: "docx" | "md" | "office" | "notes"; // notes: the notes for the client (once generated)
   label: string;
   group: string;
   ext: string;
   available: boolean;
   note?: string; // a caveat shown under the format
+}
+
+/** How hard a model with `thinking: true` reasons (sent as reasoning_effort; instant = no thinking). */
+export type Effort = "instant" | "low" | "medium" | "high";
+export type StepId =
+  | "ocr"
+  | "ocr_check"
+  | "analyse"
+  | "translate"
+  | "review"
+  | "refine"
+  | "polish"
+  | "rewrite"
+  | "editor"
+  | "lqa"
+  | "suggest"
+  | "complete"
+  | "notes";
+
+/** A model from config/models.yaml (never its URL, host, key or headers). */
+export interface ModelInfo {
+  id: string;
+  model_name: string;
+  label: string; // the name people see
+  vendor: string | null; // whose model (for its logo): anthropic, qwen, openai, …
+  server: "openrouter" | "ollama" | "custom";
+  where: string; // "OpenRouter", "Ollama", "this computer", "own server"
+  vision: boolean; // reads images: required for the steps that look at pages
+  thinking: boolean; // offers reasoning levels
+  structured_output: boolean;
+  default_effort: Effort | null; // its own default level (models.yaml, else medium)
+}
+
+export interface StepChoice {
+  model: string;
+  effort: Effort | null; // null: the default level (see AppSettingsView.defaults), or a model that doesn't think
+}
+export type ModelChoices = Record<StepId, StepChoice>;
+
+export interface DictionaryStatus {
+  available: boolean; // a dictionary service is set up (DICTIONARY_URL)
+  enabled: boolean;
+  reason: string | null; // why it's unavailable
+}
+
+export interface StepGroup {
+  id: string;
+  label: string;
+  help: string;
+  steps: StepId[];
+  vision: boolean; // every step in it looks at pages
+}
+
+/** GET /api/settings: the defaults for new documents. */
+export interface AppSettingsView {
+  models: ModelChoices;
+  configured: ModelChoices; // pipeline.yaml's (what "reset" goes back to)
+  overridden: StepId[];
+  dictionary: DictionaryStatus;
+  steps: { step: StepId; label: string; group: string; vision: boolean }[];
+  groups: StepGroup[];
+  efforts: Effort[];
+  // What "Default" stands for: per step, per thinking model, the level and where it comes from.
+  defaults: Partial<Record<StepId, Record<string, { effort: Effort; from: "pipeline.yaml" | "models.yaml" | "built-in" }>>>;
+  flow: PipelineFlowSpec;
+  assist?: boolean; // suggested prompts and Tab completions in the chat
+}
+
+/** The pipeline as a diagram (GET /api/settings → flow). */
+export interface PipelineFlowSpec {
+  rows: string[];
+  nodes: { id: string; kind: "step" | "you" | "context"; step?: StepId; label: string; row: number; col: number }[];
+  edges: [string, string, string?][]; // from, to, and when that way is taken ("issues found")
+}
+
+/** One document's models and dictionary (from its next run). */
+export interface DocSettings {
+  models: ModelChoices;
+  dictionary: DictionaryStatus;
 }
 
 export interface AppConfig {

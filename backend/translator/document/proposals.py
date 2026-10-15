@@ -77,9 +77,11 @@ async def accept(
     session: Session,
     selected: list[str] | None = None,
     choices: dict[str, int] | None = None,
+    confirm: bool = False,
 ) -> dict:
     """Apply the pending proposal (or only the `selected` change keys). Unselected changes are dropped.
-    `choices` picks an alternative per change key (default: the first)."""
+    `choices` picks an alternative per change key (default: the first). `confirm`: the person confirms the new
+    translations as they accept them (Accept & confirm), so they go into the project's TM."""
     proposal = st.get_proposal(session.state)
     if not proposal:
         raise ValueError("There is no pending proposal.")
@@ -98,7 +100,7 @@ async def accept(
     for c in changes:
         seg = st.normalize(view[st.seg_key(c["segment_id"])])
         if c["field"] == "target":
-            seg = st.apply_target(seg, c["after"], origin="agent", status="draft")
+            seg = st.apply_target(seg, c["after"], origin="agent", status="confirmed" if confirm else "draft")
         else:  # OCR fix in the source: the translation needs another look
             seg = {**seg, "source": c["after"], "status": "draft", "updated_at": time.time()}
             seg["flags"] = qa.check_segment(seg, seg.get("target"))
@@ -135,13 +137,16 @@ async def accept(
         text += f" ({dropped} left out)"
     if proposal.get("glossary"):
         text += f"; glossary +{len(proposal['glossary'])}"
-    await session_service.append_event(session, activity_event(text, delta, artifact_delta))
-    # Confirmed segments go into the project's translation memory.
     done = [view[st.seg_key(i)] for i in changed_ids if view[st.seg_key(i)].get("status") in st.HUMAN_DONE]
-    if done:
-        from .edits import remember  # local: segments → versions → pipeline; keep this module light
+    if done:  # Accept & confirm: the confirmed translations go into the project's TM
+        from .edits import save_to_memory  # local: edits imports this module
 
-        remember(session, done)
+        saved = await save_to_memory(view, done, "proposal")
+        for i in saved:
+            delta[st.seg_key(i)] = {**delta[st.seg_key(i)], "tm_saved": True}
+        if saved:
+            text += f"; {len(saved)} confirmed and saved to the TM"
+    await session_service.append_event(session, activity_event(text, delta, artifact_delta))
     return {"version": version, "applied": len(changes), "dropped": dropped}
 
 

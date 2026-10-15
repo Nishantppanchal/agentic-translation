@@ -5,6 +5,7 @@ import {
   Bot,
   Check,
   CheckCheck,
+  Database,
   FilePenLine,
   Lightbulb,
   Lock,
@@ -16,12 +17,23 @@ import {
   Sparkles,
   X,
 } from "lucide-react";
+import { AnimatePresence, motion } from "motion/react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
+import { Input } from "@/components/ui/input";
+import { Toggle } from "@/components/ui/toggle";
+import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
+import { rise } from "@/lib/motion";
+import { REWRITES } from "@/lib/rewrites";
 import type { DocumentState, Proposal, ProposalChange, QaIssue, Role, Segment, SegmentStatus, StatusCounts, TaskKind, Term, TmMatch } from "@/lib/types";
-import { DiffText } from "../document/Diff";
+import { RewriteMenu } from "../document/RewriteMenu";
+import { RichDiff } from "../document/RichDiff";
+import { CommentThread } from "./CommentThread";
 import { changeKey, type ProposalPick } from "../chat/proposalPick";
-import { qeStyle } from "../document/QualityView";
+import { qeStyle, SeverityBadge } from "../document/QualityView";
 import { FindReplace } from "./FindReplace";
 import { TermCard, TermText, TmPanel } from "./TmPanel";
 import { issuesBySegment, type QaState } from "./useQa";
@@ -37,19 +49,11 @@ const FILTER_LABEL: Record<Filter, string> = {
 };
 const openComments = (s: Segment) => (s.comments ?? []).filter((c) => !c.resolved).length;
 
-/** One-click rewrite requests for selected segments (the result is a proposal to accept or reject). */
-const QUICK_TASKS: { label: string; kind: TaskKind; instruction: string; n: number }[] = [
-  { label: "More formal", kind: "retranslate", instruction: "More formal register.", n: 1 },
-  { label: "Simpler", kind: "retranslate", instruction: "Simpler, plain language for non-experts.", n: 1 },
-  { label: "Shorter", kind: "retranslate", instruction: "More concise: as short as possible without losing meaning.", n: 1 },
-  { label: "3 alternatives", kind: "alternatives", instruction: "", n: 3 },
-];
-
 const STATUS_STYLE: Record<SegmentStatus, string> = {
-  new: "bg-sidebar text-muted",
+  new: "bg-muted text-muted-foreground",
   draft: "bg-warn text-warn-fg",
   confirmed: "bg-ins text-ins-fg",
-  reviewed: "bg-accent-soft text-accent",
+  reviewed: "bg-primary-soft text-primary",
 };
 
 /** Textarea that grows with its content (no clipped long segments). */
@@ -91,12 +95,16 @@ const ORIGIN_LABEL: Record<string, string> = {
   agent: "AI edit",
   human: "Human",
   copy: "Copy",
-  tm_exact: "TM 100%",
-  tm_fuzzy: "TM fuzzy",
+  tm: "TM",
 };
 
+/** How the current text was made: "TM 101%" (reused), "MT · TM 87%" (the translator adapted a fuzzy match). */
 const originLabel = (seg: Segment) =>
-  seg.origin?.startsWith("tm_") && seg.match ? `TM ${seg.match}%${seg.origin === "tm_fuzzy" ? " → MT" : ""}` : (ORIGIN_LABEL[seg.origin ?? ""] ?? seg.origin);
+  seg.origin === "tm" && seg.match
+    ? `TM ${seg.match}%`
+    : seg.origin === "mt" && seg.match
+      ? `MT · TM ${seg.match}%`
+      : (ORIGIN_LABEL[seg.origin ?? ""] ?? seg.origin);
 
 function counts(segments: Segment[]): StatusCounts {
   const c: StatusCounts = { new: 0, draft: 0, confirmed: 0, reviewed: 0, total: 0 };
@@ -120,6 +128,9 @@ export function SegmentGrid({
   doc,
   hasProject,
   editable,
+  canComment,
+  role,
+  setRole,
   qa,
   focus,
   onSegment,
@@ -137,6 +148,9 @@ export function SegmentGrid({
   doc: DocumentState;
   hasProject: boolean; // translation memory lookups only exist inside a project
   editable: boolean; // false while agents run or the pipeline hasn't finished
+  canComment: boolean; // comments: any status, as long as nothing is running
+  role: Role; // translator or reviewer: what confirming means, and who comments
+  setRole: (r: Role) => void;
   qa: QaState;
   focus: { id: string; n: number } | null; // jump here (e.g. from the Quality tab)
   onRunTask: (kind: TaskKind, segmentIds: string[], instruction: string, n: number) => Promise<void>;
@@ -145,7 +159,7 @@ export function SegmentGrid({
   onReference: (id: string) => void;
   proposal: Proposal | null; // the agents' pending changes, reviewed here or in the chat card
   pick: ProposalPick;
-  onAcceptProposal: (changes: string[] | null, choices: Record<string, number> | null) => Promise<void>;
+  onAcceptProposal: (changes: string[] | null, choices: Record<string, number> | null, confirm?: boolean) => Promise<void>;
   onRejectProposal: () => Promise<void>;
   onExplain: (segmentId: string) => void; // ask the agent what the source says (for non-speakers)
   onFixIssue: (segmentId: string, issue: QaIssue) => void; // ask the agent to fix one QA issue (as a proposal)
@@ -155,17 +169,16 @@ export function SegmentGrid({
     () => new Map((proposal?.changes ?? []).filter((c) => c.field === "target").map((c) => [c.segment_id, c] as [string, ProposalChange])),
     [proposal],
   );
-  const [deciding, setDeciding] = useState<"accept" | "reject" | null>(null);
-  const decide = async (which: "accept" | "reject") => {
+  const [deciding, setDeciding] = useState<"accept" | "confirm" | "reject" | null>(null);
+  const decide = async (which: "accept" | "confirm" | "reject") => {
     setDeciding(which);
     try {
       if (which === "reject") await onRejectProposal();
-      else await onAcceptProposal(...pick.acceptArgs(proposal?.changes ?? []));
+      else await onAcceptProposal(...pick.acceptArgs(proposal?.changes ?? []), which === "confirm");
     } finally {
       setDeciding(null);
     }
   };
-  const [role, setRole] = useState<Role>("translator");
   const doneStatus: SegmentStatus = role === "translator" ? "confirmed" : "reviewed";
   const [query, setQuery] = useState("");
   const [sort, setSort] = useState<"document" | "qe">("document");
@@ -184,7 +197,7 @@ export function SegmentGrid({
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const lastClicked = useRef<string | null>(null);
   const [custom, setCustom] = useState("");
-  const [comment, setComment] = useState("");
+  const [thread, setThread] = useState<string | null>(null); // the row whose comments are open
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const refs = useRef(new Map<string, HTMLTextAreaElement>());
@@ -268,15 +281,7 @@ export function SegmentGrid({
     }
   };
 
-  const commentAction = async (fn: () => Promise<{ segment: Segment }>) => {
-    setError(null);
-    try {
-      const res = await fn();
-      onSegment(res.segment, doc.human_dirty);
-    } catch (e) {
-      setError(String(e));
-    }
-  };
+  const onCommented = (seg: Segment | null) => (seg ? onSegment(seg, doc.human_dirty) : onReload());
 
   const neighbour = (id: string, dir: 1 | -1, predicate: (s: Segment) => boolean = () => true) => {
     const i = rows.findIndex((s) => s.id === id);
@@ -373,157 +378,172 @@ export function SegmentGrid({
   return (
     <div className="flex h-full flex-col">
       {/* Toolbar */}
-      <div className="sticky top-0 z-10 -mx-6 -mt-5 mb-3 space-y-2 border-b border-border bg-panel px-6 pt-3 pb-2.5">
+      <div className="sticky -top-5 z-10 -mx-6 -mt-5 mb-3 space-y-2.5 border-b border-border bg-card/95 px-6 pt-3 pb-3 backdrop-blur">
         <div className="flex flex-wrap items-center gap-x-3 gap-y-2 text-xs">
           <div className="min-w-[180px] flex-1">
-            <div className="mb-1 flex justify-between text-muted">
+            <div className="mb-1.5 flex justify-between text-muted-foreground">
               <span>
-                <b className="text-fg">{done}</b>/{c.total} done · {c.reviewed} reviewed · {c.confirmed} confirmed ·{" "}
+                <b className="text-foreground tabular-nums">{done}</b>/{c.total} done · {c.reviewed} reviewed · {c.confirmed} confirmed ·{" "}
                 {c.draft} draft{c.new ? ` · ${c.new} new` : ""}
               </span>
-              <span>{pct}%</span>
+              <span className="tabular-nums">{pct}%</span>
             </div>
-            <div className="flex h-1.5 overflow-hidden rounded-full bg-sidebar">
-              <div className="bg-accent/70" style={{ width: `${c.total ? (100 * c.reviewed) / c.total : 0}%` }} />
-              <div className="bg-ins-fg/70" style={{ width: `${c.total ? (100 * c.confirmed) / c.total : 0}%` }} />
+            <div className="flex h-1.5 overflow-hidden rounded-full bg-muted">
+              <div className="bg-primary transition-[width] duration-500" style={{ width: `${c.total ? (100 * c.reviewed) / c.total : 0}%` }} />
+              <div className="bg-ins-fg/70 transition-[width] duration-500" style={{ width: `${c.total ? (100 * c.confirmed) / c.total : 0}%` }} />
             </div>
           </div>
-          <div className="flex overflow-hidden rounded-md border border-border" title="What Ctrl+Enter does">
-            {(["translator", "reviewer"] as Role[]).map((r) => (
-              <button
-                key={r}
-                onClick={() => setRole(r)}
-                className={`px-2 py-1 capitalize ${role === r ? "bg-fg text-bg" : "text-muted hover:text-fg"}`}
-              >
-                {r}
-              </button>
-            ))}
-          </div>
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <span>
+                <ToggleGroup
+                  type="single"
+                  variant="outline"
+                  size="sm"
+                  value={role}
+                  onValueChange={(v) => v && setRole(v as Role)}
+                  aria-label="Your role: what Ctrl+Enter does"
+                >
+                  {(["translator", "reviewer"] as Role[]).map((r) => (
+                    <ToggleGroupItem key={r} value={r} className="h-7 px-2.5 text-xs capitalize data-[state=on]:bg-foreground data-[state=on]:text-background">
+                      {r}
+                    </ToggleGroupItem>
+                  ))}
+                </ToggleGroup>
+              </span>
+            </TooltipTrigger>
+            <TooltipContent>Your role: what Ctrl+Enter does, and who your comments are from</TooltipContent>
+          </Tooltip>
           {role === "translator" ? (
-            <button
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
               disabled={!editable || aiPassedDrafts === 0}
               onClick={() => bulk(() => api.confirmSegments(sessionId, null, "translator"))}
-              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 whitespace-nowrap hover:border-accent disabled:opacity-40"
-              title="Confirm every draft the AI reviewer found no major problem in. Not added to the translation memory: confirm segments one by one (Ctrl+Enter) to store them as approved wording"
+              title="Confirm every draft the AI reviewer found no major problem in. They go into the translation memory marked as confirmed in bulk (never auto-confirmed later)."
             >
-              <CheckCheck size={13} /> Confirm AI-checked ({aiPassedDrafts})
-            </button>
+              <CheckCheck /> Confirm AI-checked ({aiPassedDrafts})
+            </Button>
           ) : (
-            <button
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 text-xs"
               disabled={!editable || c.confirmed === 0}
               onClick={() => bulk(() => api.confirmSegments(sessionId, null, "reviewer"))}
-              className="flex items-center gap-1 rounded-md border border-border px-2 py-1 whitespace-nowrap hover:border-accent disabled:opacity-40"
               title="Second-linguist sign-off: mark every confirmed segment as reviewed"
             >
-              <CheckCheck size={13} /> Mark confirmed as reviewed ({c.confirmed})
-            </button>
+              <CheckCheck /> Mark confirmed as reviewed ({c.confirmed})
+            </Button>
           )}
-          <button
-            onClick={() => setShowReplace((v) => !v)}
-            className={`flex items-center gap-1 rounded-md border px-2 py-1 ${showReplace ? "border-accent text-accent" : "border-border hover:border-accent"}`}
-            title="Find & replace in the translations"
+          <Toggle
+            size="sm"
+            variant="outline"
+            pressed={showReplace}
+            onPressedChange={setShowReplace}
+            className="h-7 text-xs data-[state=on]:border-primary/50 data-[state=on]:bg-primary-soft data-[state=on]:text-primary"
+            aria-label="Find and replace in the translations"
           >
-            <Replace size={13} /> Replace
-          </button>
-          <button
+            <Replace /> Replace
+          </Toggle>
+          <Button
+            size="sm"
+            className="h-7 text-xs"
             disabled={!editable || pending === 0}
             onClick={() => bulk(() => api.saveVersion(sessionId))}
-            className="flex items-center gap-1 rounded-md bg-accent px-2 py-1 whitespace-nowrap text-white disabled:opacity-40"
             title="Save your edits as a new version (also happens automatically before agent runs and exports)"
           >
-            <Save size={13} /> Save version{pending ? ` (${pending})` : ""}
-          </button>
+            <Save /> Save version{pending ? ` (${pending})` : ""}
+          </Button>
         </div>
         <div className="flex flex-wrap items-center gap-1.5 text-xs">
-          {(["all", "todo", "qa", "comments", "confirmed", ...(proposed.size ? ["proposed"] : [])] as Filter[]).map((f) => (
-            <button
-              key={f}
-              onClick={() => setFilter(f)}
-              className={`rounded-full px-2.5 py-0.5 whitespace-nowrap ${filter === f ? "bg-fg text-bg" : "bg-sidebar text-muted hover:text-fg"}`}
-            >
-              {FILTER_LABEL[f]}
-              {f === "qa" && qaBySeg.size > 0 && <span className="ml-1 opacity-70">{qaBySeg.size}</span>}
-              {f === "proposed" && <span className="ml-1 opacity-70">{proposed.size}</span>}
-            </button>
-          ))}
-          <button
-            onClick={() => setSort((v) => (v === "qe" ? "document" : "qe"))}
-            className={`flex items-center gap-1 rounded-full px-2.5 py-0.5 whitespace-nowrap ${sort === "qe" ? "bg-fg text-bg" : "bg-sidebar text-muted hover:text-fg"}`}
+          <ToggleGroup type="single" value={filter} onValueChange={(v) => v && setFilter(v as Filter)} className="flex-wrap justify-start gap-1" aria-label="Show">
+            {(["all", "todo", "qa", "comments", "confirmed", ...(proposed.size ? ["proposed"] : [])] as Filter[]).map((f) => (
+              <ToggleGroupItem
+                key={f}
+                value={f}
+                className="h-6 min-w-0 rounded-full bg-muted px-2.5 text-xs whitespace-nowrap text-muted-foreground data-[state=on]:bg-foreground data-[state=on]:text-background"
+              >
+                {FILTER_LABEL[f]}
+                {f === "qa" && qaBySeg.size > 0 && <span className="tabular-nums opacity-70">{qaBySeg.size}</span>}
+                {f === "proposed" && <span className="tabular-nums opacity-70">{proposed.size}</span>}
+              </ToggleGroupItem>
+            ))}
+          </ToggleGroup>
+          <Toggle
+            pressed={sort === "qe"}
+            onPressedChange={(on) => setSort(on ? "qe" : "document")}
+            className="h-6 min-w-0 rounded-full bg-muted px-2.5 text-xs whitespace-nowrap text-muted-foreground data-[state=on]:bg-foreground data-[state=on]:text-background"
             title="Review queue: lowest AI quality estimate first"
           >
-            <ArrowDownWideNarrow size={12} /> Lowest score first
-          </button>
-          <label className="ml-auto flex items-center gap-1 rounded-md border border-border px-2 py-0.5">
-            <Search size={12} className="text-muted" />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Filter text…"
-              className="w-36 bg-transparent outline-none"
-            />
-          </label>
+            <ArrowDownWideNarrow className="size-3" /> Lowest score first
+          </Toggle>
+          <div className="relative ml-auto">
+            <Search size={13} className="pointer-events-none absolute top-1/2 left-2 -translate-y-1/2 text-muted-foreground" />
+            <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Filter text…" className="h-7 w-44 pl-7 text-xs" aria-label="Filter segments by text" />
+          </div>
         </div>
-        <div className="text-[10px] text-muted">
+        <div className="text-[10px] text-muted-foreground">
           {editable
             ? `⌘/Ctrl+Enter ${role === "translator" ? "confirm" : "mark reviewed"} & next · Alt+↑/↓ move · Esc revert · Alt+S copy source${hasProject ? " · Alt+1–3 insert TM match" : ""} · edits save when you leave a segment · "AI ✓" = passed the AI review (not a human check)`
             : "Read-only while the agents are working — editing unlocks when the pipeline finishes."}
         </div>
-        {error && <div className="rounded bg-del px-2 py-1 text-xs text-del-fg">{error}</div>}
-        {proposed.size > 0 && (
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-accent/40 bg-accent-soft px-2 py-1.5 text-xs">
-            <FilePenLine size={13} className="text-accent" />
-            <b>
-              The agent proposes {proposed.size} change{proposed.size === 1 ? "" : "s"}
-            </b>
-            <span className="text-muted">— shown under each segment; untick what you don&apos;t want.</span>
-            <span className="ml-auto flex gap-1.5">
-              <button
-                onClick={() => decide("reject")}
-                disabled={!!deciding}
-                className="flex items-center gap-1 rounded-md px-2 py-0.5 text-muted hover:text-del-fg disabled:opacity-40"
-              >
-                <X size={12} /> Reject all
-              </button>
-              <button
-                onClick={() => decide("accept")}
-                disabled={!!deciding || [...proposed.keys()].every((id) => pick.excluded.has(`${id}|target`))}
-                className="flex items-center gap-1 rounded-md bg-accent px-2 py-0.5 font-medium text-white disabled:opacity-40"
-              >
-                <Check size={12} />
-                {pick.excluded.size
-                  ? `Apply ${[...proposed.keys()].filter((id) => !pick.excluded.has(`${id}|target`)).length} selected`
-                  : "Apply all"}
-              </button>
-            </span>
-          </div>
-        )}
-        {selected.size > 0 && (
-          <div className="flex flex-wrap items-center gap-1.5 rounded-md bg-accent-soft px-2 py-1.5 text-xs">
-            <Sparkles size={13} className="text-accent" />
-            <b>{selected.size} selected</b> — ask the agent to rewrite:
-            {QUICK_TASKS.map((t) => (
-              <button
-                key={t.label}
-                disabled={!editable}
-                onClick={() => runTask(t.kind, t.instruction, t.n)}
-                className="rounded-md border border-accent/40 bg-panel px-2 py-0.5 hover:border-accent disabled:opacity-40"
-              >
-                {t.label}
-              </button>
-            ))}
-            <input
-              value={custom}
-              onChange={(e) => setCustom(e.target.value)}
-              onKeyDown={(e) => e.key === "Enter" && custom.trim() && editable && runTask("retranslate", custom.trim(), 1)}
-              placeholder="or your own instruction, Enter"
-              className="w-56 rounded-md border border-border bg-panel px-2 py-0.5 outline-none focus:border-accent"
-            />
-            <span className="text-muted">Results come back as a proposal to accept or reject.</span>
-            <button onClick={() => setSelected(new Set())} className="ml-auto p-0.5 text-muted hover:text-fg" title="Clear selection">
-              <X size={13} />
-            </button>
-          </div>
-        )}
+        {error && <div className="rounded-md bg-del px-2 py-1 text-xs text-del-fg">{error}</div>}
+        <AnimatePresence initial={false}>
+          {proposed.size > 0 && (
+            <motion.div key="proposal" {...rise} className="flex flex-wrap items-center gap-2 rounded-lg border border-primary/40 bg-primary-soft px-3 py-2 text-xs">
+              <FilePenLine size={14} className="text-primary" />
+              <b>
+                The agent proposes {proposed.size} change{proposed.size === 1 ? "" : "s"}
+              </b>
+              <span className="text-muted-foreground">— shown under each segment; untick what you don&apos;t want.</span>
+              <span className="ml-auto flex gap-1.5">
+                <Button variant="ghost" size="xs" onClick={() => decide("reject")} disabled={!!deciding} className="text-muted-foreground hover:text-del-fg">
+                  <X /> Reject all
+                </Button>
+                <Button
+                  variant="outline"
+                  size="xs"
+                  onClick={() => decide("confirm")}
+                  disabled={!!deciding || [...proposed.keys()].every((id) => pick.excluded.has(`${id}|target`))}
+                  title="Apply, and confirm the new translations (they go into the project's translation memory)"
+                >
+                  <CheckCheck /> Apply &amp; confirm
+                </Button>
+                <Button size="xs" onClick={() => decide("accept")} disabled={!!deciding || [...proposed.keys()].every((id) => pick.excluded.has(`${id}|target`))}>
+                  <Check />
+                  {pick.excluded.size
+                    ? `Apply ${[...proposed.keys()].filter((id) => !pick.excluded.has(`${id}|target`)).length} selected`
+                    : "Apply all"}
+                </Button>
+              </span>
+            </motion.div>
+          )}
+          {selected.size > 0 && (
+            <motion.div key="selection" {...rise} className="flex flex-wrap items-center gap-1.5 rounded-lg bg-primary-soft px-3 py-2 text-xs">
+              <Sparkles size={14} className="text-primary" />
+              <b>{selected.size} selected</b> — ask the agent to rewrite:
+              {REWRITES.map((t) => (
+                <Button key={t.label} variant="outline" size="xs" disabled={!editable} onClick={() => runTask(t.kind, t.instruction, t.n)} title={t.hint} className="bg-card">
+                  {t.label}
+                </Button>
+              ))}
+              <Input
+                value={custom}
+                onChange={(e) => setCustom(e.target.value)}
+                onKeyDown={(e) => e.key === "Enter" && custom.trim() && editable && runTask("retranslate", custom.trim(), 1)}
+                placeholder="or your own instruction, Enter"
+                className="h-6 w-56 bg-card text-xs"
+                aria-label="Your own rewrite instruction"
+              />
+              <span className="text-muted-foreground">Results come back as a proposal to accept or reject.</span>
+              <Button variant="ghost" size="icon-xs" onClick={() => setSelected(new Set())} className="ml-auto" aria-label="Clear selection">
+                <X />
+              </Button>
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
       {showReplace && (
         <FindReplace
@@ -550,34 +570,39 @@ export function SegmentGrid({
           return (
             <div
               key={seg.id}
-              className={`grid grid-cols-[64px_1fr_1fr_96px] gap-3 py-2 [content-visibility:auto] ${
-                active === seg.id ? "bg-accent-soft/40" : selected.has(seg.id) ? "bg-accent-soft/20" : ""
+              className={`group/row grid grid-cols-[72px_1fr_1fr_104px] gap-3 py-2.5 transition-colors [content-visibility:auto] ${
+                active === seg.id ? "bg-primary-soft/50" : selected.has(seg.id) ? "bg-primary-soft/25" : "hover:bg-muted/30"
               }`}
             >
-              <div className="self-start pt-1">
+              <div className="flex items-start gap-1.5 self-start pt-1">
               {seg.translatable && !seg.locked && (
-                <input
-                  type="checkbox"
+                <Checkbox
                   checked={selected.has(seg.id)}
-                  onChange={() => undefined}
                   onClick={(e) => toggleSelect(seg.id, e.shiftKey)}
-                  className="mr-1 align-middle accent-[var(--accent)]"
+                  className="mt-px size-3.5"
                   title="Select (shift-click for a range) to rewrite with the agent"
                   aria-label={`Select ${seg.id}`}
                 />
               )}
               <button
                 onClick={() => onReference(seg.id)}
-                className="text-left align-middle font-mono text-[10px] text-muted hover:text-accent"
+                className="min-w-0 text-left font-mono text-[10px] text-muted-foreground hover:text-primary"
                 title="Reference in chat"
               >
                 {seg.id}
-                {(seg.kind === "header" || seg.kind === "footer") && (
-                  <span className="block text-[9px] tracking-wide text-muted uppercase">{seg.kind}</span>
+                {(seg.kind === "header" || seg.kind === "footer" || seg.kind === "alt" || (seg.kind === "figure" && !!seg.loc)) && (
+                  <span className="block text-[9px] tracking-wide text-muted-foreground uppercase">
+                    {seg.kind === "alt" ? "Alt text" : seg.kind === "figure" ? "Picture" : seg.kind}
+                  </span>
+                )}
+                {seg.where && seg.where !== "Body" && (
+                  <span className="mt-0.5 block text-[9px] leading-tight break-words text-muted-foreground" title={seg.where}>
+                    {seg.where.length > 28 ? `${seg.where.slice(0, 27)}…` : seg.where}
+                  </span>
                 )}
               </button>
               </div>
-              <div className="text-sm whitespace-pre-wrap text-muted">
+              <div className="text-sm whitespace-pre-wrap text-muted-foreground">
                 {seg.kind === "figure" && (
                   // eslint-disable-next-line @next/next/no-img-element
                   <img src={api.figureUrl(sessionId, seg.image ?? "")} alt="" className="mb-1 max-h-24 rounded border border-border" />
@@ -602,70 +627,93 @@ export function SegmentGrid({
                 }}
                 onBlur={() => canEdit && save(seg, false)}
                 onKeyDown={(e) => canEdit && onKeyDown(e, seg)}
-                className={`w-full self-start resize-none overflow-hidden rounded-md border bg-bg px-2 py-1 text-sm outline-none ${
+                className={`w-full self-start resize-none overflow-hidden rounded-md border bg-background px-2 py-1 text-sm transition-[border-color,box-shadow] outline-none ${
                   dirty ? "border-warn-fg" : "border-transparent"
-                } ${canEdit ? "focus:border-accent" : "cursor-default opacity-80"}`}
+                } ${canEdit ? "hover:border-border focus:border-ring focus:ring-[3px] focus:ring-ring/30" : "cursor-default opacity-80"}`}
               />
               <div className="flex flex-col items-start gap-1 pt-1 text-[10px]">
-                <span className={`rounded px-1.5 py-0.5 font-medium capitalize ${STATUS_STYLE[seg.status]}`}>
-                  {busy === seg.id ? "saving…" : seg.status}
-                </span>
-                {seg.origin && <span className="text-muted">{originLabel(seg)}</span>}
-                {seg.qe != null && (
-                  <span className={`font-medium ${qeStyle(seg.qe)}`} title="AI quality estimate (0-100) from the last review or LQA">
-                    QE {seg.qe}
+                <div className="flex flex-wrap items-center gap-1">
+                  <span className={`rounded-full px-2 py-0.5 font-medium capitalize ${STATUS_STYLE[seg.status]}`}>
+                    {busy === seg.id ? "saving…" : seg.status}
                   </span>
-                )}
-                {issues.length > 0 && (
-                  <span
-                    className={`rounded px-1 ${errors ? "bg-del text-del-fg" : "bg-warn text-warn-fg"}`}
-                    title={issues.map((i) => `${i.label}: ${i.message}`).join("\n")}
+                  {issues.length > 0 && (
+                    <span
+                      className={`rounded-full px-1.5 py-0.5 font-medium ${errors ? "bg-del text-del-fg" : "bg-warn text-warn-fg"}`}
+                      title={issues.map((i) => `${i.label}: ${i.message}`).join("\n")}
+                    >
+                      QA {issues.length}
+                    </span>
+                  )}
+                  {seg.flags?.map((f) => (
+                    <span key={f} className="rounded-full bg-warn px-1.5 py-0.5 text-warn-fg">
+                      {f}
+                    </span>
+                  ))}
+                </div>
+                <div className="flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-muted-foreground">
+                  {seg.origin && (
+                    <span title={seg.origin === "mt" && seg.match ? `Machine translation, adapted from a ${seg.match}% translation-memory match` : undefined}>
+                      {originLabel(seg)}
+                    </span>
+                  )}
+                  {seg.qe != null && (
+                    <span className={`font-medium tabular-nums ${qeStyle(seg.qe)}`} title="AI quality estimate (0-100) from the last review or LQA">
+                      QE {seg.qe}
+                    </span>
+                  )}
+                  {seg.ai_check && (
+                    <span
+                      className={`flex items-center gap-0.5 ${seg.ai_check === "passed" ? "text-ins-fg" : "text-warn-fg"}`}
+                      title={seg.ai_check === "passed" ? "The AI reviewer found no major problem (not a human review)" : "The AI reviewer raised a major issue"}
+                    >
+                      <Bot size={11} /> {seg.ai_check === "passed" ? "AI ✓" : "AI: issues"}
+                    </span>
+                  )}
+                  {hasProject && seg.tm_saved && (
+                    <span className="flex items-center gap-0.5 text-ins-fg" title="This translation is in the project's translation memory">
+                      <Database size={11} /> in TM
+                    </span>
+                  )}
+                </div>
+                <div
+                  className={`flex items-center gap-0.5 transition-opacity ${
+                    seg.comments?.length || thread === seg.id || seg.locked
+                      ? ""
+                      : "opacity-0 group-hover/row:opacity-100 focus-within:opacity-100 has-[[data-state=open]]:opacity-100 pointer-coarse:opacity-100"
+                  }`}
+                >
+                  <RowAction
+                    label={
+                      seg.comments?.length
+                        ? `${openComments(seg)} open comment${openComments(seg) === 1 ? "" : "s"} of ${seg.comments.length}`
+                        : "Add a comment"
+                    }
+                    onClick={() => setThread((t) => (t === seg.id ? null : seg.id))}
+                    active={!!openComments(seg)}
+                    expanded={thread === seg.id}
                   >
-                    QA {issues.length}
-                  </span>
-                )}
-                {seg.ai_check && (
-                  <span
-                    className={`flex items-center gap-0.5 ${seg.ai_check === "passed" ? "text-ins-fg" : "text-warn-fg"}`}
-                    title={seg.ai_check === "passed" ? "The AI reviewer found no major problem (not a human review)" : "The AI reviewer raised a major issue"}
-                  >
-                    <Bot size={11} /> {seg.ai_check === "passed" ? "AI ✓" : "AI: issues"}
-                  </span>
-                )}
-                {seg.flags?.map((f) => (
-                  <span key={f} className="rounded bg-warn px-1 text-warn-fg">
-                    {f}
-                  </span>
-                ))}
-                {(seg.comments?.length ?? 0) > 0 && (
-                  <button
-                    onClick={() => refs.current.get(seg.id)?.focus()}
-                    className={`flex items-center gap-0.5 ${openComments(seg) ? "text-accent" : "text-muted"}`}
-                    title={`${openComments(seg)} open comment${openComments(seg) === 1 ? "" : "s"}`}
-                  >
-                    <MessageSquare size={11} /> {openComments(seg) || "✓"}
-                  </button>
-                )}
-                {seg.translatable && (
-                  <button
-                    onClick={() => onExplain(seg.id)}
-                    className="flex items-center gap-0.5 text-muted hover:text-accent"
-                    title="Ask the agent what the source says and whether the translation carries it (answer only, no edits)"
-                  >
-                    <Lightbulb size={11} /> explain
-                  </button>
-                )}
-                {seg.translatable && (
-                  <button
-                    disabled={!editable}
-                    onClick={() => toggleLock(seg)}
-                    className="flex items-center gap-0.5 text-muted hover:text-fg disabled:opacity-40"
-                    title={seg.locked ? "Unlock (agents and edits allowed)" : "Lock (no one may change it)"}
-                  >
-                    {seg.locked ? <Lock size={11} /> : <LockOpen size={11} />}
-                    {seg.locked ? "locked" : "lock"}
-                  </button>
-                )}
+                    <MessageSquare size={12} />
+                    {!!seg.comments?.length && <span className="tabular-nums">{openComments(seg) || "✓"}</span>}
+                  </RowAction>
+                  {seg.translatable && (
+                    <RowAction label="Explain: what the source says, and whether the translation carries it (an answer, no edits)" onClick={() => onExplain(seg.id)}>
+                      <Lightbulb size={12} />
+                    </RowAction>
+                  )}
+                  {seg.translatable && (
+                    <RowAction
+                      label={seg.locked ? "Locked — click to unlock (agents and edits allowed)" : "Lock (no one may change it)"}
+                      onClick={() => toggleLock(seg)}
+                      disabled={!editable}
+                      active={seg.locked}
+                    >
+                      {seg.locked ? <Lock size={12} /> : <LockOpen size={12} />}
+                    </RowAction>
+                  )}
+                  {seg.translatable && !!seg.target && !seg.locked && (
+                    <RewriteMenu ids={[seg.id]} editable={editable} onRunTask={onRunTask} compact />
+                  )}
+                </div>
               </div>
               {proposed.has(seg.id) && (
                 <ProposedChange change={proposed.get(seg.id)!} pick={pick} disabled={!!deciding} />
@@ -673,22 +721,20 @@ export function SegmentGrid({
               {issues.length > 0 && (
                 // Always visible: what's wrong with this segment, not just a count.
                 <ul
-                  className={`col-span-4 -mt-1 mb-1 ml-[76px] space-y-0.5 rounded-md border-l-2 bg-bg px-3 py-1.5 text-xs ${
+                  className={`col-span-4 -mt-1 mb-1 ml-[84px] space-y-1 rounded-lg border-l-2 bg-background px-3 py-2 text-xs ${
                     errors ? "border-del-fg" : "border-warn-fg"
                   }`}
                 >
                   {issues.map((i) => (
                     <li key={i.id} className="group/issue flex items-start gap-2">
-                      <span className={`mt-0.5 shrink-0 rounded px-1 text-[10px] font-medium uppercase ${i.severity === "error" ? "bg-del text-del-fg" : "bg-warn text-warn-fg"}`}>
-                        {i.severity}
-                      </span>
-                      <span className="shrink-0 text-muted">{i.label}</span>
+                      <SeverityBadge severity={i.severity} />
+                      <span className="shrink-0 text-muted-foreground">{i.label}</span>
                       <span className="flex-1">{i.message}</span>
                       {editable && (
                         <button
                           onMouseDown={(e) => e.preventDefault()} // keep focus in the target box
                           onClick={() => onFixIssue(seg.id, i)}
-                          className="shrink-0 text-accent hover:underline"
+                          className="shrink-0 text-primary hover:underline"
                           title="Ask the agent to fix this — the change comes back as a proposal"
                         >
                           Fix
@@ -697,7 +743,7 @@ export function SegmentGrid({
                       <button
                         onMouseDown={(e) => e.preventDefault()}
                         onClick={() => qa.ignore([i.id])}
-                        className="shrink-0 text-muted hover:text-fg"
+                        className="shrink-0 text-muted-foreground hover:text-foreground"
                         title="Ignore (comes back if the text changes)"
                       >
                         Ignore
@@ -706,48 +752,19 @@ export function SegmentGrid({
                   ))}
                 </ul>
               )}
-              {active === seg.id && (
-                <div className="col-span-4 -mt-1 mb-1 ml-[76px] rounded-md border border-border bg-bg px-3 py-2 text-xs">
-                  <div className="mb-1 flex items-center gap-1.5 font-medium text-muted">
-                    <MessageSquare size={12} /> Comments
-                  </div>
-                  {(seg.comments ?? []).map((c) => (
-                    <div key={c.id} className={`group mb-1 flex items-start gap-2 ${c.resolved ? "opacity-50" : ""}`}>
-                      <span className="shrink-0 rounded bg-sidebar px-1 text-[10px] text-muted capitalize">{c.role}</span>
-                      <span className={`flex-1 ${c.resolved ? "line-through" : ""}`}>{c.text}</span>
-                      <button
-                        disabled={!editable}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => commentAction(() => api.resolveComment(sessionId, seg.id, c.id, !c.resolved))}
-                        className="shrink-0 text-muted hover:text-fg disabled:opacity-40"
-                      >
-                        {c.resolved ? "Reopen" : "Resolve"}
-                      </button>
-                      <button
-                        disabled={!editable}
-                        onMouseDown={(e) => e.preventDefault()}
-                        onClick={() => commentAction(() => api.deleteComment(sessionId, seg.id, c.id))}
-                        className="shrink-0 text-muted opacity-0 group-hover:opacity-100 hover:text-del-fg disabled:opacity-40"
-                        title="Delete"
-                      >
-                        <X size={12} />
-                      </button>
-                    </div>
-                  ))}
-                  <input
-                    value={comment}
-                    disabled={!editable}
-                    onChange={(e) => setComment(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && comment.trim()) {
-                        e.preventDefault();
-                        commentAction(() => api.addComment(sessionId, seg.id, comment.trim(), role)).then(() => setComment(""));
-                      }
-                    }}
-                    placeholder={`Add a comment as ${role} — Enter to post`}
-                    className="w-full rounded border border-border bg-panel px-2 py-1 outline-none focus:border-accent disabled:opacity-50"
-                  />
-                </div>
+              {(thread === seg.id || (active === seg.id && !!seg.comments?.length)) && (
+                <CommentThread
+                  key={`thread-${seg.id}`}
+                  sessionId={sessionId}
+                  segId={seg.id}
+                  comments={seg.comments ?? []}
+                  canComment={canComment}
+                  role={role}
+                  onChanged={onCommented}
+                  onClose={thread === seg.id ? () => setThread(null) : undefined}
+                  autoFocus={thread === seg.id && !seg.comments?.length}
+                  className="col-span-4 -mt-1 mb-1 ml-[84px]"
+                />
               )}
               {hasProject && active === seg.id && tm?.id === seg.id && (
                 <TmPanel
@@ -761,56 +778,120 @@ export function SegmentGrid({
             </div>
           );
         })}
-        {rows.length === 0 && <p className="py-6 text-center text-sm text-muted">No segments match.</p>}
+        {rows.length === 0 && <p className="py-6 text-center text-sm text-muted-foreground">No segments match.</p>}
+        {filter === "comments" && !!doc.orphan_comments?.length && (
+          <div className="py-3">
+            <div className="mb-1 text-xs font-medium text-muted-foreground">On text that has changed since</div>
+            {doc.orphan_comments.map((c) => (
+              <div key={c.id} className={`mb-1 flex items-start gap-2 text-xs ${c.resolved ? "opacity-50" : ""}`}>
+                <span className="shrink-0 rounded-full bg-muted px-1.5 text-[10px] text-muted-foreground capitalize">{c.role}</span>
+                <span className="min-w-0 flex-1">
+                  {c.text}
+                  <span className="block truncate text-muted-foreground" title={c.anchor}>
+                    was on: {c.anchor}
+                  </span>
+                </span>
+                {canComment && (
+                  <button
+                    onClick={() =>
+                      api
+                        .deleteComment(sessionId, c.seg_id, c.id)
+                        .then(onReload)
+                        .catch((e) => setError(String(e)))
+                    }
+                    className="shrink-0 text-muted-foreground hover:text-del-fg"
+                    title="Delete"
+                    aria-label="Delete comment"
+                  >
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            ))}
+          </div>
+        )}
       </div>
       {hover && <TermCard term={hover.term} anchor={hover.rect} />}
     </div>
   );
 }
 
-/** A pending agent change shown in place, under the segment: include it or not, or pick an alternative. */
+/** An icon action on a grid row (comment, explain, lock), with its label as a tooltip. */
+function RowAction({
+  label,
+  onClick,
+  disabled,
+  active = false,
+  expanded,
+  children,
+}: {
+  label: string;
+  onClick: () => void;
+  disabled?: boolean;
+  active?: boolean;
+  expanded?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger asChild>
+        <button
+          type="button"
+          onClick={onClick}
+          disabled={disabled}
+          aria-label={label}
+          aria-expanded={expanded}
+          className={`flex h-6 min-w-6 items-center justify-center gap-0.5 rounded-md px-1 transition-colors hover:bg-accent disabled:opacity-40 ${
+            active ? "text-primary" : "text-muted-foreground hover:text-foreground"
+          }`}
+        >
+          {children}
+        </button>
+      </TooltipTrigger>
+      <TooltipContent className="max-w-64">{label}</TooltipContent>
+    </Tooltip>
+  );
+}
+
+/** A pending agent change shown in place, under the segment: include it or not, or pick an alternative. The change
+ * reads as the document does (RichDiff; its markdown toggle shows the raw diff). */
 function ProposedChange({ change, pick, disabled }: { change: ProposalChange; pick: ProposalPick; disabled: boolean }) {
   const k = changeKey(change);
   const included = !pick.excluded.has(k);
   const alternatives = change.alternatives ?? [];
   return (
-    <div className="col-span-4 -mt-1 mb-1 ml-[76px] rounded-md border border-accent/40 bg-accent-soft/30 px-3 py-2 text-xs">
-      <label className="mb-1 flex cursor-pointer items-center gap-1.5 font-medium text-accent">
-        <input
-          type="checkbox"
-          checked={included}
-          disabled={disabled}
-          onChange={(e) => pick.include(k, e.target.checked)}
-          className="accent-[var(--accent)]"
-        />
+    <motion.div {...rise} className="col-span-4 -mt-1 mb-1 ml-[84px] rounded-lg border border-primary/40 bg-primary-soft/40 px-3 py-2 text-xs">
+      <label className="mb-1.5 flex cursor-pointer items-center gap-1.5 font-medium text-primary">
+        <Checkbox checked={included} disabled={disabled} onCheckedChange={(v) => pick.include(k, v === true)} className="size-3.5" />
         Proposed change{alternatives.length ? ` — pick one of ${alternatives.length}` : ""}
       </label>
-      <div className={included ? "" : "opacity-40"}>
+      <div className={`transition-opacity ${included ? "" : "opacity-40"}`}>
         {alternatives.length ? (
-          <div className="space-y-1">
+          <div className="space-y-1.5">
             {alternatives.map((alt, i) => (
-              <label key={i} className="flex cursor-pointer items-start gap-2">
+              <label
+                key={i}
+                className={`flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 transition-colors ${(pick.choices[k] ?? 0) === i ? "bg-card shadow-xs" : "hover:bg-card/60"}`}
+              >
                 <input
                   type="radio"
                   name={`grid-alt-${k}`}
-                  className="mt-0.5 accent-[var(--accent)]"
+                  className="mt-1 accent-[var(--color-primary)]"
                   checked={(pick.choices[k] ?? 0) === i}
                   disabled={disabled || !included}
                   onChange={() => pick.choose(k, i)}
                 />
-                <span className="min-w-0 flex-1 text-sm">
-                  <DiffText before={change.before} after={alt.text} />
-                  {alt.note && <span className="block text-[11px] text-muted">{alt.note}</span>}
+                <span className="min-w-0 flex-1">
+                  <RichDiff before={change.before} after={alt.text} />
+                  {alt.note && <span className="block text-[11px] text-muted-foreground">{alt.note}</span>}
                 </span>
               </label>
             ))}
           </div>
         ) : (
-          <div className="text-sm">
-            <DiffText before={change.before} after={change.after} />
-          </div>
+          <RichDiff before={change.before} after={change.after} />
         )}
       </div>
-    </div>
+    </motion.div>
   );
 }

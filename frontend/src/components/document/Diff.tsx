@@ -2,8 +2,11 @@
 
 import { diffWordsWithSpace } from "diff";
 import { useEffect, useState } from "react";
+import { Skeleton } from "@/components/ui/skeleton";
 import { api } from "@/lib/api";
 import type { Segment } from "@/lib/types";
+import { Markdown } from "./Markdown";
+import { RichDiff } from "./RichDiff";
 
 /** Word-level inline diff. */
 export function DiffText({ before, after, className = "" }: { before: string; after: string; className?: string }) {
@@ -27,7 +30,8 @@ export function DiffText({ before, after, className = "" }: { before: string; af
   );
 }
 
-/** One changed segment: id, source (for context) and the diff. */
+/** One changed segment: id, source (for context, rendered on one line) and the change as it reads (RichDiff; its
+ * markdown toggle shows the raw diff). */
 export function SegmentDiff({
   id,
   source,
@@ -46,15 +50,19 @@ export function SegmentDiff({
   compact?: boolean;
 }) {
   return (
-    <div className={compact ? "py-2" : "rounded-lg border border-border p-3"}>
+    <div className={compact ? "py-2.5" : "rounded-lg border border-border bg-card p-3 shadow-xs"}>
       <div className="mb-1 flex items-center gap-2">
-        <button onClick={() => onJump?.(id)} className="font-mono text-[11px] text-muted hover:text-accent">
+        <button onClick={() => onJump?.(id)} className="font-mono text-[11px] text-muted-foreground hover:text-primary">
           {id}
         </button>
-        {label && <span className="rounded bg-sidebar px-1.5 text-[10px] text-muted uppercase">{label}</span>}
+        {label && <span className="rounded bg-muted px-1.5 text-[10px] text-muted-foreground uppercase">{label}</span>}
       </div>
-      {source && <div className="mb-1.5 line-clamp-2 text-xs text-muted">{source}</div>}
-      <DiffText before={before} after={after} />
+      {source && (
+        <div className="mb-1.5 line-clamp-2 text-xs text-muted-foreground">
+          <Markdown text={source} inline />
+        </div>
+      )}
+      <RichDiff before={before} after={after} />
     </div>
   );
 }
@@ -93,9 +101,16 @@ export function VersionDiff({
   }, [sessionId, version]);
 
   if (error) return <p className="text-xs text-del-fg">{error}</p>;
-  if (!pair) return <p className="text-xs text-muted">Loading diff…</p>;
+  if (!pair)
+    return (
+      <div className="space-y-2 py-2">
+        <Skeleton className="h-3 w-24" />
+        <Skeleton className="h-4 w-full" />
+        <Skeleton className="h-4 w-4/5" />
+      </div>
+    );
   const changed = segments.filter((s) => (pair.before[s.id] ?? "") !== (pair.after[s.id] ?? ""));
-  if (changed.length === 0) return <p className="text-xs text-muted">No text changes.</p>;
+  if (changed.length === 0) return <p className="text-xs text-muted-foreground">No text changes.</p>;
   return (
     <div className="divide-y divide-border">
       {changed.map((s) => (

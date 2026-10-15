@@ -1,7 +1,15 @@
 import type {
   Answer,
   AppConfig,
+  AppSettingsView,
+  DocSettings,
   ExportFormat,
+  ModelInfo,
+  OfficeInfo,
+  OfficeWriteReport,
+  SheetGrid,
+  StepChoice,
+  StepId,
   Project,
   QaReport,
   ReplaceMatch,
@@ -49,13 +57,24 @@ export const api = {
   deleteSession: (id: string) =>
     fetch(`${API_URL}/api/sessions/${id}`, { method: "DELETE" }).then((r) => json<{ ok: boolean }>(r)),
 
-  createSession: (file: File, sourceLang: string, projectId?: string | null) => {
+  /** `overrides`: this document's own models (only the steps that differ from the defaults) and dictionary. */
+  createSession: (file: File, sourceLang: string, projectId?: string | null, overrides?: SettingsUpdate) => {
     const form = new FormData();
     form.append("file", file);
     form.append("source_lang", sourceLang);
     if (projectId) form.append("project_id", projectId);
+    if (overrides?.models && Object.keys(overrides.models).length) form.append("models", JSON.stringify(overrides.models));
+    if (overrides?.dictionary !== undefined) form.append("dictionary", String(overrides.dictionary));
     return fetch(`${API_URL}/api/sessions`, { method: "POST", body: form }).then((r) => json<SessionSummary>(r));
   },
+
+  models: () => fetch(`${API_URL}/api/models`).then((r) => json<ModelInfo[]>(r)),
+  getSettings: () => fetch(`${API_URL}/api/settings`).then((r) => json<AppSettingsView>(r)),
+  /** The defaults for new documents; a step set to null goes back to pipeline.yaml's model. */
+  putSettings: (body: SettingsUpdate) => fetch(`${API_URL}/api/settings`, send("PUT", body)).then((r) => json<AppSettingsView>(r)),
+  /** One document's models and dictionary, from its next run (409 while the agents work on it). */
+  patchSessionSettings: (id: string, body: SettingsUpdate) =>
+    fetch(`${API_URL}/api/sessions/${id}/settings`, send("PATCH", body)).then((r) => json<DocSettings>(r)),
 
   runTask: (id: string, kind: TaskKind, segmentIds: string[] = [], instruction = "", n = 1) =>
     fetch(`${API_URL}/api/sessions/${id}/tasks`, send("POST", { kind, segment_ids: segmentIds, instruction, n })).then((r) =>
@@ -69,12 +88,12 @@ export const api = {
 
   resolveComment: (id: string, segmentId: string, commentId: string, resolved: boolean) =>
     fetch(`${API_URL}/api/sessions/${id}/segments/${segmentId}/comments/${commentId}`, send("PATCH", { resolved })).then((r) =>
-      json<{ segment: Segment }>(r),
+      json<{ segment: Segment | null }>(r),
     ),
 
   deleteComment: (id: string, segmentId: string, commentId: string) =>
     fetch(`${API_URL}/api/sessions/${id}/segments/${segmentId}/comments/${commentId}`, send("DELETE")).then((r) =>
-      json<{ segment: Segment }>(r),
+      json<{ segment: Segment | null }>(r),
     ),
 
   sendMessage: (id: string, text: string) =>
@@ -137,11 +156,12 @@ export const api = {
 
   usage: (id: string) => fetch(`${API_URL}/api/sessions/${id}/usage`).then((r) => json<Usage>(r)),
 
-  acceptProposal: (id: string, changes: string[] | null, choices: Record<string, number> | null = null) =>
+  /** `confirm`: Accept & confirm — the new translations are confirmed, and saved to the project's TM. */
+  acceptProposal: (id: string, changes: string[] | null, choices: Record<string, number> | null = null, confirm = false) =>
     fetch(`${API_URL}/api/sessions/${id}/proposal/accept`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ changes, choices }),
+      body: JSON.stringify({ changes, choices, confirm }),
     }).then((r) => json<{ version: number | null; applied: number; dropped: number }>(r)),
 
   rejectProposal: (id: string) =>
@@ -156,6 +176,21 @@ export const api = {
     fetch(`${API_URL}/api/sessions/${id}/source/fixes/${page}/${accept ? "accept" : "reject"}`, { method: "POST" }).then((r) =>
       json<{ ok: boolean }>(r),
     ),
+
+  /** "This is text, not a picture": the page is read again with that picture's text in place, as a page fix. */
+  figureAsText: (id: string, page: number, figure: number) =>
+    fetch(`${API_URL}/api/sessions/${id}/source/figures/${page}/${figure}/text`, { method: "POST" }).then((r) =>
+      json<{ status: "proposed" | "unchanged" }>(r),
+    ),
+
+  /** A Word / PowerPoint / Excel upload: the original, or translated (as of a version); `marks`: hidden _seg_ bookmarks. */
+  officeFileUrl: (id: string, side: "source" | "target", version?: number, marks = false) =>
+    `${API_URL}/api/sessions/${id}/office/file?side=${side}${version ? `&version=${version}` : ""}${marks ? "&marks=true" : ""}`,
+  officeReport: (id: string, version?: number) =>
+    fetch(`${API_URL}/api/sessions/${id}/office/report${version ? `?version=${version}` : ""}`).then((r) =>
+      json<{ extract: OfficeInfo; write: OfficeWriteReport }>(r),
+    ),
+  officeSheets: (id: string) => fetch(`${API_URL}/api/sessions/${id}/office/sheets`).then((r) => json<SheetGrid>(r)),
 
   retry: (id: string) =>
     fetch(`${API_URL}/api/sessions/${id}/retry`, { method: "POST" }).then((r) => json<{ ok: boolean }>(r)),
@@ -181,7 +216,15 @@ export const api = {
 
   exportFormats: (id: string) =>
     fetch(`${API_URL}/api/sessions/${id}/export/formats`).then((r) => json<ExportFormat[]>(r)),
+  /** Notes for the client (the Assist model writes them from the document's decisions, queries and checks). */
+  clientNotes: (id: string) =>
+    fetch(`${API_URL}/api/sessions/${id}/assist/notes`, { method: "POST" }).then((r) =>
+      json<{ text: string; version: number | null; at: number; stored: boolean }>(r),
+    ),
 };
+
+/** A change to the model choices (null: back to the default) and/or the dictionary. */
+export type SettingsUpdate = { models?: Partial<Record<StepId, StepChoice | null>>; dictionary?: boolean; assist?: boolean };
 
 type ProjectFields = Partial<Pick<Project, "name" | "source_lang" | "instructions" | "auto_confirm_context" | "lqa_threshold">>;
 type TermFields = Partial<Pick<Term, "source" | "target" | "note" | "forbidden" | "case_sensitive" | "status">>;
@@ -209,6 +252,19 @@ export const projectsApi = {
   deleteUnit: (pid: string, unitId: number) =>
     fetch(`${API_URL}/api/projects/${pid}/tm/${unitId}`, send("DELETE")).then((r) => json<{ ok: boolean }>(r)),
 };
+
+/** The chat's AI assist: suggested next prompts, and completions of what's being typed (Tab). */
+export const assistApi = {
+  suggestions: (id: string, signal?: AbortSignal) =>
+    fetch(`${API_URL}/api/sessions/${id}/assist/suggestions`, { ...send("POST", {}), signal }).then((r) =>
+      json<{ suggestions: AssistSuggestion[]; cached?: boolean; disabled?: boolean; error?: string }>(r),
+    ),
+  complete: (id: string, text: string, signal?: AbortSignal) =>
+    fetch(`${API_URL}/api/sessions/${id}/assist/complete`, { ...send("POST", { text }), signal }).then((r) =>
+      json<{ completion: string }>(r),
+    ),
+};
+export type AssistSuggestion = { label: string; prompt: string };
 
 /**
  * Subscribe to a session's live run over SSE. Returns an abort function.

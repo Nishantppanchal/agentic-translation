@@ -19,8 +19,7 @@ from .. import projects
 from ..config import get_settings
 from ..document import state as st
 from ..document.pages import page_batches
-from ..models import structured
-from ..models.llm import model_name
+from ..models import routing, structured
 from ..models.replies import parse_issues, parse_scores
 from ..quality import lqa
 from . import prompts
@@ -54,12 +53,13 @@ async def assess(ctx: Context, node_input: Any):
     batches = page_batches(segments, settings.page_max_chars)
     total = len(batches)
     source_lang, target_lang = doc_langs(ctx.state)
-    model = model_name("lqa")
+    chosen = routing.resolve("lqa", ctx.state)
+    model = chosen.id + (f" · {chosen.effort}" if chosen.effort else "")
     yield say(
         f"LQA: assessing {len(segments)} segments with {model}",
         state=progress_state("lqa", 0, total, "Assessing quality…"),
     )
-    output_format = prompts.LQA_FORMAT_JSON if structured.enabled("lqa") else prompts.LQA_FORMAT_TAGS
+    output_format = prompts.LQA_FORMAT_JSON if structured.enabled("lqa", ctx.state) else prompts.LQA_FORMAT_TAGS
 
     async def assess_batch(i: int, batch: list[dict]) -> tuple[list[dict], dict[str, int]]:
         prompt = prompts.LQA.format(

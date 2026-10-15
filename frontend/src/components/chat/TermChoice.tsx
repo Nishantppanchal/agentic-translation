@@ -1,7 +1,12 @@
 "use client";
 
 import { BookOpen, Languages } from "lucide-react";
+import { cn } from "cn";
+import { Badge } from "@/components/ui/badge";
+import { Input } from "@/components/ui/input";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
 import type { Answer, Question, Segment } from "@/lib/types";
+import { Markdown } from "../document/Markdown";
 
 /** What the person picked for a question: one of the options, their own English term, or an explanation. */
 export type Choice = { kind: "option"; index: number } | { kind: "term"; text: string } | { kind: "note"; text: string };
@@ -21,11 +26,13 @@ export function answerFor(q: Question, c: Choice): Answer | null {
 
 export const isRecommended = (q: Question, c: Choice) => c.kind === "option" && c.index === (q.recommended ?? 0);
 
-const radio = "mt-0.5 accent-[var(--color-accent)]";
+const valueOf = (c: Choice) => (c.kind === "option" ? `option-${c.index}` : c.kind);
+const same = (a?: string, b?: string) => !!a && !!b && a.trim().toLowerCase() === b.trim().toLowerCase();
 
 /**
  * One term to decide, explained for someone who doesn't read the source language: what it means, the
- * sentence it's in (source and English), and the English options with the agents' recommendation.
+ * sentence it's in (source and English, the term marked in both), and the English options with the agents'
+ * recommendation and what the dictionary says.
  */
 export function TermChoice({
   question: q,
@@ -44,27 +51,52 @@ export function TermChoice({
 }) {
   const context = q.segment_ids.map((id) => segments.get(id)).find(Boolean);
   const english = q.gist || context?.target || "";
-  const name = `q-${q.id}`;
+  const recommended = q.options?.[q.recommended ?? 0]?.target ?? q.guess;
+  const fromDictionary = (target: string) => (q.dictionary ?? []).some((d) => same(d.translation, target));
+
   return (
-    <div className="rounded-lg border border-border bg-panel p-3">
+    <div className="rounded-lg border border-border bg-card p-3 shadow-xs">
       <div className="flex flex-wrap items-baseline gap-x-2">
         <span className="text-base font-semibold">{q.term}</span>
-        {q.meaning && <span className="text-sm text-fg/80">— {q.meaning}</span>}
+        {q.meaning && <span className="text-sm text-foreground/80">— {q.meaning}</span>}
       </div>
-      {q.reason && <div className="mt-0.5 text-xs text-muted">Why it matters: {q.reason}</div>}
+      {q.reason && <div className="mt-0.5 text-xs text-muted-foreground">Why it matters: {q.reason}</div>}
+
+      {context && (
+        <button
+          type="button"
+          onClick={() => onJump(context.id)}
+          className="mt-2 block w-full rounded-md bg-muted/70 px-2.5 py-2 text-left text-xs transition-colors hover:bg-muted"
+          aria-label={`Show ${context.id} in the document`}
+        >
+          <span className="line-clamp-2 text-muted-foreground">
+            <span className="mr-1 font-mono text-[10px]">{context.id}</span>
+            <Markdown inline text={context.source} highlight={[q.term]} />
+          </span>
+          {english && (
+            <span className="mt-1 flex gap-1.5 text-foreground/85">
+              <Languages size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
+              <span className="line-clamp-2">
+                <Markdown inline text={english} highlight={recommended ? [recommended] : []} />
+              </span>
+            </span>
+          )}
+        </button>
+      )}
+
       {!!q.dictionary?.length && (
-        <div className="mt-2 rounded-md border border-border bg-bg px-2 py-1.5 text-xs">
+        <div className="mt-2 space-y-1 rounded-md border border-border bg-background px-2.5 py-1.5 text-xs">
           {q.dictionary.map((d, i) => (
-            <div key={i} className="flex gap-1.5 py-0.5">
-              <BookOpen size={12} className="mt-0.5 shrink-0 text-muted" />
+            <div key={i} className="flex gap-1.5">
+              <BookOpen size={12} className="mt-0.5 shrink-0 text-muted-foreground" />
               <span className="min-w-0">
                 <span className="font-medium">{d.translation}</span>
-                {d.term && d.term.toLowerCase() !== q.term.toLowerCase() && <span className="text-muted"> ({d.term})</span>}
-                {d.domain && <span className="text-muted"> · {d.domain}</span>}
-                {d.definition && <span className="block text-fg/80">{d.definition}</span>}
-                <span className="text-muted">
+                {d.term && d.term.toLowerCase() !== q.term.toLowerCase() && <span className="text-muted-foreground"> ({d.term})</span>}
+                {d.domain && <span className="text-muted-foreground"> · {d.domain}</span>}
+                {d.definition && <span className="block text-foreground/80">{d.definition}</span>}
+                <span className="text-muted-foreground">
                   {d.url ? (
-                    <a href={d.url} target="_blank" rel="noreferrer" className="underline">
+                    <a href={d.url} target="_blank" rel="noreferrer" className="underline underline-offset-2">
                       {d.source || "Dictionary"}
                     </a>
                   ) : (
@@ -76,60 +108,60 @@ export function TermChoice({
           ))}
         </div>
       )}
-      {context && (
-        <button
-          onClick={() => onJump(context.id)}
-          className="mt-2 block w-full rounded-md bg-sidebar/70 px-2 py-1.5 text-left text-xs hover:bg-sidebar"
-          title="Show in document"
-        >
-          <span className="line-clamp-2 text-muted">
-            <span className="font-mono">{context.id}</span> {context.source}
-          </span>
-          {english && (
-            <span className="mt-0.5 line-clamp-2 flex gap-1 text-fg/80">
-              <Languages size={12} className="mt-0.5 shrink-0 text-muted" /> {english}
-            </span>
-          )}
-        </button>
-      )}
-      <fieldset disabled={disabled} className="mt-2 space-y-1 text-sm">
-        {(q.options ?? []).map((o, i) => (
-          <label key={o.target} className="flex cursor-pointer items-start gap-2 rounded-md px-1.5 py-1 hover:bg-accent-soft/40">
-            <input
-              type="radio"
-              name={name}
-              className={radio}
-              checked={choice.kind === "option" && choice.index === i}
-              onChange={() => onChange({ kind: "option", index: i })}
-            />
-            <span className="min-w-0 flex-1">
-              <span className="font-medium">{o.target}</span>
-              {i === (q.recommended ?? 0) && (
-                <span className="ml-1.5 rounded bg-accent-soft px-1 py-px text-[10px] font-medium text-accent uppercase">recommended</span>
+
+      <RadioGroup
+        value={valueOf(choice)}
+        onValueChange={(v) => {
+          if (v.startsWith("option-")) onChange({ kind: "option", index: Number(v.slice(7)) });
+          else onChange({ kind: v as "term" | "note", text: choice.kind !== "option" && choice.kind === v ? choice.text : "" });
+        }}
+        disabled={disabled}
+        className="mt-2.5 gap-0.5"
+        aria-label={`English for ${q.term}`}
+      >
+        {(q.options ?? []).map((o, i) => {
+          const id = `q-${q.id}-o${i}`;
+          return (
+            <label
+              key={o.target}
+              htmlFor={id}
+              className={cn(
+                "flex cursor-pointer items-start gap-2.5 rounded-md px-2 py-1.5 transition-colors hover:bg-accent",
+                choice.kind === "option" && choice.index === i && "bg-primary-soft hover:bg-primary-soft",
               )}
-              {o.note && <span className="block text-xs text-muted">{o.note}</span>}
-            </span>
-          </label>
-        ))}
+            >
+              <RadioGroupItem id={id} value={`option-${i}`} className="mt-0.5" />
+              <span className="min-w-0 flex-1 text-sm">
+                <span className="font-medium">{o.target}</span>
+                {i === (q.recommended ?? 0) && (
+                  <Badge className="ml-1.5 h-4 px-1.5 text-[10px] font-medium uppercase" variant="secondary">
+                    recommended
+                  </Badge>
+                )}
+                {fromDictionary(o.target) && (
+                  <Badge variant="outline" className="ml-1 h-4 gap-0.5 px-1 text-[10px] font-normal">
+                    <BookOpen className="size-2.5" /> dictionary
+                  </Badge>
+                )}
+                {o.note && <span className="block text-xs text-muted-foreground">{o.note}</span>}
+              </span>
+            </label>
+          );
+        })}
         {(["term", "note"] as const).map((kind) => (
-          <label key={kind} className="flex cursor-pointer items-center gap-2 rounded-md px-1.5 py-1 hover:bg-accent-soft/40">
-            <input
-              type="radio"
-              name={name}
-              className={radio}
-              checked={choice.kind === kind}
-              onChange={() => onChange({ kind, text: choice.kind === kind ? choice.text : "" })}
-            />
-            <input
+          <div key={kind} className="flex items-center gap-2.5 rounded-md px-2 py-1">
+            <RadioGroupItem value={kind} aria-label={kind === "term" ? "Another English term" : "Explain what it means"} />
+            <Input
               value={choice.kind === kind ? choice.text : ""}
               onFocus={() => choice.kind !== kind && onChange({ kind, text: "" })}
               onChange={(e) => onChange({ kind, text: e.target.value })}
               placeholder={kind === "term" ? "Another English term…" : "Or explain what it means here…"}
-              className="min-w-0 flex-1 rounded-md border border-border bg-bg px-2 py-1 text-sm outline-none focus:border-accent"
+              disabled={disabled}
+              className="h-8 min-w-0 flex-1 bg-background text-sm"
             />
-          </label>
+          </div>
         ))}
-      </fieldset>
+      </RadioGroup>
     </div>
   );
 }

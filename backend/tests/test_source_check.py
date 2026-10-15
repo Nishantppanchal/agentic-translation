@@ -142,7 +142,7 @@ def test_reading_a_page_again_with_an_instruction(monkeypatch):
             seen["image"] = any(p.inline_data for c in request.contents for p in c.parts or [])
             yield _reply(FIXED)
 
-    monkeypatch.setattr(llm, "build_model", lambda role: FakeModel())
+    monkeypatch.setattr(llm, "build_model", lambda *_args: FakeModel())
     state = _state()
     pdf = (SAMPLES / "wartungsbericht-scanned.pdf").read_bytes()
     result = asyncio.run(editor_tools.reread_page(1, "Two columns: left first. The stamp is separate.", Ctx(state, pdf)))
@@ -161,7 +161,7 @@ def test_reading_a_page_again_leaves_the_models_thinking_out(monkeypatch):
                 types.Part(text="The user wants me to transcribe page 1. Let me be careful.", thought=True),
                 types.Part(text=FIXED)]))
 
-    monkeypatch.setattr(llm, "build_model", lambda role: FakeModel())
+    monkeypatch.setattr(llm, "build_model", lambda *_args: FakeModel())
     state = _state()
     pdf = (SAMPLES / "wartungsbericht-scanned.pdf").read_bytes()
     asyncio.run(editor_tools.reread_page(1, "Read it again.", Ctx(state, pdf)))
@@ -210,7 +210,7 @@ def test_after_translation_a_misread_word_is_fixed_from_the_page_read_again(monk
         async def generate_content_async(self, request):
             yield _reply(reading)
 
-    monkeypatch.setattr(llm, "build_model", lambda step: FakeModel())
+    monkeypatch.setattr(llm, "build_model", lambda *_args: FakeModel())
     pdf = (SAMPLES / "wartungsbericht-scanned.pdf").read_bytes()
     ctx = Ctx(state, pdf, said="p1.2 looks misread, can you check it?")
     assert editor_tools.fix_source_segment(seg["id"], corrected, ctx)["status"] == "refused"  # nobody read "noch immer"
@@ -252,3 +252,82 @@ def test_a_page_fix_that_moves_text_tells_the_editor_to_have_the_order_checked()
     result = editor_tools.propose_page_source(1, "\n\n".join(paragraphs[::-1]), "reordered", Ctx(state))
     assert result["status"] == "proposed" and result["moved"] and "order" in result["moved_note"]
     assert state[source_check.FIXES]["1"]["moved"] == result["moved"]
+
+
+# --------------------------------------------------------------------------- #
+# "This is text, not a picture"
+# --------------------------------------------------------------------------- #
+
+INTRO_TEXT = "Die Abnahme erfolgte am 14.03.2026 im Beisein des Auftraggebers."
+
+
+def _figure_session(monkeypatch):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+
+    from translator.api import services
+    from translator.api.routes import source_check as routes
+
+    sessions, artifacts = InMemorySessionService(), InMemoryArtifactService()
+    for module in (services, routes):
+        monkeypatch.setattr(module, "session_service", sessions, raising=False)
+    monkeypatch.setattr(services, "artifact_service", artifacts)
+    segs = [
+        {"id": "p1.1", "page": 1, "kind": "heading", "source": "# Prüfvermerk", "translatable": True},
+        {"id": "p1.2", "page": 1, "kind": "figure", "figure": 1, "image": "figure-p1-1.png", "source": INTRO_TEXT,
+         "translatable": True},
+        {"id": "p1.3", "page": 1, "kind": "paragraph", "source": "Mängel: keine.", "translatable": True},
+    ]
+
+    async def setup():
+        s = await sessions.create_session(app_name=services.APP_NAME, user_id=services.USER, state={
+            "doc:filename": "w.pdf", "doc:source_artifact": "source.pdf", "doc:status": "awaiting_source_check",
+            "doc:seg_ids": [x["id"] for x in segs], **{st.seg_key(x["id"]): x for x in segs}})
+        pdf = (SAMPLES / "wartungsbericht-scanned.pdf").read_bytes()
+        for name, data, mime in (("source.pdf", pdf, "application/pdf"), ("figure-p1-1.png", b"\x89PNG fake", "image/png")):
+            await artifacts.save_artifact(app_name=services.APP_NAME, user_id=services.USER, session_id=s.id, filename=name,
+                                          artifact=types.Part.from_bytes(data=data, mime_type=mime))
+        return s.id
+
+    app = FastAPI()
+    app.include_router(routes.router)
+    return TestClient(app), sessions, asyncio.run(setup())
+
+
+def test_a_picture_that_is_text_is_read_again_as_a_page_fix(monkeypatch):
+    from translator.models import llm
+
+    seen = {}
+
+    class FakeModel:
+        async def generate_content_async(self, request):
+            parts = [p for c in request.contents for p in c.parts or []]
+            seen["images"] = sum(1 for p in parts if p.inline_data)
+            seen["text"] = "".join(p.text or "" for p in parts)
+            yield _reply(f"# Prüfvermerk\n\n{INTRO_TEXT}\n\nMängel: keine.")
+
+    monkeypatch.setattr(llm, "build_model", lambda *_args: FakeModel())
+    client, sessions, sid = _figure_session(monkeypatch)
+    r = client.post(f"/api/sessions/{sid}/source/figures/1/1/text")
+    assert r.status_code == 200 and r.json()["status"] == "proposed"
+    assert seen["images"] == 2 and "[[FIGURE 1]] (the second image) is printed text" in seen["text"]
+    s = asyncio.run(sessions.get_session(app_name="translator", user_id="local", session_id=sid))
+    fix = s.state[source_check.FIXES]["1"]
+    assert fix["origin"] == "figure" and "[[FIGURE 1]]" in fix["before"] and "[[FIGURE 1]]" not in fix["after"]
+    assert INTRO_TEXT in fix["after"]
+
+
+def test_when_the_page_cant_be_read_again_the_text_inside_the_picture_takes_its_place(monkeypatch):
+    from translator.models import llm
+
+    class Failing:
+        async def generate_content_async(self, request):
+            raise RuntimeError("model down")
+            yield  # pragma: no cover
+
+    monkeypatch.setattr(llm, "build_model", lambda *_args: Failing())
+    client, sessions, sid = _figure_session(monkeypatch)
+    assert client.post(f"/api/sessions/{sid}/source/figures/1/1/text").json()["status"] == "proposed"
+    s = asyncio.run(sessions.get_session(app_name="translator", user_id="local", session_id=sid))
+    assert s.state[source_check.FIXES]["1"]["after"] == f"# Prüfvermerk\n\n{INTRO_TEXT}\n\nMängel: keine."
+    assert client.post(f"/api/sessions/{sid}/source/figures/1/9/text").status_code == 404

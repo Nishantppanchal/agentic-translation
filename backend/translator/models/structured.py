@@ -17,7 +17,7 @@ import logging
 import re
 from typing import Any
 
-from .config import Step, step_model
+from .config import Step
 from .replies import clean, term_from
 
 log = logging.getLogger(__name__)
@@ -69,7 +69,8 @@ def _terms(ids: list[str]) -> dict:
 
 def analysis_schema(ids: list[str]) -> dict:
     term = _obj({**_term_props(ids), "gist": _str(), "ambiguous": {"type": "boolean"}})
-    return {"title": "document_analysis", **_obj({"source_language": _str(), "brief": _str(), "terms": _arr(term)})}
+    return {"title": "document_analysis", **_obj({"source_language": _str(), "brief": _str(), "terms": _arr(term),
+                                                  "title": _str(), "summary": _str()})}
 
 
 def translation_schema(ids: list[str]) -> dict:
@@ -127,6 +128,11 @@ def alternatives_schema(ids: list[str]) -> dict:
     return {"title": "alternatives", **_obj({"segments": _arr(_obj({"id": _str(ids), "alternatives": _arr(alt)}))})}
 
 
+def suggestions_schema() -> dict:
+    """AI assist: the next requests the person could send to the chat."""
+    return {"title": "suggestions", **_obj({"suggestions": _arr(_obj({"label": _str(), "prompt": _str()}))})}
+
+
 SCHEMA_FOR_AGENT = {
     "analyst": analysis_schema,
     "translator": translation_schema,
@@ -158,9 +164,12 @@ def inject_schema(callback_context, llm_request):
 # --------------------------------------------------------------------------- #
 
 
-def enabled(step: Step) -> bool:
-    """The step's model answers in JSON constrained by a schema (models.yaml `structured_output`), else tags."""
-    return step_model(step).structured_output
+def enabled(step: Step, state=None) -> bool:
+    """The model this step uses for this document answers in JSON constrained by a schema (models.yaml
+    `structured_output`), else tags."""
+    from .routing import resolve  # local: routing → llm → … keep this module light
+
+    return resolve(step, state).structured_output
 
 
 # --------------------------------------------------------------------------- #

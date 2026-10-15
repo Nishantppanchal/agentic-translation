@@ -32,8 +32,8 @@ Rules:
 
 
 VISION_OCR_TEXT_LAYER = """
-The PDF also has an embedded text layer for this page. Use it as the ground truth for exact characters,
-spelling and numbers, and use the image for layout/structure. Text layer:
+The PDF also has an embedded text layer for this page{outside_figures}. Use it as the ground truth for exact
+characters, spelling and numbers, and use the image for layout/structure. Text layer:
 <text_layer>
 {text_layer}
 </text_layer>"""
@@ -48,10 +48,25 @@ The red boxes labelled FIGURE k are figures handled separately: the transcriptio
 [[FIGURE k]] line for each of them, at the right position, and must NOT contain the text inside them.
 Keep those lines unchanged."""
 
-FIGURE_TEXT = """\
-This image is a figure cropped from a document. Transcribe all text that is visible INSIDE it
-(labels, callouts, legends, axis titles), one item per line, top to bottom, in the original language.
-Do not describe the picture and do not translate. If it contains no text, reply exactly: <none/>"""
+FIGURE_IS_TEXT = """\
+The area shown as [[FIGURE {n}]] (the second image) is printed text, not a picture: transcribe its text where
+[[FIGURE {n}]] is now, in reading order, and leave out the [[FIGURE {n}]] line. Keep every other [[FIGURE k]] line."""
+
+FIGURE_CHECK = """\
+This image is a region cropped from a document page; a layout model took it for a {label}. First decide what it is:
+- picture: a photo, drawing, diagram, chart, map, logo, stamp or seal, signature, screenshot or form graphic —
+  anything whose look matters, even if it contains text.
+- text: nothing but ordinary printed text (paragraphs, headings, a list, a plain table, a caption) that loses
+  nothing when it is typed out.
+Then transcribe all text visible INSIDE it, top to bottom, in the original language: for a picture its labels,
+callouts, legends and axis titles, one item per line; for text, the text itself. Do not describe the picture and do
+not translate.
+
+Reply exactly in this form (write <none/> inside <text> if it contains no text):
+<kind>picture</kind>
+<text>
+…
+</text>"""
 
 OCR_CHECK = """\
 You are an OCR quality checker. Compare the transcription below against the page image{text_layer_hint}.
@@ -99,6 +114,9 @@ Rules:
 - Continue seamlessly from the previous text: resolve references (pronouns, "the above", abbreviations
   introduced earlier) and keep the same style. Do not translate the previous text again.
 - Preserve markdown exactly (heading markers, list markers, table pipes, bold/italic, links). Translate table cell text.
+- Markers like [^1] stand for a footnote mark, a picture or a field inside the sentence: keep each one exactly
+  once, next to the word it belongs to in your translation. Bold/italic/link markup marks formatted words: put it
+  around the words that carry that meaning in English.
 - Keep proper nouns, product names, codes, numbers and units unless there is a standard translation.
 - Don't leave source-language abbreviations an English reader can't understand (e.g. German AG / AN): render them
   as the brief and terminology define them, unless the style guide says to keep them.
@@ -126,8 +144,13 @@ Client style guide / instructions:
 Glossary — confirmed by the author and the project termbase, highest priority (source → target):
 {glossary}
 
-Terminology already used in this document (source → target):
+Terminology already used in this document (source → target; where it says so, backed by the translation memory or
+the dictionary):
 {termbase}
+
+Reference evidence for key terms on this page (dictionary senses, earlier translations in the translation memory).
+Lower priority than the glossary and the terminology above; use it to pick the sense that fits this document:
+{evidence}
 
 Document brief so far (what the document is about; stay consistent with it):
 {brief}
@@ -163,7 +186,7 @@ Respond with JSON matching the provided schema:
 
 ANALYSE = """\
 You are the lead translator preparing a {source_lang} → {target_lang} translation. Before anyone translates,
-read the WHOLE document below and prepare two things.
+read the WHOLE document below and prepare three things.
 
 1. Brief (at most 150 words) for the translators: document type and domain, parties and entities, every
    abbreviation and defined term with its meaning — wherever in the document it is defined, including later
@@ -181,6 +204,11 @@ read the WHOLE document below and prepare two things.
      wrong choice would mislead the reader — the author must decide. At most {max_questions} terms may be ambiguous.
    - false if one option is clearly right in this context, or a standard translation exists.
 
+3. Title and summary, in plain English for someone who doesn't read {source_lang}: a title of at most 8 words
+   saying what the document is (e.g. "Defect re-inspection report, Substation North"), and a summary of what it
+   says in at most two sentences (its purpose and the key facts). Refine the ones so far when this part adds to
+   them; keep what still holds.
+
 Client style guide / instructions:
 {instructions}
 
@@ -191,6 +219,8 @@ ambiguous):
 Brief so far (earlier parts of this document; extend it):
 {brief}
 
+Title and summary so far: {title_so_far}
+
 Document ({scope}):
 {segments}
 {output_format}"""
@@ -199,12 +229,16 @@ ANALYSE_FORMAT_JSON = """
 Respond with JSON matching the provided schema:
 - "source_language": name of the document's language
 - "brief": the brief
-- "terms": [{"source", "meaning", "gist", "options": [{"target", "note"}], "recommended", "ambiguous", "segment_ids", "reason"}]"""
+- "terms": [{"source", "meaning", "gist", "options": [{"target", "note"}], "recommended", "ambiguous", "segment_ids", "reason"}]
+- "title": the document's English title
+- "summary": the summary (at most two sentences)"""
 
 ANALYSE_FORMAT_TAGS = """
 Output format — reply with only these lines:
 <source_lang>name of the document's language</source_lang>
 <brief>the brief</brief>
+<title>the document's English title</title>
+<summary>the summary (at most two sentences)</summary>
 <term source="original term" guess="best translation" alt="other option | another option" meaning="plain-English meaning" gist="English gist of a sentence using it" ambiguous="yes|no" segs="p1.2,p3.1">why the choice matters</term>"""
 
 TRANSLATE_SEPARATELY = """
@@ -238,9 +272,17 @@ Automatic checks already found these problems (they will be fixed; do not report
 Glossary (source → target, confirmed by the author — always correct):
 {glossary}
 
-Terminology the translator chose on earlier pages (source → target). These are NOT verified: if one of
-them is itself a wrong translation, do not enforce it — report it as an uncertain term instead:
+Terminology the translator chose on earlier pages (source → target). These are NOT verified by a person (some
+are backed by the translation memory or the dictionary, as marked): if one of them is itself a wrong
+translation, do not enforce it — report it as an uncertain term instead:
 {termbase}
+
+Reference evidence for key terms (dictionary senses, earlier human-approved translations in the translation
+memory) — to judge terminology, not rules:
+{evidence}
+
+Translation memory matches for these segments (match % · approved source → approved translation):
+{tm}
 
 {pairs}
 {output_format}"""
@@ -346,6 +388,9 @@ How to work:
 - When the user answers a clarification question ("[Answer to q2] "term": use "X""), call `resolve_question`,
   record the term with `set_glossary_term` (translation X, or the user's explanation as the note), then update
   every affected segment.
+- References: you can look things up in {references}. Before choosing or explaining a specialised term, look it up:
+  the termbase says how it is decided (the project's and the user's decisions win), the translation memory shows how
+  earlier human-approved translations put it, the dictionary gives its senses. Say what you found and where.
 - If YOU are unsure what a source term means, call `ask_user_about_term` instead of guessing silently: explain the
   term in plain English and offer English options — the user may not read the source language.
 - When the user asks what a passage, sentence or term means ("explain p1.4"), answer in plain English: what the
@@ -371,6 +416,11 @@ How to work:
   the user said ("two columns: read the left column to the end, then the right"; "the red seal is not part of the
   sentences: give its text its own line"; "read the attachments line under the seal character by character"). Both only propose: the user sees the page before and after and accepts or rejects it. Don't
   translate in this phase; when the user is happy they press **Continue to translation**.
+- Word, PowerPoint and Excel uploads are read from the file itself (no OCR): their source is exact, so the source
+  tools refuse; segments may carry [^n] markers (footnote marks, pictures, fields) to keep exactly once.
+- If a [[FIGURE n]] is really printed text (a paragraph the layout model took for a picture), the user can press
+  **This is text, not a picture** under it in Source & notes; or call `reread_page` asking for that picture's text
+  to be transcribed in its place.
 - If the user says something on a page is missing or wrong (a table, a figure, a heading, a misread word), call
   `look_at_page` to see the page, and `inspect_page_layout` for the regions the layout model found; compare them
   with its segments. After the source check, to correct misread source text: `reread_page` (the OCR model reads the
@@ -389,6 +439,9 @@ Terminology used in the translation (keep consistent unless the user asks otherw
 {termbase}
 Open clarification questions:
 {questions}
+Open comments on segments (notes from the translator, the reviewer or you; they aren't changes, but take them into
+account, and when the user asks you to deal with them, propose the fixes):
+{comments}
 Pending proposal (awaiting the user's approval):
 {proposal}
 Outcome of your previous proposal: {last_outcome}
@@ -400,7 +453,7 @@ REREAD_PAGE = """
 This page was read before, and the person checking it says: {instruction}
 Transcribe the WHOLE page again, following that and the rules above. The earlier reading is below: keep
 everything it got right, word for word, and keep each [[FIGURE n]] line (pictures are handled separately) where
-the picture is. Output only the page's markdown, not what you changed or why.
+the picture is — unless the instruction says that "picture" is really printed text: then transcribe its text there. Output only the page's markdown, not what you changed or why.
 <earlier_reading>
 {previous}
 </earlier_reading>"""
@@ -463,3 +516,71 @@ grammar requires: plural, case, article) and change nothing else.
 
 {pairs}
 {output_format}"""
+
+
+# --------------------------------------------------------------------------- #
+# AI assist (agents/assist.py): suggested prompts, Tab completions, notes for the client
+# --------------------------------------------------------------------------- #
+
+ASSIST_SYSTEM = "You help a translator working on one document in a translation workbench. Be brief and concrete."
+
+# What the chat can actually do: suggestions must stay within it.
+CHAT_CAN = """\
+- explain a segment or a passage (what the source says, in plain English) and why it is translated that way
+- propose changes to segments, shown as a proposal the person accepts or rejects: rewrite, more formal, simpler,
+  shorter, alternatives, a better term
+- fix QA errors (numbers, dates, terminology, untranslated text, footnote marks and links)
+- make the terminology consistent across the document, and apply the termbase
+- look a term up in the dictionary, the translation memory or the termbase
+- summarise the document, or answer questions about it
+- add a comment to a segment
+- for PDFs and images: check the reading of a page against the page image and fix it"""
+
+SUGGEST = """\
+Suggest the 3 most useful next requests this person could send to the document's chat assistant, given where the
+work stands. What the chat can do:
+{can}
+
+The document:
+{digest}
+
+Rules:
+- Each suggestion: a short label (at most 5 words, like a button) and the full request in one sentence, written as
+  the person would send it. Be specific: name segment ids (p2.3), terms or checks from the facts above.
+- Follow up on the last assistant reply when it offered something or asked a question; otherwise go by what needs
+  doing (QA errors, open questions or comments, a proposal waiting, terms to check). Don't repeat what was just done.
+- Only what the chat can do (above). Never exporting, uploading, settings, or other target languages.
+{output_format}"""
+
+SUGGEST_FORMAT_JSON = """
+Respond with JSON matching the provided schema: "suggestions": [{"label", "prompt"}] (3 items)."""
+
+SUGGEST_FORMAT_TAGS = """
+Reply with only these lines, three of them:
+<suggestion label="short label">the full request</suggestion>"""
+
+COMPLETE = """\
+The person is typing a message to the chat assistant of a translation workbench, about this document:
+{digest}
+
+Their message so far (it ends where the cursor is):
+<typed>{text}</typed>
+
+Continue it: give only the words that come next, at most 12, so the whole message reads naturally and is a request
+the assistant can act on. If the message ends in the middle of a word, start with the rest of that word; otherwise
+start with a space. Don't repeat what is typed. If you can't tell how it goes on, give nothing.
+Reply with only: <completion>the next words</completion>"""
+
+NOTES = """\
+Write notes for the client to go with this translation ({source_lang} → English), from the translator. Use only
+the facts below; never invent decisions, numbers or problems.
+
+{digest}
+
+Format: Markdown. A first line "# Notes on the translation of {name}", then these sections as "## " headings, in
+this order, leaving out any section with nothing to say: Summary (what the document is and what was done, two or
+three sentences), Terminology decisions (term → English, and who decided: the client's answer, the project
+termbase, the translation memory, the dictionary, or the translator's choice), Assumptions (choices made without the
+client's confirmation, and what to confirm), Open queries (questions for the client), Not translated (and why),
+Quality (QA and the quality score, plainly). Bullets, short and professional; keep source-language terms as
+written, with the English. No preamble or sign-off."""

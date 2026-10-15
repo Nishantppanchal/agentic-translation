@@ -1,4 +1,7 @@
 import os
+import tempfile
+import threading
+from http.server import ThreadingHTTPServer
 
 import pytest
 
@@ -9,6 +12,8 @@ os.environ["LITELLM_MODE"] = "PRODUCTION"
 # Models: tests/config, where every step's model is a port nothing listens on — never a developer's models.yaml.
 os.environ["MODELS_FILE"] = os.path.join(os.path.dirname(__file__), "config", "models.yaml")
 os.environ["PIPELINE_FILE"] = os.path.join(os.path.dirname(__file__), "config", "pipeline.yaml")
+# Storage: a throwaway folder, so importing the API (its session database) never touches backend/data.
+os.environ["DATA_DIR"] = tempfile.mkdtemp(prefix="translator-tests-")
 
 from translator import projects
 from translator.agents import workers
@@ -18,13 +23,18 @@ from translator.agents.workers import (  # noqa: E402
     lqa_reviewer,  # noqa: E402
     rewriter,
 )
+from translator.models import config as model_config  # noqa: E402
 from translator.models import structured  # noqa: E402
+from translator.models.config import ModelsFile, PipelineFile, build  # noqa: E402
 from translator.ocr import layout
+
+from .fake_vllm import FakeVllm  # noqa: E402
 
 WORKERS = [
     workers.analyst,
     workers.ocr_reader,
     workers.ocr_checker,
+    workers.figure_reader,
     workers.translator,
     workers.reviewer,
     workers.refiner,
@@ -74,7 +84,7 @@ def isolated_project_store():
 def tag_format_by_default(request, monkeypatch):
     """Fakes reply in the tag format unless a test opts into structured (JSON) output; never probe models."""
     if "structured" not in request.keywords:
-        monkeypatch.setattr(structured, "enabled", lambda step: False)
+        monkeypatch.setattr(structured, "enabled", lambda step, state=None: False)
 
 
 @pytest.fixture(autouse=True)
@@ -106,3 +116,32 @@ def pytest_collection_modifyitems(config, items):
     for item in items:
         if "layout" in item.keywords:
             item.add_marker(skip)
+
+
+# --------------------------------------------------------------------------- #
+# Model servers and model config for tests that check what goes over the wire
+# --------------------------------------------------------------------------- #
+
+
+@pytest.fixture
+def use_models(monkeypatch):
+    """Run with these models.yaml / pipeline.yaml contents (as dicts)."""
+
+    def use(models: dict, pipeline: dict | None = None):
+        cfg = build(ModelsFile.model_validate(models),
+                    PipelineFile.model_validate(pipeline or {"default": models["models"][0]["id"]}))
+        monkeypatch.setattr(model_config, "current", lambda: cfg)
+        return cfg
+
+    return use
+
+
+@pytest.fixture
+def fake_vllm():
+    server = ThreadingHTTPServer(("127.0.0.1", 0), FakeVllm)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    FakeVllm.requests, FakeVllm.reasoning_parser, FakeVllm.fail_with, FakeVllm.refuse_effort = [], True, None, False
+    FakeVllm.content = '{"ok": true}'
+    yield f"http://127.0.0.1:{server.server_address[1]}/v1"
+    server.shutdown()
+    server.server_close()

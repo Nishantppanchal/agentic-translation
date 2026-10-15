@@ -411,10 +411,11 @@ def test_accepted_recommendations_are_only_proposed(calls):
 
 
 def test_tm_exact_matches_are_only_refined_for_major_issues():
-    segs = [{"id": "p1.1", "origin": "tm_exact"}, {"id": "p1.2", "origin": "mt"}]
+    segs = [{"id": "p1.1", "origin": "tm", "match": 100}, {"id": "p1.2", "origin": "mt", "match": 87},  # adapted fuzzy
+            {"id": "p1.3", "origin": "tm_exact", "match": 101}]  # a document from before origin "tm"
     issues = [{"segment_id": "p1.1", "severity": "minor"}, {"segment_id": "p1.1", "severity": "major"},
-              {"segment_id": "p1.2", "severity": "minor"}]
-    assert steps.review.issues_to_fix(issues, segs, 1) == issues[1:]
+              {"segment_id": "p1.2", "severity": "minor"}, {"segment_id": "p1.3", "severity": "minor"}]
+    assert steps.review.issues_to_fix(issues, segs, 1) == issues[1:3]
     assert steps.review.issues_to_fix(issues, segs, 2) == [issues[1]]
 
 
@@ -471,5 +472,36 @@ def test_questions_carry_the_dictionarys_entries(calls, monkeypatch):
         assert asked == [(("Abnahmeprotokoll", "Kabelpritsche"), "German")]  # one call for all key terms
         key = {k["term"]: k for k in s.state["doc:key_terms"]}
         assert key["Kabelpritsche"]["dictionary"][0]["translation"] == "cable rack" and key["Abnahmeprotokoll"]["dictionary"] == []
+
+    asyncio.run(main())
+
+
+@pytest.mark.analysis
+def test_the_analysis_names_and_summarises_the_document_across_parts(calls, monkeypatch):
+    """Each part of the analysis sees the title and summary so far and refines them; the last one is kept."""
+    from translator.config import get_settings
+
+    monkeypatch.setattr(get_settings(), "analysis_chunk_chars", 20)  # one part per segment
+    replies = iter([
+        "<brief>An acceptance report.</brief><title>Acceptance report</title><summary>Records an acceptance.</summary>",
+        "<brief>An acceptance report; a tray is not earthed.</brief><title>Acceptance report, cable tray</title>",
+        "<brief>Same.</brief>",
+    ])
+    prompts_seen: list[str] = []
+
+    def analyse(callback_context, llm_request):
+        prompts_seen.append(_prompt(llm_request))
+        return _reply(next(replies, "<brief>Same.</brief>"))
+
+    monkeypatch.setattr(workers.analyst, "before_model_callback", analyse)
+
+    async def main():
+        sessions, _, runner, session = await _setup(_pdf("Abnahmeprotokoll", "Ergebnis"))
+        await _run(runner, session.id, types.Content(role="user", parts=[types.Part(text="Translate")]))
+        s = await _get(sessions, session.id)
+        assert len(prompts_seen) > 2 and "Title and summary so far: (none yet)" in prompts_seen[0]
+        assert "Title and summary so far: Acceptance report — Records an acceptance." in prompts_seen[1]
+        assert s.state["doc:title"] == "Acceptance report, cable tray"  # refined by the second part
+        assert s.state["doc:abstract"] == "Records an acceptance."  # kept when a later part says nothing new
 
     asyncio.run(main())

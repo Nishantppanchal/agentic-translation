@@ -27,7 +27,9 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: PREFS_SCRIPT }} />
       </head>
-      <body className="h-full font-sans">
+      {/* suppressHydrationWarning: browser extensions (Grammarly, password managers, ColorZilla…) add attributes to
+          <body> before React hydrates; this only quiets that element's attributes, not mismatches anywhere else. */}
+      <body className="h-full font-sans" suppressHydrationWarning>
         <PrefsSync />
         <Providers>{children}</Providers>
       </body>

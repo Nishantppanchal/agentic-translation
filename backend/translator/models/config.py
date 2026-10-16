@@ -27,11 +27,11 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from ..config import get_settings
 
-Step = Literal["ocr", "ocr_check", "analyse", "translate", "review", "refine", "polish", "rewrite", "editor", "lqa",
+Step = Literal["ocr", "ocr_second", "ocr_check", "analyse", "translate", "review", "refine", "polish", "rewrite", "editor", "lqa",
                "suggest", "complete", "notes"]
 STEPS: tuple[Step, ...] = get_args(Step)
 # Steps that look at page images: their model must read images (`vision: true` in models.yaml).
-VISION_STEPS: tuple[Step, ...] = ("ocr", "ocr_check", "editor")
+VISION_STEPS: tuple[Step, ...] = ("ocr", "ocr_second", "ocr_check", "editor")
 # How hard a model with `thinking: true` reasons, sent as the standard `reasoning_effort` (instant = "none": no
 # thinking; vLLM turns it into enable_thinking=false). A thinking model always gets one: the choice made in the
 # app, else the step's `effort` in pipeline.yaml (when the step uses that model), else the model's own `effort`
@@ -41,7 +41,8 @@ EFFORTS: tuple[Effort, ...] = get_args(Effort)
 DEFAULT_EFFORT: Effort = "medium"
 STEP_LABELS: dict[Step, str] = {
     "ocr": "OCR",  # reads each page image, the text inside pictures, and pages read again in the source check
-    "ocr_check": "OCR check",
+    "ocr_second": "Second reading",  # reads scanned pages and pictures too, at the same time: best another company's
+    "ocr_check": "OCR check",  # settles where the two readings differ; checks the reading when there's only one
     "analyse": "Analysis",
     "translate": "Translation",
     "review": "Review",
@@ -59,6 +60,9 @@ STEP_LABELS: dict[Step, str] = {
 # The steps as people choose models for them (Settings): one model per group, or per step under Advanced.
 STEP_GROUPS: tuple[dict[str, Any], ...] = (
     {"id": "reading", "label": "Reading", "help": "Reads each page (OCR) and checks the reading", "steps": ("ocr", "ocr_check")},
+    # Its own group: one model for the whole Reading group must never make both readers the same model.
+    {"id": "second", "label": "Second reading", "help": "Another model reads scanned pages and pictures at the same "
+     "time; where the two differ, the OCR check model says which is printed", "steps": ("ocr_second",)},
     {"id": "translating", "label": "Translating", "help": "Analysis, translation, fixes and rewrites",
      "steps": ("analyse", "translate", "refine", "polish", "rewrite")},
     {"id": "reviewing", "label": "Reviewing", "help": "The AI review and the quality score (LQA)", "steps": ("review", "lqa")},

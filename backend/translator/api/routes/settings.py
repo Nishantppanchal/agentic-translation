@@ -16,6 +16,7 @@ from ...integrations import dictionary
 from ...models import catalog, routing
 from ...models import config as model_config
 from ...models.config import EFFORTS, STEP_GROUPS, STEP_LABELS, STEPS, VISION_STEPS, ChoiceError, Effort, Step
+from ...ocr import second
 from ..services import editable_session, session_service
 
 router = APIRouter()
@@ -29,6 +30,7 @@ class ChoiceIn(BaseModel):
 class SettingsIn(BaseModel):
     models: dict[Step, ChoiceIn | None] | None = None  # null for a step: back to the default
     dictionary: bool | None = None
+    second_reader: bool | None = None  # a second model reads scanned pages and pictures too
     assist: bool | None = None  # suggested prompts and Tab completions in the chat (app-wide only)
 
 
@@ -56,6 +58,11 @@ def check_dictionary(on: bool | None) -> None:
         raise HTTPException(422, [{"loc": ["body", "dictionary"], "msg": references.NOT_CONFIGURED, "type": "value_error"}])
 
 
+def check_second_reader(on: bool | None) -> None:
+    if on and not second.available():
+        raise HTTPException(422, [{"loc": ["body", "second_reader"], "msg": second.OFF_ON_SERVER, "type": "value_error"}])
+
+
 def _steps() -> list[dict]:
     group_of = {step: g["id"] for g in STEP_GROUPS for step in g["steps"]}
     return [{"step": step, "label": STEP_LABELS[step], "group": group_of[step], "vision": step in VISION_STEPS} for step in STEPS]
@@ -79,14 +86,16 @@ def _defaults(cfg: model_config.ModelConfig) -> dict[str, dict[str, dict]]:
 def settings_view() -> dict[str, Any]:
     saved = app_settings.load()
     cfg = model_config.current()
+    choices = routing.choices(None)
     return {
-        "models": routing.choices(None),
+        "models": choices,
         "configured": {step: {"model": m.id, "effort": cfg.specs[step].effort} for step, m in cfg.steps.items()},  # pipeline.yaml
         "defaults": _defaults(cfg),
         "flow": catalog.flow(),
         "overridden": list(saved.models),
         "assist": saved.assist,
         "dictionary": references.dictionary_status(None),
+        "second_reader": second.status(None, choices),
         "steps": _steps(),
         "groups": _groups(),
         "efforts": list(EFFORTS),
@@ -94,7 +103,9 @@ def settings_view() -> dict[str, Any]:
 
 
 def document_settings(state) -> dict[str, Any]:
-    return {"models": routing.choices(state), "dictionary": references.dictionary_status(state)}
+    choices = routing.choices(state)
+    return {"models": choices, "dictionary": references.dictionary_status(state),
+            "second_reader": second.status(state, choices)}
 
 
 @router.get("/api/models")
@@ -121,9 +132,11 @@ def put_app_settings(body: SettingsIn) -> dict[str, Any]:
             else:
                 models[step] = chosen[step]
     check_dictionary(body.dictionary)
+    check_second_reader(body.second_reader)
     app_settings.save(app_settings.AppSettings(
         models=app_settings.valid_models(models),
         dictionary=saved.dictionary if body.dictionary is None else body.dictionary,
+        second_reader=saved.second_reader if body.second_reader is None else body.second_reader,
         assist=saved.assist if body.assist is None else body.assist,
     ))
     return settings_view()
@@ -136,7 +149,7 @@ def _describe(step: Step, choice: dict) -> str:
 
 @router.patch("/api/sessions/{session_id}/settings")
 async def patch_document_settings(session_id: str, body: SettingsIn) -> dict[str, Any]:
-    """This document's models and dictionary, from its next run (not while the agents are working on it)."""
+    """This document's models, dictionary and second reading, from its next run (not while the agents are working on it)."""
     session = await editable_session(session_id)
     delta: dict[str, Any] = {}
     changes: list[str] = []
@@ -155,6 +168,11 @@ async def patch_document_settings(session_id: str, body: SettingsIn) -> dict[str
         if body.dictionary != references.dictionary_on(session.state):
             changes.append(f"dictionary {'on' if body.dictionary else 'off'}")
         delta[references.DOC_DICTIONARY] = body.dictionary
+    if body.second_reader is not None:
+        check_second_reader(body.second_reader)
+        if body.second_reader != second.enabled(session.state):
+            changes.append(f"second reading {'on' if body.second_reader else 'off'}")
+        delta[second.DOC_KEY] = body.second_reader
     if delta:
         text = ("Settings for this document: " + "; ".join(changes) + " (from the next run)") if changes else "Settings saved"
         await session_service.append_event(session, versions.activity_event(text, delta))

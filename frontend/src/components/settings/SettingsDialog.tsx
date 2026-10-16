@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import type { AppSettingsView, ModelChoices, ModelInfo, StepChoice, StepId } from "@/lib/types";
 import { Modal } from "./Modal";
-import { DictionarySwitch, ModelChoicesEditor, sameChoice, useModelCatalog } from "./ModelChoices";
+import { DictionarySwitch, ModelChoicesEditor, SecondReadingSwitch, sameChoice, useModelCatalog } from "./ModelChoices";
 import { ThemeControl } from "./ThemeControl";
 
 /** App settings: the models and references new documents start with, the AI assist, and the theme. Closing with
@@ -75,12 +75,14 @@ function SettingsForm({
 }) {
   const [choices, setChoices] = useState<ModelChoices>(settings.models);
   const [dictionary, setDictionary] = useState(settings.dictionary.enabled);
+  const [second, setSecond] = useState(settings.second_reader.enabled);
   const [assist, setAssist] = useState(settings.assist ?? true);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const dirty =
     (Object.keys(choices) as StepId[]).some((s) => !sameChoice(choices[s], settings.models[s])) ||
     dictionary !== settings.dictionary.enabled ||
+    second !== settings.second_reader.enabled ||
     assist !== (settings.assist ?? true);
   const change = <T,>(set: (v: T) => void) => (v: T) => {
     set(v);
@@ -99,6 +101,7 @@ function SettingsForm({
         await api.putSettings({
           models: body,
           ...(settings.dictionary.available ? { dictionary } : {}),
+          ...(settings.second_reader.available ? { second_reader: second } : {}),
           ...(assist !== (settings.assist ?? true) ? { assist } : {}),
         }),
       );
@@ -140,6 +143,7 @@ function SettingsForm({
             settings={settings}
             base={settings.configured}
             baseLabel="the default"
+            below={{ second: <SecondReadingSwitch status={settings.second_reader} on={second} onChange={change(setSecond)} /> }}
           />
         </TabsContent>
         <TabsContent value="references" className="space-y-4">

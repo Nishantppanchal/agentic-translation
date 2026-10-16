@@ -135,8 +135,9 @@ Read and written with **python-docx**, **python-pptx** and **openpyxl** (`backen
 The pipeline is a Google ADK `Workflow` graph, run once per upload:
 
 ```
-upload ─►         ocr           vision LLM, then the OCR check, per page (2 at a time);
-                                figures detected, cropped and kept; text files read as they are
+upload ─►         ocr → read_pages   every page by its own small graph (2 pages at a time): figures detected,
+                                each picture read by two models; the page read by two models side by side,
+                                compared, the differences settled by the OCR check model; text files read as they are
                        │
                        ▼
                   check_source  PDFs and images pause: you check the reading against the
@@ -168,9 +169,10 @@ upload ─►         ocr           vision LLM, then the OCR check, per page (2 
 
 ### Reading the source
 - **OCR with verification:**
-  1. **Vision LLM:** each page is rendered to an image and transcribed into markdown by a vision model (the `ocr` step, see [§11](#11-models-and-settings)), in any script. It was measured on 23 languages: see [samples/SAMPLES.md](../samples/SAMPLES.md#ocr-measured).
+  1. **Two vision LLMs, side by side:** each page is rendered to an image and transcribed into markdown by a vision model (the `ocr` step, see [§11](#11-models-and-settings)), in any script, and **at the same time by a second model** (`ocr_second`, another company's: Gemini 3.8 Flash by default). It was measured on 23 languages: see [samples/SAMPLES.md](../samples/SAMPLES.md#ocr-measured). Small images (an uploaded photo, a picture in an Office file, a figure cut from a page) are **enlarged** for the readers first: vision models misread small text (on low-resolution test pages, misreads fell from 17 to about 3).
+  2. **Where the two readings differ:** they are compared word by word (markup, punctuation, case, line-end hyphens and full-width forms aren't differences). The OCR check model (a third company's) gets the page image and the numbered places, and says what is printed at each: where it reads the second reading's words they go in; where it reads the first's nothing changes; anything else is listed for you in the Source tab with both versions. A page whose readings differ in so many places that it is **hard to read** (at least 5, and more than 6 per 100 words) is left as read: nothing changed, every difference listed, the page marked *Hard to read*. The second reading can be turned off in Settings (for new documents) or for one document; then the OCR check below runs as before.
   2. **Pictures marked on the page:** the PDF's embedded images and the pictures, charts and seals PP-DocLayoutV3 finds (the layout server's `detect_layout` tool) are outlined in red and numbered on the page image, so the model writes `[[FIGURE n]]` in their place instead of transcribing them. A region only becomes a picture after it passes the checks under **Figures** below, so a block of text the layout model took for a picture is transcribed, not lost.
-  3. **OCR check:** a vision model compares the page with the image, and with the PDF's text layer when there is one. Its corrections are applied only when they're small fixes inside a word (a misread letter) or when the text layer confirms them. Anything else (a different word, a changed number, added or dropped text, and on scans any change to Chinese, Japanese or Korean characters) is listed in the Source tab as a *possible misreading* to compare with the page image, and the reading is kept.
+  3. **OCR check (one reading):** a vision model compares the page with the image, and with the PDF's text layer when there is one, and lists its **amendments** (never the whole page again). Its corrections are applied only when they're small fixes inside a word (a misread letter) or when the text layer confirms them. Anything else (a different word, a changed number, added or dropped text, and on scans any change to Chinese, Japanese or Korean characters) is listed in the Source tab as a *possible misreading* to compare with the page image, and the reading is kept.
   4. **The check is skipped only when two independent readings agree exactly:** the transcription is the same text as the PDF's own text layer (ignoring markdown, spacing, line-end hyphens and character variants such as ligatures). On a page with pictures, the text inside them is left out of the text layer for this comparison (and for the hint the reading gets), as it is from the reading. A single misread word, digit or minus sign, a messy text layer or a scan all get the check as before (`OCR_CHECK=always` checks every page).
   5. The Source tab shows which pages were corrected, the possible misreadings to check, and which pages matched their text layer.
   6. **Cached per page:** if a run fails (a rate limit, a restart), **Retry** reuses the pages already read.
@@ -491,7 +493,8 @@ Downloads with non-ASCII names keep them.
   | Step | What it does | Needs |
   |---|---|---|
   | `ocr` | Reads each page image, the text inside pictures, and pages read again in the source check | vision |
-  | `ocr_check` | Compares the reading with the page image | vision |
+  | `ocr_second` | Reads scanned pages and pictures too, at the same time (best another company's model) | vision |
+  | `ocr_check` | Settles where the two readings differ; with one reading, compares it with the page image | vision |
   | `analyse` | Brief, key terms and the questions before translating | |
   | `translate` | The translation, page by page | |
   | `review` | The AI review; ideally a different model than the translator's | |
@@ -524,6 +527,9 @@ Downloads with non-ASCII names keep them.
   | `MAX_PARALLEL_RUNS` | 2 | Pipelines/tasks at once across documents |
   | `OCR_CHECK_ENABLED` | true | Second-pass OCR verification |
   | `OCR_CHECK` | auto | `auto` skips the check when the transcription equals the text layer (page without pictures); `always` |
+  | `OCR_SECOND` | auto | `auto`: a second model reads scanned pages and pictures too (Settings can turn it off); `off`: never |
+  | `OCR_HARD_RATE` / `OCR_HARD_MIN` | 6 / 5 | more differences than this per 100 words, and at least this many: the page is hard to read |
+  | `OCR_MIN_PAGE_PX` / `OCR_MIN_PICTURE_PX` | 1600 / 1000 | page images and pictures smaller than this (long side) are enlarged for the readers |
   | `OCR_DPI` | 150 | Page render resolution for OCR |
   | `FIGURE_DETECTION` | auto | `auto` (the PDF's embedded pictures + the pictures PP-DocLayoutV3 finds) or `off` |
   | `FIGURE_TEXT` | true | Read text inside figures as legends |

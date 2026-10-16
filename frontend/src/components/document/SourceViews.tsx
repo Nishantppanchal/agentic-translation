@@ -1,5 +1,6 @@
 "use client";
 
+import { cn } from "cn";
 import { AlertTriangle, BookOpen, CheckCircle2, Database, Loader2, Pencil, Type } from "lucide-react";
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
@@ -58,8 +59,21 @@ export function SourceView({
           <div key={p}>
             <div className="mb-3 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs">
               <span className="rounded-full bg-muted px-2 py-0.5 font-medium">Page {p}</span>
-              {r &&
-                (r.ok ? (
+              {r?.hard ? (
+                <span className="flex items-center gap-1 font-medium text-del-fg" title="The two readings differ in too many places to settle: nothing was changed">
+                  <AlertTriangle size={12} /> Hard to read — check the whole page
+                </span>
+              ) : (
+                r &&
+                (r.readers === 2 ? (
+                  <span className={cn("flex items-center gap-1", r.ok ? "text-ins-fg" : "text-warn-fg")}>
+                    {r.ok ? <CheckCircle2 size={12} /> : <AlertTriangle size={12} />}
+                    {!r.disagreements
+                      ? "Two readings agree"
+                      : `Two readings differed in ${r.disagreements} place${r.disagreements === 1 ? "" : "s"}: the OCR check settled ${r.settled ?? 0}` +
+                        (r.issues.length ? ` (${r.issues.length} changed)` : "")}
+                  </span>
+                ) : r.ok ? (
                   <span className="flex items-center gap-1 text-ins-fg">
                     <CheckCircle2 size={12} /> OCR verified
                   </span>
@@ -67,7 +81,9 @@ export function SourceView({
                   <span className="flex items-center gap-1 text-warn-fg">
                     <AlertTriangle size={12} /> OCR checker fixed {r.issues.length} issue{r.issues.length === 1 ? "" : "s"}
                   </span>
-                ))}
+                ))
+              )}
+              {r?.enlarged && <span className="text-muted-foreground" title="The page image was small: the readers got it enlarged">· enlarged for reading</span>}
               {r?.used_text_layer && <span className="text-muted-foreground">· cross-checked with PDF text layer</span>}
               {!!r?.suggestions?.length && (
                 <span className="flex items-center gap-1 text-warn-fg">
@@ -131,13 +147,17 @@ export function SourceView({
             {r && !r.ok && r.issues.length > 0 && (
               <ul className="mt-2 list-disc pl-5 text-xs text-muted-foreground">
                 {r.issues.map((i, k) => (
-                  <li key={k}>Corrected: {i}</li>
+                  <li key={k}>Changed: {i}</li>
                 ))}
               </ul>
             )}
             {!!r?.suggestions?.length && (
               <div className="mt-3 rounded-lg border border-warn-fg/30 bg-warn/40 px-3 py-2 text-xs">
-                <div className="font-medium">Possible misreadings — not changed, please compare with the page image:</div>
+                <div className="font-medium">
+                  {r.hard
+                    ? "Where the two readings differ — nothing was changed on this page, please check it against the image:"
+                    : "Possible misreadings — not changed, please compare with the page image:"}
+                </div>
                 <ul className="mt-1 list-disc pl-5 text-foreground/80">
                   {r.suggestions.map((i, k) => (
                     <li key={k}>{i}</li>
@@ -330,6 +350,10 @@ export function ChecksView({ doc, onDraft }: { doc: DocumentState; onDraft: (tex
         <p className="text-muted-foreground">
           {doc.ocr_report.length} page{doc.ocr_report.length === 1 ? "" : "s"} checked ·{" "}
           {ocrFixed.length === 0 ? "no corrections needed" : `${ocrFixed.length} page(s) corrected`}
+          {(() => {
+            const hard = doc.ocr_report.filter((r) => r.hard).map((r) => r.page);
+            return hard.length ? ` · hard to read: page${hard.length === 1 ? "" : "s"} ${hard.join(", ")}` : "";
+          })()}
           {(() => {
             const n = doc.ocr_report.reduce((sum, r) => sum + (r.suggestions?.length ?? 0), 0);
             return n ? ` · ${n} possible misreading${n === 1 ? "" : "s"} to check (Source tab)` : "";

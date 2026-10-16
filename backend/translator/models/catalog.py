@@ -73,30 +73,32 @@ def describe(m: ModelSpec) -> dict[str, Any]:
 # The app lays it out by hand (components/settings/PipelineFlow.tsx): the steps with arrows at their (row, col),
 # the steps that run on request (no arrows) listed under the diagram by row. Every model step appears once
 # (tests/test_model_choice.py checks it, and that no arrow along a row passes behind another step).
-ROWS = ("Reading (PDFs and images)", "Translating", "Reviewing", "On request, once it's ready", "AI assist")
+ROWS = ("Reading (PDFs and images)", "Second reading", "Translating", "Reviewing", "On request, once it's ready", "AI assist")
 NODES: tuple[dict[str, Any], ...] = (
     {"id": "ocr", "step": "ocr", "label": "Read the pages", "row": 0, "col": 0},
     {"id": "ocr_check", "step": "ocr_check", "label": "Check the reading", "row": 0, "col": 1},
+    {"id": "ocr_second", "step": "ocr_second", "label": "Read them again", "row": 1, "col": 1},  # under the step it feeds
     {"id": "source_check", "kind": "you", "label": "You check the source", "row": 0, "col": 2},
     {"id": "office", "kind": "context", "label": "Word, PowerPoint, Excel: text read from the file", "row": 0, "col": 3},
-    {"id": "memory", "kind": "context", "label": "TM: reuse earlier translations", "row": 1, "col": 0},  # a lookup
-    {"id": "analyse", "step": "analyse", "label": "Analysis", "row": 1, "col": 1},
-    {"id": "questions", "kind": "you", "label": "You answer questions", "row": 1, "col": 2},
-    {"id": "translate", "step": "translate", "label": "Translation", "row": 1, "col": 3},
-    {"id": "refine", "step": "refine", "label": "Refinement", "row": 2, "col": 0},  # left of Review: the loop is drawn
-    {"id": "review", "step": "review", "label": "Review", "row": 2, "col": 1},      # between them, never through a node
-    {"id": "polish", "step": "polish", "label": "Consistency", "row": 2, "col": 2},
-    {"id": "ready", "kind": "context", "label": "Ready. What you confirm goes into the TM", "row": 2, "col": 3},
-    {"id": "editor", "step": "editor", "label": "Chat", "row": 3, "col": 0},
-    {"id": "rewrite", "step": "rewrite", "label": "Rewrites", "row": 3, "col": 1},
-    {"id": "lqa", "step": "lqa", "label": "Quality score", "row": 3, "col": 2},
-    {"id": "suggest", "step": "suggest", "label": "Suggested prompts", "row": 4, "col": 0},
-    {"id": "complete", "step": "complete", "label": "Tab completion", "row": 4, "col": 1},
-    {"id": "notes", "step": "notes", "label": "Translation summary", "row": 4, "col": 2},
+    {"id": "memory", "kind": "context", "label": "TM: reuse earlier translations", "row": 2, "col": 0},  # a lookup
+    {"id": "analyse", "step": "analyse", "label": "Analysis", "row": 2, "col": 1},
+    {"id": "questions", "kind": "you", "label": "You answer questions", "row": 2, "col": 2},
+    {"id": "translate", "step": "translate", "label": "Translation", "row": 2, "col": 3},
+    {"id": "refine", "step": "refine", "label": "Refinement", "row": 3, "col": 0},  # left of Review: the loop is drawn
+    {"id": "review", "step": "review", "label": "Review", "row": 3, "col": 1},      # between them, never through a node
+    {"id": "polish", "step": "polish", "label": "Consistency", "row": 3, "col": 2},
+    {"id": "ready", "kind": "context", "label": "Ready. What you confirm goes into the TM", "row": 3, "col": 3},
+    {"id": "editor", "step": "editor", "label": "Chat", "row": 4, "col": 0},
+    {"id": "rewrite", "step": "rewrite", "label": "Rewrites", "row": 4, "col": 1},
+    {"id": "lqa", "step": "lqa", "label": "Quality score", "row": 4, "col": 2},
+    {"id": "suggest", "step": "suggest", "label": "Suggested prompts", "row": 5, "col": 0},
+    {"id": "complete", "step": "complete", "label": "Tab completion", "row": 5, "col": 1},
+    {"id": "notes", "step": "notes", "label": "Translation summary", "row": 5, "col": 2},
 )
 # (from, to, label): a label says when that way is taken (the review loops with refinement until no issues are left).
 EDGES: tuple[tuple[str, str, str], ...] = (
-    ("ocr", "ocr_check", ""), ("ocr_check", "source_check", ""), ("source_check", "memory", ""), ("office", "memory", ""),
+    ("ocr", "ocr_check", ""), ("ocr_second", "ocr_check", ""), ("ocr_check", "source_check", ""),
+    ("source_check", "memory", ""), ("office", "memory", ""),
     ("memory", "analyse", ""), ("analyse", "questions", ""), ("questions", "translate", ""), ("translate", "review", ""),
     ("review", "refine", "issues found"), ("refine", "review", ""), ("review", "polish", "no issues"),
     ("polish", "ready", ""),

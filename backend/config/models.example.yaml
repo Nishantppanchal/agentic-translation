@@ -18,7 +18,7 @@ models:
     model_name: qwen/qwen3.8-flash        # the name the server knows the model by (no ZDR endpoint on OpenRouter)
     url: https://openrouter.ai/api/v1     # the server's OpenAI-compatible base URL
     api_key: ${OPENROUTER_API_KEY}        # sent as "Authorization: Bearer …"
-    vision: true                          # reads images: needed by the ocr, ocr_check and editor steps
+    vision: true                          # reads images: needed by the ocr, ocr_second, ocr_check and editor steps
     thinking: true                        # a reasoning model: the app offers Instant / Low / Medium / High
     effort: instant                       # its default level, where pipeline.yaml sets none (unset: medium)
     label: Qwen3.8 Flash                  # the name the app shows (unset: made from model_name)

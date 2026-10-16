@@ -113,4 +113,4 @@ def test_a_page_is_read_again_only_when_its_settings_change():
     from translator.document.pages import load_pages
 
     [page] = load_pages((SAMPLES / "wartungsbericht-scanned.pdf").read_bytes(), "w.pdf")
-    assert re.match(r"^[0-9a-f]{40}$", steps.read._ocr_signature(page))
+    assert re.match(r"^[0-9a-f]{40}$", steps.page.signature(page))

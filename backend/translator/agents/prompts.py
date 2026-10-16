@@ -48,6 +48,17 @@ The red boxes labelled FIGURE k are figures handled separately: the transcriptio
 [[FIGURE k]] line for each of them, at the right position, and must NOT contain the text inside them.
 Keep those lines unchanged."""
 
+ARBITRATE = """\
+Two readings of this {what}, made independently, disagree at the places listed below. In each, the words in [ ]
+differ: A and B are what the two readings have there, and the words around them say where it is. Look at the
+image and write what is actually printed in place of the [ ], character for character — it may be A, B or
+neither. Write ? if it can't be read.
+
+Reply only with numbered lines, one for each place, like this:
+1: <printed text>
+
+{items}"""
+
 FIGURE_IS_TEXT = """\
 The area shown as [[FIGURE {n}]] (the second image) is printed text, not a picture: transcribe its text where
 [[FIGURE {n}]] is now, in reading order, and leave out the [[FIGURE {n}]] line. Keep every other [[FIGURE k]] line."""
@@ -90,12 +101,13 @@ Reply in EXACTLY one of these two forms:
 or
 
 <verdict>fixed</verdict>
-<issues>
-- short description of each problem you fixed
-</issues>
-<markdown>
-the full corrected page transcription in markdown
-</markdown>
+<fix>
+<read>the words as the transcription has them, with a few words before and after so they can be found</read>
+<printed>the same words as they are printed on the page</printed>
+</fix>
+
+One <fix> for each place, nothing else: never write out the whole page. For dropped text, <read> holds the words
+just before where it belongs and <printed> those words followed by the missing text.
 
 <transcription>
 {transcription}
@@ -125,6 +137,9 @@ Rules:
 - Translation memory matches are earlier human-approved translations of similar sentences: reuse their
   wording and terminology where the meaning is the same, and change only what differs in the new source.
 - Give exactly one translation per input segment, with the same ids, in order. Never merge or skip segments.
+- Never put a note, a placeholder or a comment in place of a translation (no "[untranslatable]", no "[leave as
+  …]"). If a segment looks garbled or misread (text read off a picture, say), translate it as literally as you can:
+  a person checks it.
 - Terminology: record the key domain terms, names and recurring phrases you translated here, so later pages
   stay consistent (at most 8, skip ones already listed below).
 - Document brief: write the updated brief (at most 120 words): document type and domain, parties and entities,

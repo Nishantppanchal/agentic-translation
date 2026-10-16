@@ -47,9 +47,26 @@ def _norm(text: str) -> str:
 # --------------------------------------------------------------------------- #
 
 
+# A model's note to itself in place of a translation: the whole "translation" in brackets, saying what to do with
+# the text rather than translating it — "[Leave as a picture caption placeholder pending the original image]".
+_NOTE = re.compile(r"^\s*[\[(〔【]\s*(.*?)\s*[\])〕】]\s*$", re.S)
+_NOTE_WORDS = re.compile(
+    r"\b(placeholder|leave (it )?(as|untranslated|unchanged|blank)|untranslat\w*|not translat\w*|cannot be translated|"
+    r"can't be translated|no translation|original (image|text)|source text|illegible|unreadable|garbled|"
+    r"translator'?s note|pending|omitted|unclear text|no text)\b", re.I)
+
+
+def looks_like_note(target: str | None) -> bool:
+    """The translation is a bracketed note about the text (what to do with it, that it can't be read), not a
+    translation of it."""
+    m = _NOTE.match(target or "")
+    return bool(m and _NOTE_WORDS.search(m.group(1)))
+
+
 def looks_untranslated(source: str, target: str | None) -> bool:
-    """Empty, or the source echoed back for a segment that is real prose (not a name, code or number)."""
-    if not (target or "").strip():
+    """Empty, a note in place of a translation, or the source echoed back for a segment that is real prose (not a
+    name, code or number)."""
+    if not (target or "").strip() or looks_like_note(target):
         return True
     if _norm(source) != _norm(target):
         return False
@@ -287,6 +304,15 @@ def _untranslated(seg: dict, ctx: Context):
 def _merged(seg: dict, ctx: Context):
     if MERGED in (seg.get("flags") or []):
         yield "error", "Looks merged with a neighbouring segment: text moved in or out.", ""
+
+
+@check("picture_reading", "Picture text to check", "accuracy")
+def _picture_reading(seg: dict, ctx: Context):
+    """A picture in a Word, PowerPoint or Excel file whose two readings differ where nothing settled it (agents/steps/
+    picture.py): Office files have no source check, so the person sees it here."""
+    if seg.get("kind") == "figure":
+        for flag in seg.get("reading_flags") or []:
+            yield "warning", f"The text read in this picture may be wrong: {flag}. Check it against the picture.", flag
 
 
 @check("numbers", "Numbers & dates", "accuracy")

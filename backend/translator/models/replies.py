@@ -171,6 +171,28 @@ def parse_figure_reply(text: str) -> tuple[str, str]:
     return ("text" if kind.startswith("text") else "picture"), body
 
 
+def parse_ocr_fixes(text: str) -> tuple[bool, list[tuple[str, str]], str | None]:
+    """The OCR check's reply → (ok, [(as read, as printed)], a whole corrected page if the model wrote one anyway)."""
+    text = clean(text)
+    verdict = (tag_body(text, "verdict") or "").lower()
+    fixes = []
+    for block in re.findall(r"<fix>(.*?)</fix>", text, re.S | re.I):
+        read, printed = tag_body(block, "read"), tag_body(block, "printed")
+        if read is not None and printed is not None and read.strip() != printed.strip():
+            fixes.append((read.strip(), printed.strip()))
+    page = tag_body(text, "markdown")
+    ok = verdict.startswith("ok") or (not verdict and not fixes and page is None)
+    return ok and not fixes and not page, fixes, clean(page) if page else None
+
+
+def parse_arbitration(text: str) -> dict[int, str]:
+    """The arbiter's numbered lines ("1: …") → {1: "…"}; "?" where it couldn't read the place."""
+    out: dict[int, str] = {}
+    for n, said in re.findall(r"^\s*(\d+)\s*[:.)]\s*(.*?)\s*$", clean(text), re.M):
+        out.setdefault(int(n), said.strip().strip("`").strip())
+    return out
+
+
 def parse_ocr_check(text: str) -> tuple[bool, list[str], str | None]:
     """Returns (ok, issues, corrected_markdown_or_None)."""
     text = clean(text)

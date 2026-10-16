@@ -15,6 +15,7 @@ small there: it is applied only when the text layer has the corrected text in co
 from __future__ import annotations
 
 import re
+import unicodedata
 from difflib import SequenceMatcher
 
 from rapidfuzz.distance import Levenshtein
@@ -51,6 +52,28 @@ def _syntax_only(old: str, new: str) -> bool:
     return all(c.isspace() or c in _SYNTAX for c in old + new)
 
 
+def _same_characters(old: str, new: str) -> bool:
+    """The same text in another form: full-width digits and letters (２０２６ / 2026), ligatures (ﬁ / fi)."""
+    return unicodedata.normalize("NFKC", old) == unicodedata.normalize("NFKC", new)
+
+
+def apply_fixes(markdown: str, fixes: list[tuple[str, str]]) -> tuple[str, list[tuple[str, str]]]:
+    """The page with the OCR check's amendments made (each "as read" found once, spacing aside) → (page, the
+    amendments whose words weren't found)."""
+    missing = []
+    for read, printed in fixes:
+        if read in markdown:
+            markdown = markdown.replace(read, printed, 1)
+            continue
+        pattern = r"\s+".join(re.escape(w) for w in read.split())
+        m = re.search(pattern, markdown) if pattern else None
+        if m:
+            markdown = markdown[:m.start()] + printed + markdown[m.end():]
+        else:
+            missing.append((read, printed))
+    return markdown, missing
+
+
 def _short(text: str, n: int = 80) -> str:
     text = " ".join(text.split())
     return text if len(text) <= n else text[: n - 1] + "…"
@@ -79,8 +102,8 @@ def guard(original: str, corrected: str, text_layer: str = "") -> tuple[str, lis
             label_old, label_new = f"{before}{old}{after}", f"{before}{new}{after}"
         else:
             label_old, label_new = old, new
-        if op == "equal" or _syntax_only(old, new):
-            out.append(old)  # unchanged, or only spacing / markdown structure: keep the reading
+        if op == "equal" or _syntax_only(old, new) or _same_characters(old, new):
+            out.append(old)  # unchanged, only spacing / markdown structure, or full-width vs normal: keep the reading
             continue
         if op == "delete":
             before = "".join(a[max(0, i1 - (i2 - i1)) : i1])

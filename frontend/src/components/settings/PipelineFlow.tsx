@@ -45,6 +45,12 @@ function route(s: Box, t: Box): { points: Point[]; at: Point; above: boolean } {
     ];
     return { points, at: { x: (middle(s).x + middle(t).x) / 2, y }, above: false };
   }
+  if (t.row < s.row && t.col === s.col) {
+    // up into the step right above (the second reading feeding the check): straight, into its bottom
+    const a = { x: middle(s).x, y: top(s) };
+    const b = { x: middle(t).x, y: top(t) + H };
+    return { points: [a, b], at: { x: a.x, y: (a.y + b.y) / 2 }, above: false };
+  }
   // down to a later row: turn in the gap above it
   const y = top(t) - GAP_Y / 2;
   const points = [

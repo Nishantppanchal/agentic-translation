@@ -23,6 +23,7 @@ from ...document import edits
 from ...document import state as st
 from ...document.pages import SUPPORTED_EXTS, guess_mime, load_pages
 from ...models import routing
+from ...ocr import second
 from ..downloads import content_disposition
 from ..services import (
     APP_NAME,
@@ -60,7 +61,8 @@ async def list_sessions() -> list[dict[str, Any]]:
 
 
 async def _create_document(filename: str, data: bytes, source_lang: str, pages: int, project: dict | None,
-                           models: dict | None = None, dictionary_on: bool | None = None) -> Session:
+                           models: dict | None = None, dictionary_on: bool | None = None,
+                           second_reader: bool | None = None) -> Session:
     """One document = one session, with its own ingest run. It keeps the models (and dictionary choice) it was
     uploaded with: the defaults then, plus what the upload changed."""
     source_artifact = f"source{Path(filename).suffix.lower()}"
@@ -85,6 +87,7 @@ async def _create_document(filename: str, data: bytes, source_lang: str, pages: 
             "doc:review_report": [],
             routing.DOC_MODELS: routing.snapshot(models),
             references.DOC_DICTIONARY: references.dictionary_on(None) if dictionary_on is None else dictionary_on,
+            second.DOC_KEY: second.enabled(None) if second_reader is None else second_reader,
             **({"doc:project_id": project["id"]} if project else {}),
         },
     )
@@ -108,6 +111,7 @@ async def create_session(
     project_id: str = Form(""),
     models: str = Form(""),  # JSON {step: {model, effort}}: this document's own choices (the rest: Settings)
     dictionary: str = Form(""),  # "true" / "false": use the dictionary for this document (blank: Settings)
+    second_reader: str = Form(""),  # "true" / "false": a second reading of scanned pages and pictures (blank: Settings)
 ) -> dict[str, Any]:
     """Upload a document to translate into English."""
     filename = Path(file.filename or "document").name
@@ -117,6 +121,8 @@ async def create_session(
         raise HTTPException(422, f"models: {exc}") from exc
     dictionary_on = {"true": True, "false": False}.get(dictionary.strip().lower())
     settings_routes.check_dictionary(dictionary_on)
+    second_on = {"true": True, "false": False}.get(second_reader.strip().lower())
+    settings_routes.check_second_reader(second_on)
     project = projects.get_store().project(project_id) if project_id else None
     if project_id and not project:
         raise HTTPException(404, "Project not found")
@@ -147,7 +153,7 @@ async def create_session(
     except Exception as exc:
         raise HTTPException(400, f"Could not read file: {exc}") from exc
 
-    session = await _create_document(filename, data, source_lang, pages, project, chosen, dictionary_on)
+    session = await _create_document(filename, data, source_lang, pages, project, chosen, dictionary_on, second_on)
     return summary(await load_session(session.id))
 
 

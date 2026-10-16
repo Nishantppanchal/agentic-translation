@@ -197,7 +197,7 @@ def test_settings_are_validated_saved_and_reset(api):
     client, _ = api
     view = client.get("/api/settings").json()
     assert view["models"]["translate"] == {"model": "fast", "effort": None} and view["dictionary"]["available"] is False
-    assert [g["id"] for g in view["groups"]] == ["reading", "translating", "reviewing", "chat", "assist"]
+    assert [g["id"] for g in view["groups"]] == ["reading", "second", "translating", "reviewing", "chat", "assist"]
     assert next(g for g in view["groups"] if g["id"] == "assist")["steps"] == ["suggest", "complete", "notes"]
     assert view["defaults"]["translate"] == {"deep": {"effort": "medium", "from": "built-in"},
                                              "deep-vl": {"effort": "medium", "from": "built-in"}}
@@ -243,3 +243,50 @@ def test_an_upload_keeps_its_own_choice(api, monkeypatch):
     assert s.state[routing.DOC_MODELS]["translate"] == {"model": "deep", "effort": "high"}
     assert s.state[routing.DOC_MODELS]["review"] == {"model": "fast", "effort": None}  # the rest: the defaults then
     assert s.state["doc:dictionary"] is False  # no dictionary service is set up in tests
+
+
+@pytest.mark.second_reading
+def test_the_second_reading_is_a_setting_for_new_documents_and_each_one(api, monkeypatch):
+    """On by default; Settings and a document's own settings turn it off (like the dictionary); OCR_SECOND=off turns
+    it off on the server. With the same model reading twice, or judging its own reading, the settings say so."""
+    from translator.config import get_settings
+    from translator.ocr import second
+
+    client, sessions = api
+    view = client.get("/api/settings").json()
+    assert view["second_reader"]["available"] is True and view["second_reader"]["enabled"] is True
+    assert len(view["second_reader"]["warnings"]) == 2  # every step is "fast" here: one model reads twice and judges
+    view = client.put("/api/settings", json={"models": {"ocr_second": {"model": "deep-vl", "effort": "low"}}}).json()
+    assert len(view["second_reader"]["warnings"]) == 1 and "OCR check" in view["second_reader"]["warnings"][0]
+    assert client.put("/api/settings", json={"second_reader": False}).json()["second_reader"]["enabled"] is False
+    assert second.enabled() is False
+    s = asyncio.run(sessions.create_session(app_name=services.APP_NAME, user_id=services.USER, state={
+        "doc:status": "ready", routing.DOC_MODELS: routing.snapshot()}))
+    r = client.patch(f"/api/sessions/{s.id}/settings", json={"second_reader": True})
+    assert r.status_code == 200 and r.json()["second_reader"]["enabled"] is True
+    s = asyncio.run(sessions.get_session(app_name=services.APP_NAME, user_id=services.USER, session_id=s.id))
+    assert s.state[second.DOC_KEY] is True and "second reading on" in s.events[-1].content.parts[0].text
+    assert services.document_view(s)["settings"]["second_reader"]["enabled"] is True  # what the document's chip shows
+    monkeypatch.setattr(get_settings(), "ocr_second", "off")
+    assert client.put("/api/settings", json={"second_reader": True}).status_code == 422
+    assert client.get("/api/settings").json()["second_reader"] == {"available": False, "enabled": False,
+                                                                   "reason": second.OFF_ON_SERVER, "warnings": []}
+
+
+@pytest.mark.second_reading
+def test_an_upload_can_turn_the_second_reading_off(api, monkeypatch):
+    from google.adk.artifacts import InMemoryArtifactService
+
+    from translator.ocr import second
+
+    _, sessions = api
+    monkeypatch.setattr(document_routes, "artifact_service", InMemoryArtifactService(), raising=False)
+    monkeypatch.setattr(document_routes, "start_run", lambda *a, **k: None)
+    app = FastAPI()
+    app.include_router(document_routes.router)
+    up = TestClient(app)
+    files = {"file": ("note.txt", "Die Anlage ist abgenommen.".encode(), "text/plain")}
+    on = up.post("/api/sessions", files=files, data={"source_lang": "German"}).json()["id"]
+    off = up.post("/api/sessions", files=files, data={"source_lang": "German", "second_reader": "false"}).json()["id"]
+    get = lambda sid: asyncio.run(sessions.get_session(app_name=services.APP_NAME, user_id=services.USER, session_id=sid))  # noqa: E731
+    assert get(on).state[second.DOC_KEY] is True and get(off).state[second.DOC_KEY] is False

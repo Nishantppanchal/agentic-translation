@@ -31,6 +31,9 @@ export function DocSettingsChip({
   const model = choice && choice !== "mixed" ? catalog.models?.find((m) => m.id === choice.model) : undefined;
   const main = choice ? choiceLabel(choice, catalog.models, app, translating?.steps[0] ?? "translate") : "";
   const dict = settings.dictionary.enabled;
+  // (a document view from before the second reading has no status: shown as off)
+  const second = settings.second_reader ?? { available: false, enabled: false, reason: null, warnings: [] };
+  const twice = second.enabled;
 
   return (
     <>
@@ -63,6 +66,10 @@ export function DocSettingsChip({
                 </div>
               ))}
               <div className="flex items-center justify-between gap-3 text-xs">
+                <span className="text-muted-foreground">Second reading of scans</span>
+                <span>{second.available ? (twice ? "on" : "off") : "off"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3 text-xs">
                 <span className="text-muted-foreground">Dictionary</span>
                 <span>{settings.dictionary.available ? (dict ? "on" : "off") : "not set up"}</span>
               </div>
@@ -81,14 +88,16 @@ export function DocSettingsChip({
           note="Changes apply from this document's next run (a chat message, a task, a retry). Other documents keep theirs."
           models={catalog.models}
           settings={app}
-          value={{ models: settings.models, dictionary: dict }}
+          value={{ models: settings.models, dictionary: dict, second: twice }}
           dictionary={settings.dictionary}
+          second={second}
           saveLabel="Save"
           disabledReason={busy ? "Wait for the agents to finish." : null}
           onSave={async (v) => {
             await api.patchSessionSettings(sessionId, {
               models: changedSteps(v.models, settings.models),
               ...(v.dictionary !== dict && settings.dictionary.available ? { dictionary: v.dictionary } : {}),
+              ...(v.second !== twice && second.available ? { second_reader: v.second } : {}),
             });
             onSaved();
           }}

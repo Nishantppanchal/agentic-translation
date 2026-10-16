@@ -92,6 +92,20 @@ class Settings(BaseSettings):
     # every page. OCR_CHECK_AGREEMENT below 100 also skips near matches — a misread word scores ~98.
     ocr_check: Literal["auto", "always"] = "auto"
     ocr_check_agreement: float = 100.0
+    # A second reading of scanned pages and pictures by another model (the `ocr_second` step), at the same time as
+    # the first: where the two differ, the OCR check model says which is printed (agents/steps/page.py). auto: on,
+    # unless switched off in Settings or for a document · off: never (one reading, then the OCR check, as before).
+    ocr_second: Literal["auto", "off"] = "auto"
+    # Disagreements per 100 words above which a page counts as hard to read: nothing is changed on it, the
+    # disagreements are listed, and the page is marked for the person checking the source (clean pages: 0–3).
+    ocr_hard_rate: float = 6.0
+    ocr_hard_min: int = 5  # …and at least this many (on a short page a rate says little)
+    # Images smaller than this (long side, pixels) are enlarged for the reading models, which misread small text:
+    # pages (an A4 page at OCR_DPI 150 is 1755 px) and pictures (Office pictures, figures cut from pages).
+    ocr_min_page_px: int = 1600
+    ocr_min_picture_px: int = 1000
+    ocr_max_upscale: float = 3.0  # at most this much; and never past OCR_MAX_IMAGE_PX (models shrink bigger ones)
+    ocr_max_image_px: int = 6_000_000
     max_concurrency: int = 2  # model calls at once within one run
     max_parallel_runs: int = 2  # pipelines/tasks running at once across documents (more are queued)
 

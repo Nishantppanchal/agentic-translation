@@ -82,11 +82,11 @@ def test_the_figure_check_reply(reply, expected):
 
 def test_changing_the_figure_settings_reads_the_page_again(monkeypatch):
     [page] = load_pages(_one_page(), "a.pdf")
-    before = steps.read._ocr_signature(page)
+    before = steps.page.signature(page)
     monkeypatch.setattr(get_settings(), "layout_thresholds", {"image": 0.7})
-    assert steps.read._ocr_signature(page) != before
+    assert steps.page.signature(page) != before
     monkeypatch.setattr(get_settings(), "figure_check", "off")
-    assert steps.read._ocr_signature(page) != before
+    assert steps.page.signature(page) != before
 
 
 def _one_page() -> bytes:

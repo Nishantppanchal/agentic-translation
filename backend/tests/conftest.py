@@ -33,8 +33,11 @@ from .fake_vllm import FakeVllm  # noqa: E402
 WORKERS = [
     workers.analyst,
     workers.ocr_reader,
+    workers.ocr_second_reader,
     workers.ocr_checker,
+    workers.ocr_arbiter,
     workers.figure_reader,
+    workers.figure_second_reader,
     workers.translator,
     workers.reviewer,
     workers.refiner,
@@ -73,6 +76,16 @@ def source_check_off_by_default(request, monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def second_reading_off_by_default(request, monkeypatch):
+    """Scanned pages and pictures get one reading (and the OCR check) unless a test opts into the second reading
+    with the `second_reading` marker (then fake_ocr fakes both readers and the arbiter)."""
+    from translator.ocr import second
+
+    if "second_reading" not in request.keywords:
+        monkeypatch.setattr(second, "enabled", lambda state=None: False)
+
+
+@pytest.fixture(autouse=True)
 def isolated_project_store():
     """Projects, termbase and TM live in a fresh in-memory database per test (never data/projects.db)."""
     projects.set_store(projects.ProjectStore(":memory:"))
@@ -107,6 +120,7 @@ def pytest_configure(config):
     config.addinivalue_line("markers", "structured: run with JSON-schema output enabled")
     config.addinivalue_line("markers", "analysis: run the whole-document analysis (fake the analyst)")
     config.addinivalue_line("markers", "source_check: pause after reading PDFs and images for the source check")
+    config.addinivalue_line("markers", "second_reading: a second model reads scanned pages and pictures too")
 
 
 def pytest_collection_modifyitems(config, items):

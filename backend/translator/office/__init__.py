@@ -93,5 +93,11 @@ def extract(data: bytes, fmt: str, *, read_pictures: bool = True, min_cm: float 
 
 def write(data: bytes, fmt: str, segments: list[dict], *, marks: bool = False) -> tuple[bytes, Report]:
     """The original file with the translations written in. `marks` (Word, for the Layout view only): a hidden
-    bookmark `_seg_<id>` at each segment's paragraph, to find it in the rendered page."""
-    return _MODULES[fmt].write(data, segments, marks=marks)
+    bookmark `_seg_<id>` at each segment's paragraph, to find it in the rendered page.
+
+    A "translation" that is a model's note to itself ("[Leave as … placeholder …]") is never written into the
+    client's file: that segment keeps its original text (and a picture its own alt text, with no caption or note)."""
+    from ..quality.qa import looks_like_note  # local: quality imports document helpers that import office
+
+    clean = [{**s, "target": None} if looks_like_note(s.get("target")) else s for s in segments]
+    return _MODULES[fmt].write(data, clean, marks=marks)

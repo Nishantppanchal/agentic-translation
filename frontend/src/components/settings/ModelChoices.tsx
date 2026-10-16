@@ -1,8 +1,8 @@
 "use client";
 
-import { BookOpen, ChevronRight, Eye, Lightbulb, RotateCcw } from "lucide-react";
+import { BookOpen, ChevronRight, Eye, Lightbulb, RotateCcw, ScanText, TriangleAlert } from "lucide-react";
 import { cn } from "cn";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
@@ -10,7 +10,17 @@ import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { api } from "@/lib/api";
-import type { AppSettingsView, DictionaryStatus, Effort, ModelChoices, ModelInfo, StepChoice, StepGroup, StepId } from "@/lib/types";
+import type {
+  AppSettingsView,
+  DictionaryStatus,
+  Effort,
+  ModelChoices,
+  ModelInfo,
+  SecondReaderStatus,
+  StepChoice,
+  StepGroup,
+  StepId,
+} from "@/lib/types";
 import { ModelLogo, ServerBadge } from "./ModelLogo";
 import { PipelineFlow } from "./PipelineFlow";
 
@@ -267,6 +277,7 @@ export function ModelChoicesEditor({
   settings,
   base,
   baseLabel,
+  below,
 }: {
   value: ModelChoices;
   onChange: (next: ModelChoices) => void;
@@ -274,6 +285,7 @@ export function ModelChoicesEditor({
   settings: AppSettingsView;
   base: ModelChoices;
   baseLabel: string;
+  below?: Partial<Record<string, React.ReactNode>>; // more under a group's row, by group id (e.g. the second reading's switch)
 }) {
   const byId = useMemo(() => new Map(models.map((m) => [m.id, m])), [models]);
   const [hover, setHover] = useState<StepId[] | null>(null);
@@ -361,7 +373,14 @@ export function ModelChoicesEditor({
         pulse={pulse}
         onChange={(step, choice) => set([step], () => choice)}
       />
-      <div className="-mx-2">{settings.groups.map((g) => row(g.id, g.label, g.help, g.steps, g.vision))}</div>
+      <div className="-mx-2">
+        {settings.groups.map((g) => (
+          <Fragment key={g.id}>
+            {row(g.id, g.label, g.help, g.steps, g.vision)}
+            {below?.[g.id] && <div className="px-2 pb-2">{below[g.id]}</div>}
+          </Fragment>
+        ))}
+      </div>
       <Collapsible>
         <CollapsibleTrigger className="group/adv flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
           <ChevronRight size={12} className="transition-transform group-data-[state=open]/adv:rotate-90" /> Advanced: a model for each step
@@ -390,6 +409,33 @@ export function ModelChoicesEditor({
         Reading and Chat need models that read images. Reasoning levels are for models marked <code>thinking: true</code> in
         models.yaml; each step&apos;s default level comes from pipeline.yaml, then the model&apos;s own <code>effort</code>, then Medium.
       </p>
+    </div>
+  );
+}
+
+/** A second reading of scanned pages and pictures by another model (unless the server turned it off). */
+export function SecondReadingSwitch({ status, on, onChange }: { status: SecondReaderStatus; on: boolean; onChange: (on: boolean) => void }) {
+  return (
+    <div className="space-y-2">
+      <label className="flex items-start gap-3">
+        <Switch checked={on && status.available} disabled={!status.available} onCheckedChange={onChange} className="mt-0.5" />
+        <span className="text-sm">
+          <span className="flex items-center gap-1.5 font-medium">
+            <ScanText size={14} className="text-muted-foreground" /> Second reading
+          </span>
+          <span className="block text-xs text-muted-foreground">
+            {status.available
+              ? "Another model reads scanned pages and pictures at the same time. Where the two differ, the OCR check model says which is printed; what it can't settle is listed for you."
+              : status.reason}
+          </span>
+        </span>
+      </label>
+      {on &&
+        status.warnings.map((w) => (
+          <p key={w} className="flex items-start gap-1.5 rounded-md bg-warn px-2.5 py-1.5 text-xs text-warn-fg">
+            <TriangleAlert size={13} className="mt-0.5 shrink-0" /> {w}
+          </p>
+        ))}
     </div>
   );
 }

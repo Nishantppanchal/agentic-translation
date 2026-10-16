@@ -83,7 +83,7 @@ models:
 
 
 @pytest.mark.parametrize(("models", "pipeline", "problem"), [
-    ("models: [{id: a, model_name: m, url: u, vision: true}]", "steps: {ocr: a}", "no model for the step 'ocr_check'"),
+    ("models: [{id: a, model_name: m, url: u, vision: true}]", "steps: {ocr: a}", "no model for the step 'ocr_second'"),
     ("models: [{id: a, model_name: m, url: u, vision: true}]", "default: b", "uses 'b', which is not an id in models.yaml (a)"),
     ("models: [{id: a, model_name: m, url: u, vision: true}, {id: a, model_name: n, url: u}]", "default: a", "two models have the id 'a'"),
     ("models: [{id: a, model_name: m, url: u, vision: true, api_kye: x}]", "default: a", "models.0.api_kye: Extra inputs"),

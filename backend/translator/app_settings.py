@@ -1,6 +1,7 @@
-"""App-wide settings people change in the app (Settings): the model and reasoning level for each step, and whether
-the dictionary is used, and whether the chat suggests prompts (AI assist). They are the defaults for new documents; each document keeps its own copy (doc:models,
-doc:dictionary), which the upload panel and the document's settings can change. Stored in projects.db."""
+"""App-wide settings people change in the app (Settings): the model and reasoning level for each step, whether the
+dictionary is used, whether scans get a second reading, and whether the chat suggests prompts (AI assist). They are
+the defaults for new documents; each document keeps its own copy (doc:models, doc:dictionary, doc:second_reader),
+which the upload panel and the document's settings can change. Stored in projects.db."""
 
 from __future__ import annotations
 
@@ -26,6 +27,7 @@ class AppSettings(BaseModel):
     models: dict[Step, StepChoice] = Field(default_factory=dict)  # steps not listed use pipeline.yaml's model
     dictionary: bool = True
     assist: bool = True  # suggested follow-up prompts and Tab completions in the chat box
+    second_reader: bool = True  # a second model reads scanned pages and pictures too (ocr/second.py)
 
 
 _cache: tuple[projects.ProjectStore, AppSettings] | None = None
@@ -53,7 +55,7 @@ def load() -> AppSettings:
         return _cache[1]
     raw = store.get_setting(KEY) or {}
     settings = AppSettings(models=valid_models(raw.get("models") or {}), dictionary=raw.get("dictionary", True),
-                           assist=bool(raw.get("assist", True)))
+                           assist=bool(raw.get("assist", True)), second_reader=bool(raw.get("second_reader", True)))
     _cache = (store, settings)
     return settings
 

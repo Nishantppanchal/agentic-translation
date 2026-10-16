@@ -23,6 +23,7 @@ from ..agents.tasks import ops_workflow
 from ..config import TARGET_LANG, get_settings
 from ..document import comments, source_check
 from ..models import routing
+from ..ocr import second
 from ..document import state as st
 from .runs import Emit, RunManager
 from .timeline import pending_interrupt, stream_events
@@ -100,7 +101,8 @@ def document_view(session: Session) -> dict[str, Any]:
         "versions": s.get("doc:versions") or [],
         "ocr_report": s.get("doc:ocr_report") or [],
         "review_report": s.get("doc:review_report") or [],
-        "settings": {"models": routing.choices(s), "dictionary": references.dictionary_status(s)},
+        "settings": {"models": (choices := routing.choices(s)), "dictionary": references.dictionary_status(s),
+                     "second_reader": second.status(s, choices)},
         # Word / PowerPoint / Excel: what a "page" is (part, slide, sheet), their labels, what reading left out.
         "unit": s.get("doc:unit"),
         "page_labels": s.get("doc:page_labels"),

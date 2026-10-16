@@ -34,6 +34,11 @@ from .test_flow import _prompt, _reply
         ("Projekt-Nr.: UW-2291", "Projekt-Nr.: UW-2291", False),  # codes / names may stay identical
         ("Dipl.-Ing. M. Weber", "Dipl.-Ing. M. Weber", False),
         ("设备在上述缺陷整改完成前有条件验收。", "设备在上述缺陷整改完成前有条件验收。", True),
+        ("此，可能是！\n来编审", "[Leave as a picture caption placeholder pending the original image]", True),  # a note
+        ("此，可能是！", "(untranslatable: the source text is garbled)", True),
+        ("见附件B", "[1] See Annex B", False),  # brackets that are part of the text
+        ("草稿", "[Draft]", False),
+        ("见图2", "(see Figure 2)", False),
     ],
 )
 def test_looks_untranslated(source, target, expected):

@@ -69,10 +69,14 @@ uv run python scripts/seed_demo.py --reset         # two projects: German → En
 - [ ] At most two run at once; the third shows *Queued* until one finishes.
 
 **2.3 Reading a scan.** Upload `samples/abnahmeprotokoll-scanned.pdf`.
-- [ ] The chat says *Reading 2 pages with vision OCR + OCR check*.
+- [ ] The chat says *Reading 2 pages with vision OCR (two models, side by side)*, then for each page *two readings agree* or *two readings differ in N places; M settled by the OCR check*.
 - [ ] The run stops for the source check (step bar at **Check**): nothing is translated yet.
 - [ ] **Source & notes → Page images & OCR**, page 1: the table is a table (Nr. | Beschreibung | Frist), headings are headings.
-- [ ] Any *Possible misreadings* box lists changes the OCR check suggested but did **not** make (other words, numbers): compare them with the page image on the left.
+- [ ] Any *Possible misreadings* box lists where the two readings differ and the OCR check couldn't settle it (both versions): compare them with the page image on the left. *Changed:* lines are the places it settled.
+- [ ] **Second reading off:** Settings → Models → *Second reading* off (or the document's model chip). Upload the same scan: the chat says *+ OCR check*, and the page is checked as before (amendments only).
+- [ ] **Settings warnings:** set *Second reading* to the same model as *Reading*, or *OCR check* to one of the readers: a warning says why that defeats the point.
+- [ ] **A hard page:** upload a very low-resolution scan or photo of a page: the page is marked *Hard to read — check the whole page*, nothing changed, the differences listed.
+- [ ] **Office picture:** `samples/anquan-peixun.pptx` — the safety sign's text is read by both models; if they disagree and it can't be settled, **Quality** shows *Picture text to check*.
 - [ ] Upload `samples/fucha-baogao-scanned.pdf`: the running header and the page number become their own segments (*header*, *footer*), the diagram is a figure with its Chinese labels as the legend, and the caption 图1 sits right below it.
 - [ ] Click **Continue to translation** on both.
 

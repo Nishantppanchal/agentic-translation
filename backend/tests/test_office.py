@@ -373,6 +373,25 @@ def test_powerpoint_pictures_get_alt_text_and_a_line_in_the_slide_notes():
     assert pics[1]._element.nvPicPr.cNvPr.get("descr") == "image.png"  # the icon was left alone
 
 
+def test_a_note_in_place_of_a_translation_never_reaches_the_file():
+    """A model's note to itself ("[Leave as … placeholder …]") isn't written: the picture keeps its own alt text and
+    gets no line in the notes; a paragraph keeps its original text."""
+    data = pptx_pictures()
+    segs, _ = office.extract(data, "pptx")
+    note = "[Leave as a picture caption placeholder pending the original image]"
+    out, report = office.write(data, "pptx", [{**s, "target": note} if s["kind"] in ("figure", "alt") else s for s in segs])
+    assert report.pictures["notes"] == 0 and report.pictures["captions"] == 0
+    prs = Presentation(io.BytesIO(out))
+    assert "placeholder" not in prs.slides[0].notes_slide.notes_text_frame.text
+    for sh in prs.slides[0].shapes:
+        if sh.shape_type == 13:
+            assert "placeholder" not in (sh._element.nvPicPr.cNvPr.get("descr") or "")
+    para = next(s for s in segs if s["kind"] not in ("figure", "alt") and s.get("translatable", True))
+    out, _ = office.write(data, "pptx", [{**para, "target": "[untranslatable]"}])
+    texts = [sh.text_frame.text for sl in Presentation(io.BytesIO(out)).slides for sh in sl.shapes if sh.has_text_frame]
+    assert not any("untranslatable" in t for t in texts)
+
+
 def test_excel_pictures_get_alt_text_and_nothing_else_changes():
     data = xlsx_pictures()
     segs, _ = office.extract(data, "xlsx")
@@ -407,11 +426,16 @@ def test_a_picture_that_changed_in_the_file_is_left_alone():
 
 
 def _picture_reader(monkeypatch, texts: dict[bytes, str]) -> list[bytes]:
-    """The figure reader as a fake vision model: the text "in" each picture, by the PNG it is shown."""
+    """The figure reader as a fake vision model: the text "in" each picture, by the PNG it is shown (pictures are
+    enlarged for the reading models first: small text is misread)."""
     from translator.agents import workers
+    from translator.config import get_settings
+    from translator.document.pages import enlarged
 
     from .test_flow import _reply
 
+    s = get_settings()
+    texts = {enlarged(png, s.ocr_min_picture_px, s.ocr_max_upscale, s.ocr_max_image_px): t for png, t in texts.items()}
     seen: list[bytes] = []
 
     def look(callback_context, llm_request):

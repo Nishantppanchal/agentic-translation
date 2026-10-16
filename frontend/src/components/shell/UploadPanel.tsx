@@ -11,8 +11,8 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@
 import { Skeleton } from "@/components/ui/skeleton";
 import type { SettingsUpdate } from "@/lib/api";
 import { rise, spring } from "@/lib/motion";
-import type { ModelChoices, Project } from "@/lib/types";
-import { ChoicesDialog } from "../settings/ChoicesDialog";
+import type { Project } from "@/lib/types";
+import { ChoicesDialog, type DocChoices } from "../settings/ChoicesDialog";
 import { changedSteps, groupSummaries, useModelCatalog } from "../settings/ModelChoices";
 import { ModelLogo } from "../settings/ModelLogo";
 
@@ -45,9 +45,11 @@ export function UploadPanel({
 }) {
   const catalog = useModelCatalog();
   // This document's own models and dictionary; null = the defaults (Settings).
-  const [own, setOwn] = useState<{ models: ModelChoices; dictionary: boolean } | null>(null);
+  const [own, setOwn] = useState<DocChoices | null>(null);
   const [choosing, setChoosing] = useState(false);
-  const defaults = catalog.settings ? { models: catalog.settings.models, dictionary: catalog.settings.dictionary.enabled } : null;
+  const defaults = catalog.settings
+    ? { models: catalog.settings.models, dictionary: catalog.settings.dictionary.enabled, second: catalog.settings.second_reader.enabled }
+    : null;
   const effective = own ?? defaults;
   const [file, setFile] = useState<File | null>(null);
   const [projectId, setProjectId] = useState<string | null>(initialProject);
@@ -70,6 +72,7 @@ export function UploadPanel({
           ? {
               models: changedSteps(own.models, catalog.settings.models),
               ...(own.dictionary !== catalog.settings.dictionary.enabled ? { dictionary: own.dictionary } : {}),
+              ...(own.second !== catalog.settings.second_reader.enabled ? { second_reader: own.second } : {}),
             }
           : undefined;
       await onSubmit(file, source, project?.id ?? null, overrides);
@@ -222,7 +225,10 @@ export function UploadPanel({
             </div>
             {effective && catalog.settings ? (
               <div className="flex flex-wrap gap-1.5">
-                {groupSummaries(effective.models, catalog.settings, catalog.models).map(({ group, model, label }) => (
+                {groupSummaries(effective.models, catalog.settings, catalog.models).map(({ group, model, label }) => {
+                  // the second reading is a model, or off (for this document, or on the server)
+                  const off = group.id === "second" && !(effective.second && catalog.settings?.second_reader.available);
+                  return (
                   <button
                     key={group.id}
                     onClick={() => setChoosing(true)}
@@ -230,11 +236,12 @@ export function UploadPanel({
                     title={group.help}
                   >
                     {/* the company's logo; a group whose steps use different models: the generic one */}
-                    {model ? <ModelLogo model={model} size={13} /> : <Brain size={13} className="shrink-0 text-muted-foreground" />}
+                    {model && !off ? <ModelLogo model={model} size={13} /> : <Brain size={13} className="shrink-0 text-muted-foreground" />}
                     <span className="text-muted-foreground">{group.label}:</span>
-                    <span className="truncate">{label}</span>
+                    <span className="truncate">{off ? "off" : label}</span>
                   </button>
-                ))}
+                  );
+                })}
                 <button
                   onClick={() => setChoosing(true)}
                   className="flex h-7 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 text-xs shadow-xs transition-colors hover:border-primary/40"
@@ -265,6 +272,7 @@ export function UploadPanel({
             settings={catalog.settings}
             value={effective}
             dictionary={catalog.settings.dictionary}
+            second={catalog.settings.second_reader}
             saveLabel="Use for this document"
             onSave={(v) => setOwn(v)}
           />

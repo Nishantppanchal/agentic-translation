@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import io
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -128,24 +129,56 @@ def _pdf_figures(page: pymupdf.Page, dpi: int, text_blocks: list) -> tuple[list[
     return figures, full_page
 
 
+def _pdf_page(page: pymupdf.Page, dpi: int) -> Page:
+    pix = page.get_pixmap(dpi=dpi)
+    blocks = _text_blocks(page, dpi)
+    figures, full_page = _pdf_figures(page, dpi, blocks)
+    return Page(page.number + 1, pix.tobytes("png"), "image/png", page.get_text("text"), figures, full_page, blocks)
+
+
 def load_pages(data: bytes, filename: str, dpi: int = 150) -> list[Page]:
     ext = Path(filename).suffix.lower()
     if ext == ".pdf":
-        pages = []
         with pymupdf.open(stream=data, filetype="pdf") as doc:
-            for i, page in enumerate(doc):
-                pix = page.get_pixmap(dpi=dpi)
-                blocks = _text_blocks(page, dpi)
-                figures, full_page = _pdf_figures(page, dpi, blocks)
-                pages.append(
-                    Page(i + 1, pix.tobytes("png"), "image/png", page.get_text("text"), figures, full_page, blocks)
-                )
-        return pages
+            return [_pdf_page(page, dpi) for page in doc]
     if ext in IMAGE_EXTS:
         return [Page(1, data, IMAGE_EXTS[ext], "")]
     if ext in TEXT_EXTS:
         return [Page(1, None, "", data.decode("utf-8", errors="replace"))]
     raise ValueError(f"Unsupported file type: {ext or filename}")
+
+
+def page_count(data: bytes, filename: str) -> int:
+    if Path(filename).suffix.lower() == ".pdf":
+        with pymupdf.open(stream=data, filetype="pdf") as doc:
+            return doc.page_count
+    return 1
+
+
+def load_page(data: bytes, filename: str, number: int, dpi: int = 150) -> Page:
+    """One page (1-based), read as load_pages() reads it — without rendering the others."""
+    if Path(filename).suffix.lower() == ".pdf":
+        with pymupdf.open(stream=data, filetype="pdf") as doc:
+            return _pdf_page(doc[number - 1], dpi)
+    return load_pages(data, filename, dpi)[0]
+
+
+def enlarged(image: bytes, min_side: int, max_factor: float = 3.0, max_pixels: int = 6_000_000) -> bytes:
+    """The image as a reading model should get it. Vision models misread small text (an image's long side under
+    `min_side`): those are enlarged — at least 2×, at most `max_factor`, and never past `max_pixels` (models
+    shrink bigger images). Others come back as they are."""
+    from PIL import Image
+
+    with Image.open(io.BytesIO(image)) as img:
+        w, h = img.size
+        if max(w, h) >= min_side:
+            return image
+        factor = min(max_factor, max(2.0, min_side / max(w, h)), (max_pixels / max(1, w * h)) ** 0.5)
+        if factor <= 1.05:
+            return image
+        out = io.BytesIO()
+        img.convert("RGB").resize((round(w * factor), round(h * factor)), Image.Resampling.LANCZOS).save(out, "PNG")
+        return out.getvalue()
 
 
 def render_page(data: bytes, filename: str, number: int, dpi: int = 150) -> bytes | None:

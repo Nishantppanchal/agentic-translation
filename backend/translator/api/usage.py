@@ -16,7 +16,10 @@ log = logging.getLogger(__name__)
 STEP_OF_AGENT = {
     "ocr_reader": "ocr",
     "ocr_checker": "ocr_check",
+    "ocr_arbiter": "ocr_check",
     "figure_reader": "ocr",
+    "ocr_second_reader": "ocr_second",
+    "figure_second_reader": "ocr_second",
     "analyst": "analyse",
     "translator": "translate",
     "refiner": "refine",

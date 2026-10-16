@@ -65,6 +65,7 @@ export const api = {
     if (projectId) form.append("project_id", projectId);
     if (overrides?.models && Object.keys(overrides.models).length) form.append("models", JSON.stringify(overrides.models));
     if (overrides?.dictionary !== undefined) form.append("dictionary", String(overrides.dictionary));
+    if (overrides?.second_reader !== undefined) form.append("second_reader", String(overrides.second_reader));
     return fetch(`${API_URL}/api/sessions`, { method: "POST", body: form }).then((r) => json<SessionSummary>(r));
   },
 
@@ -224,7 +225,12 @@ export const api = {
 };
 
 /** A change to the model choices (null: back to the default) and/or the dictionary. */
-export type SettingsUpdate = { models?: Partial<Record<StepId, StepChoice | null>>; dictionary?: boolean; assist?: boolean };
+export type SettingsUpdate = {
+  models?: Partial<Record<StepId, StepChoice | null>>;
+  dictionary?: boolean;
+  second_reader?: boolean; // a second model reads scanned pages and pictures too
+  assist?: boolean;
+};
 
 type ProjectFields = Partial<Pick<Project, "name" | "source_lang" | "instructions" | "auto_confirm_context" | "lqa_threshold">>;
 type TermFields = Partial<Pick<Term, "source" | "target" | "note" | "forbidden" | "case_sensitive" | "status">>;

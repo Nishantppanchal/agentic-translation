@@ -215,6 +215,11 @@ export interface OcrPageReport {
   figures?: number;
   figure_source?: string; // "pdf" (embedded in the PDF), "layout" (found by PP-DocLayoutV3), or "pdf+layout"
   suggestions?: string[]; // the OCR check's possible misreadings that were NOT applied (for a person to check)
+  readers?: 1 | 2; // two: a second model read the page too, and the OCR check settled where they differ
+  disagreements?: number; // places where the two readings differ
+  settled?: number; // …of which the OCR check settled
+  hard?: boolean; // so many differences that the page is hard to read: nothing was changed, check all of it
+  enlarged?: boolean; // the page image was small: the readers got it enlarged
   // regions the layout model took for pictures that were read as text instead (size / layout-text / text-layer / vision)
   figures_as_text?: { label: string; reason: string }[];
 }
@@ -482,6 +487,7 @@ export interface ExportFormat {
 export type Effort = "instant" | "low" | "medium" | "high";
 export type StepId =
   | "ocr"
+  | "ocr_second"
   | "ocr_check"
   | "analyse"
   | "translate"
@@ -521,6 +527,14 @@ export interface DictionaryStatus {
   reason: string | null; // why it's unavailable
 }
 
+/** A second reading of scanned pages and pictures by another model (OCR_SECOND on the server). */
+export interface SecondReaderStatus {
+  available: boolean; // not turned off on the server
+  enabled: boolean;
+  reason: string | null; // why it's unavailable
+  warnings: string[]; // e.g. the same model reads twice, or the OCR check is one of the readers
+}
+
 export interface StepGroup {
   id: string;
   label: string;
@@ -535,6 +549,7 @@ export interface AppSettingsView {
   configured: ModelChoices; // pipeline.yaml's (what "reset" goes back to)
   overridden: StepId[];
   dictionary: DictionaryStatus;
+  second_reader: SecondReaderStatus;
   steps: { step: StepId; label: string; group: string; vision: boolean }[];
   groups: StepGroup[];
   efforts: Effort[];
@@ -555,6 +570,7 @@ export interface PipelineFlowSpec {
 export interface DocSettings {
   models: ModelChoices;
   dictionary: DictionaryStatus;
+  second_reader: SecondReaderStatus;
 }
 
 export interface AppConfig {

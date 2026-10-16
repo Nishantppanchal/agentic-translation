@@ -34,11 +34,17 @@ def worker(name: str, step: Step, instruction: str, structured_output: bool = Fa
     )
 
 
-# The pipeline. A vision LLM reads each page; a second look (the OCR check) compares the reading with the image.
+# The pipeline. Two vision LLMs read each scanned page and picture independently (`ocr`, `ocr_second`); where they
+# differ, the arbiter (the OCR check model) says which is printed. With one reading, the OCR check compares it with
+# the image.
+FIGURE_READER = ("You look at regions cropped from document pages: you say whether each is a picture or plain text, "
+                 "and transcribe the text in it.")
 ocr_reader = worker("ocr_reader", "ocr", prompts.VISION_OCR)
+ocr_second_reader = worker("ocr_second_reader", "ocr_second", prompts.VISION_OCR)
 ocr_checker = worker("ocr_checker", "ocr_check", "You verify OCR transcriptions against page images.")
-figure_reader = worker("figure_reader", "ocr", "You look at regions cropped from document pages: you say whether each is a "
-                       "picture or plain text, and transcribe the text in it.")
+ocr_arbiter = worker("ocr_arbiter", "ocr_check", "You settle where two readings of a document image disagree.")
+figure_reader = worker("figure_reader", "ocr", FIGURE_READER)
+figure_second_reader = worker("figure_second_reader", "ocr_second", FIGURE_READER)
 analyst = worker("analyst", "analyse", "You are a lead translator preparing a document for translation.", structured_output=True)
 translator = worker("translator", "translate", "You are a meticulous professional translator.", structured_output=True)
 reviewer = worker("reviewer", "review", "You are a strict senior translation reviewer.", structured_output=True)
@@ -53,4 +59,5 @@ lqa_reviewer = worker(
     "lqa_reviewer", "lqa", "You are an independent language quality assessor using the MQM framework.", structured_output=True
 )
 
-ALL = [ocr_reader, ocr_checker, figure_reader, analyst, translator, reviewer, refiner, rewriter, consistency_fixer, lqa_reviewer]
+ALL = [ocr_reader, ocr_second_reader, ocr_checker, ocr_arbiter, figure_reader, figure_second_reader, analyst, translator,
+       reviewer, refiner, rewriter, consistency_fixer, lqa_reviewer]

@@ -34,7 +34,7 @@ export function Modal({
           }}
           tabIndex={-1}
           style={{ width: `min(${width}px, calc(100vw - 32px))` }}
-          className="fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100vh-48px)] -translate-x-1/2 -translate-y-1/2 flex-col rounded-xl border border-border bg-card text-foreground shadow-xl outline-none data-[state=open]:animate-[pop-in_140ms_ease-out]"
+          className="fixed top-1/2 left-1/2 z-50 flex max-h-[calc(100vh-48px)] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden rounded-xl border border-border bg-card text-foreground shadow-xl outline-none data-[state=open]:animate-[pop-in_140ms_ease-out]"
         >
           <div className="flex items-center justify-between border-b border-border px-5 py-3">
             <Dialog.Title className="text-sm font-semibold">{title}</Dialog.Title>

@@ -238,6 +238,14 @@
 /* The pipeline diagram (Settings): an arrow of the lit steps runs (components/settings/PipelineFlow.tsx) */
 @keyframes flow-dash { to { stroke-dashoffset: -9; } }
 
+/* The logo's size (components/shell/Logo.tsx, size="var"): registered so a transition on it animates — the orb
+   shrinks into the folded sidebar's rail and grows back. */
+@property --orb {
+  syntax: "<length>";
+  inherits: true;
+  initial-value: 34px;
+}
+
 /* The logo floats: up and down slowly, its shadow shrinking as it rises (components/shell/Logo.tsx). */
 @keyframes orb-float { /* around its resting place, so it stays centred on the word beside it */
   0%, 100% { transform: translateY(7%); }

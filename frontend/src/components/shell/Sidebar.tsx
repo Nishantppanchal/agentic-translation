@@ -307,11 +307,30 @@ export function Sidebar({
       className="relative flex h-full w-[var(--sidebar-w,16rem)] shrink-0 flex-col border-r border-sidebar-border bg-sidebar motion-safe:transition-[width] motion-safe:duration-200 motion-safe:ease-out data-[resizing]:transition-none sidebar-collapsed:w-12"
     >
       <ResizeHandle onResizing={setResizing} />
-      {/* Collapsed: an icon rail. Both bodies are rendered; CSS picks one, so the first paint is already right. */}
-      <div className="hidden h-full flex-col items-center gap-1 py-3 sidebar-collapsed:flex">
-        <span className="mb-2 p-1">
-          <Logo size={24} />
+      {/* The logo, one for both states: folding the sidebar glides the orb into the rail's middle and shrinks it, and
+          the word fades out (CSS on the pre-paint data-sidebar attribute, so a page load doesn't animate). */}
+      <div className="relative flex h-[74px] shrink-0 items-center gap-3 overflow-hidden pl-4 motion-safe:transition-[height,padding] motion-safe:duration-200 motion-safe:ease-out sidebar-collapsed:h-[58px] sidebar-collapsed:pl-3">
+        <span className="pt-1 [--orb:34px] motion-safe:transition-[--orb] motion-safe:duration-200 motion-safe:ease-out sidebar-collapsed:[--orb:24px]">
+          <Logo size="var" float />
         </span>
+        {/* lifted by the logo's shadow gap, so the word lines up with the orb's middle */}
+        <span className="mb-1 text-[13px] font-semibold tracking-[0.32em] whitespace-nowrap text-foreground/75 motion-safe:transition-[opacity,visibility] motion-safe:duration-150 sidebar-collapsed:invisible sidebar-collapsed:opacity-0">
+          TRANSLATE
+        </span>
+        <IconButton
+          id="sidebar-collapse"
+          label={`Hide sidebar (${SHORTCUT})`}
+          onClick={() => toggleSidebar(true)}
+          side="right"
+          aria-controls="sidebar"
+          aria-expanded
+          className="absolute top-1/2 right-2 -translate-y-1/2 sidebar-collapsed:hidden"
+        >
+          <PanelLeftClose />
+        </IconButton>
+      </div>
+      {/* Collapsed: an icon rail. Both bodies are rendered; CSS picks one, so the first paint is already right. */}
+      <div className="hidden min-h-0 flex-1 flex-col items-center gap-1 pb-3 sidebar-collapsed:flex">
         <IconButton id="sidebar-expand" label={`Show sidebar (${SHORTCUT})`} onClick={() => toggleSidebar(true)} side="right" aria-controls="sidebar" aria-expanded={false}>
           <PanelLeftOpen />
         </IconButton>
@@ -344,22 +363,6 @@ export function Sidebar({
       </div>
 
       <div className="flex min-h-0 flex-1 flex-col sidebar-collapsed:hidden">
-        <div className="relative flex items-center gap-3 pt-5 pb-3 pr-10 pl-4">
-          <Logo size={34} float />
-          {/* lifted by the logo's shadow gap, so the word lines up with the orb's middle */}
-          <span className="mb-1 text-[13px] font-semibold tracking-[0.32em] text-foreground/75">TRANSLATE</span>
-          <IconButton
-            id="sidebar-collapse"
-            label={`Hide sidebar (${SHORTCUT})`}
-            onClick={() => toggleSidebar(true)}
-            side="right"
-            aria-controls="sidebar"
-            aria-expanded
-            className="absolute top-1/2 right-2 -translate-y-1/2"
-          >
-            <PanelLeftClose />
-          </IconButton>
-        </div>
 
         <div className="space-y-2 px-3">
           <Button variant="outline" onClick={onNew} className="w-full justify-start gap-2 bg-card shadow-xs">

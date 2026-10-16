@@ -52,7 +52,7 @@ STEP_LABELS: dict[Step, str] = {
     "lqa": "LQA",
     "suggest": "Suggestions",  # the suggested follow-up prompts in the chat
     "complete": "Tab completion",  # the rest of a chat message being typed (keep it fast)
-    "notes": "Client notes",  # the delivery note for the client
+    "notes": "Translation summary",  # the summary for the client: decisions, assumptions, open queries
 }
 
 
@@ -63,7 +63,7 @@ STEP_GROUPS: tuple[dict[str, Any], ...] = (
      "steps": ("analyse", "translate", "refine", "polish", "rewrite")},
     {"id": "reviewing", "label": "Reviewing", "help": "The AI review and the quality score (LQA)", "steps": ("review", "lqa")},
     {"id": "chat", "label": "Chat", "help": "The chat editor (it looks at pages too)", "steps": ("editor",)},
-    {"id": "assist", "label": "AI assist", "help": "Suggested prompts, Tab completions and notes for the client",
+    {"id": "assist", "label": "AI assist", "help": "Suggested prompts, Tab completions and the translation summary",
      "steps": ("suggest", "complete", "notes")},
 )
 

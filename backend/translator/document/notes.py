@@ -1,4 +1,4 @@
-"""The facts behind the notes for the client (and behind the chat's suggested prompts): decisions and where they
+"""The facts behind the translation summary for the client (and behind the chat's suggested prompts): decisions and where they
 came from, assumptions, open queries and comments, what wasn't translated, and the quality checks — read from the
 document's state, no model. agents/assist.py turns them into prose."""
 

@@ -216,7 +216,7 @@ export const api = {
 
   exportFormats: (id: string) =>
     fetch(`${API_URL}/api/sessions/${id}/export/formats`).then((r) => json<ExportFormat[]>(r)),
-  /** Notes for the client (the Assist model writes them from the document's decisions, queries and checks). */
+  /** The translation summary (the Assist model writes them from the document's decisions, queries and checks). */
   clientNotes: (id: string) =>
     fetch(`${API_URL}/api/sessions/${id}/assist/notes`, { method: "POST" }).then((r) =>
       json<{ text: string; version: number | null; at: number; stored: boolean }>(r),

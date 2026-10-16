@@ -12,13 +12,13 @@ import { Markdown } from "./Markdown";
 
 const errorText = (e: unknown) => {
   const msg = String(e).replace(/^Error: /, "");
-  if (msg.startsWith("404")) return "Notes for the client aren't available on this server yet.";
-  if (msg.startsWith("409")) return "There's nothing to write notes about yet: the document has no text.";
-  if (msg.startsWith("502")) return "The AI couldn't write the notes just now. Try again in a moment.";
+  if (msg.startsWith("404")) return "The translation summary isn't available on this server yet.";
+  if (msg.startsWith("409")) return "There's nothing to summarise yet: the document has no text.";
+  if (msg.startsWith("502")) return "The AI couldn't write the summary just now. Try again in a moment.";
   return msg.replace(/^\d{3}: /, "");
 };
 
-/** Notes for the client: the decisions taken, the assumptions, open queries, what was left untranslated and the
+/** The translation summary (for the client): the decisions taken, the assumptions, open queries, what was left untranslated and the
  * quality checks — written by the Assist model from the document's own records. Copy them, download them, or
  * write them again after more changes. Notes written before open as they were. */
 export function ClientNotes({
@@ -52,7 +52,7 @@ export function ClientNotes({
       const res = await api.clientNotes(sessionId);
       setFresh({ text: res.text, version: res.version, at: res.at });
       if (res.stored) onSaved();
-      else toast("Notes written", { description: "Not saved with the document (the agents were working); copy or download them." });
+      else toast("Summary written", { description: "Not saved with the document (the agents were working); copy or download it." });
     } catch (e) {
       setError(errorText(e));
     } finally {
@@ -66,7 +66,7 @@ export function ClientNotes({
     if (!notes) return;
     try {
       await navigator.clipboard.writeText(notes.text);
-      toast.success("Copied", { description: "The notes are on your clipboard, as Markdown." });
+      toast.success("Copied", { description: "The summary is on your clipboard, as Markdown." });
     } catch {
       toast.error("Couldn't copy to the clipboard");
     }
@@ -76,20 +76,20 @@ export function ClientNotes({
     const url = URL.createObjectURL(new Blob([notes.text], { type: "text/markdown;charset=utf-8" }));
     const a = document.createElement("a");
     a.href = url;
-    a.download = `${filename.replace(/\.[^.]+$/, "")} - notes for the client.md`;
+    a.download = `${filename.replace(/\.[^.]+$/, "")} - translation summary.md`;
     a.click();
     URL.revokeObjectURL(url);
   };
   const older = notes?.version != null && latest > notes.version;
 
   return (
-    <Modal open={open} onClose={onClose} title="Notes for the client" description="Decisions, assumptions and open queries to send with the translation" width={760}>
+    <Modal open={open} onClose={onClose} title="Translation summary" description="Decisions, assumptions and open queries to send with the translation" width={760}>
       <div className="flex min-h-0 flex-col gap-4">
         <p className="flex items-start gap-2 text-xs text-muted-foreground">
           <Sparkles size={14} className="mt-0.5 shrink-0 text-primary" />
           <span>
             Written by the AI from this document&apos;s records: your answers and the terms decided, the assumptions it made, open queries
-            and comments, what was left untranslated, and the quality checks. Read them before sending.
+            and comments, what was left untranslated, and the quality checks. Read it before sending.
           </span>
         </p>
         {notes && (
@@ -118,7 +118,7 @@ export function ClientNotes({
         {error && notes && <p className="text-xs text-del-fg">{error}</p>}
         <div className="sticky -bottom-4 -mx-5 -mb-4 flex items-center gap-2 border-t border-border bg-card/95 px-5 py-3 backdrop-blur">
           <Button variant="ghost" size="sm" onClick={generate} disabled={busy} className="mr-auto">
-            {busy ? <Loader2 className="animate-spin" /> : <RefreshCw />} {notes ? "Write them again" : "Write the notes"}
+            {busy ? <Loader2 className="animate-spin" /> : <RefreshCw />} {notes ? "Write it again" : "Write the summary"}
           </Button>
           <Button variant="outline" size="sm" onClick={copy} disabled={!notes || busy}>
             <Copy /> Copy

@@ -40,7 +40,7 @@ async def _artifact(artifact_service: BaseArtifactService, session: Session, nam
     )
 
 
-NOTES = {"id": "notes", "label": "Notes for the client (.md)", "ext": "md", "group": "Notes"}
+NOTES = {"id": "notes", "label": "Translation summary (.md)", "ext": "md", "group": "Summary"}
 
 
 def available(session: Session | None = None) -> list[dict]:
@@ -109,8 +109,8 @@ async def build(artifact_service: BaseArtifactService, session: Session, fmt: st
     if fmt == "notes":
         notes = (s.get("doc:client_notes") or {}).get("text")
         if not notes:
-            raise ExportError("There are no notes for the client yet: write them first (Notes for the client).")
-        return notes.encode(), MEDIA["md"], f"{stem}.client-notes.md"
+            raise ExportError("There is no translation summary yet: write it first (Translation summary).")
+        return notes.encode(), MEDIA["md"], f"{stem}.translation-summary.md"
     segments = await segments_at(artifact_service, session, version)
     images = await figures(artifact_service, session, segments)
     if fmt == "office":

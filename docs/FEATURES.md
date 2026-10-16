@@ -429,7 +429,7 @@ Any saved version can be downloaded from the menu in the document header.
 | **Word document** (DOCX) | Reflowed: real headings, lists, tables, figures with captions. Header and footer as the document's own, with live `PAGE`/`NUMPAGES` fields. Document language set, East Asian font for CJK targets. |
 | **Markdown (+ figures)** | A zip when the document has figures |
 | **Translated Word / PowerPoint / Excel file** | For Office uploads: the original file with the translation written in (see [§3](#word-powerpoint-and-excel)) |
-| **Notes for the client** (`.md`) | Once written (download menu → *Notes for the client…*): a delivery note drafted from the document's facts — the terminology decisions and where each came from (you, the dictionary, the TM, the AI), the assumptions (questions nobody answered, terms the AI decided), open queries and comments, what wasn't translated, and the quality checks. Copy it, download it, or write it again. |
+| **Translation summary** (`.md`) | Once written (download menu → *Translation summary…*): a summary for the client, drafted from the document's facts — the terminology decisions and where each came from (you, the dictionary, the TM, the AI), the assumptions (questions nobody answered, terms the AI decided), open queries and comments, what wasn't translated, and the quality checks. Copy it, download it, or write it again. |
 
 Downloads with non-ASCII names keep them.
 
@@ -465,7 +465,7 @@ Downloads with non-ASCII names keep them.
     - **Changing models:**
       - Hovering a group row (**Reading**, **Translating**, **Reviewing**, **Chat**, **AI assist**) lights up the steps it changes.
       - Clicking a step in the diagram changes just that step; *Advanced* lists each step too.
-      - A changed step has a dot and a ring, and a row's reset button takes it back to `pipeline.yaml`.
+      - A changed step has a dot and a ring, and a row's reset button (and **Reset to default**) takes it back to the default in `pipeline.yaml`.
     - **The model picker:** shows each model's name and logo, where it runs (OpenRouter, Ollama, this computer, an own server), and whether it **reads images** and **thinks**. Models that can't read images are greyed out for the steps that look at pages.
     - Settings are saved in `projects.db`. Only the models in `models.yaml` are offered, and their URLs, hosts and keys never reach the browser.
   - **Reasoning level** (for models marked `thinking: true`): *Instant*, *Low*, *Medium* or *High*. A dot marks the default, and the line under it says what the default is and where it comes from (e.g. "Default: Low (pipeline.yaml)").
@@ -502,7 +502,7 @@ Downloads with non-ASCII names keep them.
   | `lqa` | Independent quality scoring (MQM) | |
   | `suggest` | The suggested follow-up prompts in the chat | |
   | `complete` | Tab completions in the chat box (keep it fast: Instant) | |
-  | `notes` | The notes for the client | |
+  | `notes` | The translation summary for the client | |
 
   The other AI features run on the steps above: the document's title and summary on `analyse` (in the same call), *Explain* and *Ask…* on a selection on `editor`, *Rewrite* and *Other options* on `rewrite`.
 - **Headers:** every model request gets `defaults.headers`, the model's own `headers` and the run's headers (later ones win). `defaults.forward_headers` names headers of the API request that starts a run (e.g. `X-Request-Id`, `X-Tenant-Id`) to pass on to all its model calls; only those are forwarded, never the caller's other headers.

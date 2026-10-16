@@ -15,8 +15,8 @@ import { api } from "@/lib/api";
 import type { ClientNotesState, ExportFormat } from "@/lib/types";
 import { ClientNotes } from "./ClientNotes";
 
-/** Downloads, grouped as the backend lists them (the translated Office file, Word, Markdown, the client notes),
- * and "Notes for the client…", which writes them. */
+/** Downloads, grouped as the backend lists them (the translated Office file, Word, Markdown, the translation summary),
+ * and "Translation summary…", which writes it. */
 export function ExportMenu({
   sessionId,
   filename,
@@ -31,7 +31,7 @@ export function ExportMenu({
   version?: number;
   latest: number;
   refreshKey: string;
-  notes: ClientNotesState | null; // the notes for the client stored with the document
+  notes: ClientNotesState | null; // the translation summary stored with the document
   onNotesSaved: () => void; // reload the document (its notes, and the "notes" download)
 }) {
   const [formats, setFormats] = useState<ExportFormat[]>([]);
@@ -42,7 +42,7 @@ export function ExportMenu({
   useEffect(() => {
     api
       .exportFormats(sessionId)
-      // the notes download appears once notes are written ("Notes for the client…" below writes them)
+      // the notes download appears once notes are written ("Translation summary…" below writes it)
       .then((all) => setFormats(all.filter((f) => f.id !== "notes" || f.available)))
       .catch(() => setFormats([]));
   }, [sessionId, refreshKey, reload]);
@@ -105,7 +105,7 @@ export function ExportMenu({
           >
             <NotebookPen className="mt-0.5" />
             <span>
-              Notes for the client…
+              Translation summary…
               <span className="block text-[11px] text-muted-foreground">Decisions, assumptions and open queries, written for you to send</span>
             </span>
           </DropdownMenuItem>

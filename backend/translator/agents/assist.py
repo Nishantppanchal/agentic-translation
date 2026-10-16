@@ -1,5 +1,5 @@
 """AI assist: small model calls made straight from the API, outside any run — the chat's suggested next prompts,
-Tab completions in the chat box, and the notes for the client. Each uses its own step's model for the document
+Tab completions in the chat box, and the translation summary for the client. Each uses its own step's model for the document
 (`suggest`, `complete`, `notes`; set in pipeline.yaml, changed in Settings; models/routing.py), and its tokens are counted in projects.db (`assist_usage`): these calls
 leave no session event, so they never show in the chat or collide with a run.
 """

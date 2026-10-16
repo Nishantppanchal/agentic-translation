@@ -1,4 +1,4 @@
-"""AI assist in the chat (agents/assist.py): suggested next prompts, Tab completions, and the notes for the client.
+"""AI assist in the chat (agents/assist.py): suggested next prompts, Tab completions, and the translation summary for the client.
 Suggestions and completions are only offered when Settings → AI assist is on; none of them changes the document
 (the notes are stored with it, while no run is working on it)."""
 
@@ -58,7 +58,7 @@ async def complete(session_id: str, body: TypedIn) -> dict[str, str]:
 
 @router.post("/api/sessions/{session_id}/assist/notes")
 async def client_notes(session_id: str) -> dict[str, Any]:
-    """Notes for the client (Markdown): decisions, assumptions, open queries, what wasn't translated, quality.
+    """The translation summary for the client (Markdown): decisions, assumptions, open queries, what wasn't translated, quality.
     Kept with the document (export "notes") unless the agents started working on it meanwhile."""
     session = await load_session(session_id)
     if not st.segment_ids(session.state):

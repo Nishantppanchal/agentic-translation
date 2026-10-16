@@ -1,5 +1,5 @@
 """AI assist (agents/assist.py, api/routes/assist.py): suggested next prompts, Tab completions in the chat box and
-the notes for the client — model calls made straight from the API (a fake server here, never a real model), with
+the translation summary — model calls made straight from the API (a fake server here, never a real model), with
 their tokens counted in projects.db — and the document's title and summary from the analysis."""
 
 from __future__ import annotations
@@ -182,9 +182,9 @@ def test_notes_for_the_client_are_stored_and_exported(api, monkeypatch):
     session = make()
     formats = {f["id"]: f for f in exports.available(session)}
     assert formats["notes"]["available"] is False
-    FakeVllm.content = "# Notes on the translation of Inspection report\n\n## Open queries\n\n- Erdung: earthing or grounding?"
+    FakeVllm.content = "# Translation summary: Inspection report\n\n## Open queries\n\n- Erdung: earthing or grounding?"
     r = client.post(f"/api/sessions/{session.id}/assist/notes").json()
-    assert r["stored"] is True and r["version"] == 1 and r["text"].startswith("# Notes on the translation")
+    assert r["stored"] is True and r["version"] == 1 and r["text"].startswith("# Translation summary")
     prompt = FakeVllm.requests[-1]["body"]["messages"][-1]["content"]
     prompt = prompt if isinstance(prompt, str) else " ".join(p.get("text", "") for p in prompt)
     assert "Prüfer → inspector (the question was skipped)" in prompt and "Check the count" in prompt
@@ -192,7 +192,7 @@ def test_notes_for_the_client_are_stored_and_exported(api, monkeypatch):
     assert s.state["doc:client_notes"]["text"] == r["text"]
     assert {f["id"]: f for f in exports.available(s)}["notes"]["available"] is True
     content, media, name = asyncio.run(exports.build(None, s, "notes", None))
-    assert content.decode() == r["text"] and media.startswith("text/markdown") and name == "pruefbericht.client-notes.md"
+    assert content.decode() == r["text"] and media.startswith("text/markdown") and name == "pruefbericht.translation-summary.md"
 
     other = make()
     with pytest.raises(exports.ExportError):
@@ -233,7 +233,7 @@ def test_assist_usage_is_merged_into_the_documents_usage():
     store.record_assist_usage("s1", "notes", "quick", None, 100, 50, 20)
     rows = {(r["step"], r["effort"]): r for r in summarize([], store.assist_usage("s1"))["rows"]}
     assert rows[("Suggestions", "instant")]["calls"] == 2 and rows[("Suggestions", "instant")]["tokens"] == 30
-    assert rows[("Client notes", None)]["reasoning_tokens"] == 20 and store.assist_usage("s2") == []
+    assert rows[("Translation summary", None)]["reasoning_tokens"] == 20 and store.assist_usage("s2") == []
 
 
 def test_assist_calls_leave_no_session_event(api):

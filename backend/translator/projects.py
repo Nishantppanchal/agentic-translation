@@ -144,7 +144,7 @@ class ProjectStore:
                 "value = excluded.value, updated_at = excluded.updated_at", (key, json.dumps(value), time.time()))
 
     # ---- AI assist usage (agents/assist.py) ---------------------------------- #
-    # Suggestions, completions and client notes are model calls outside a run: they leave no session event, so
+    # Suggestions, completions and translation summaries are model calls outside a run: they leave no session event, so
     # their tokens are counted here (and merged into the document's usage).
 
     def record_assist_usage(self, session_id: str, step: str, model_id: str, effort: str | None, prompt_tokens: int,

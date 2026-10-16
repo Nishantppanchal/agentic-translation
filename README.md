@@ -7,9 +7,9 @@ Upload a document in any language, get a reviewed **English** translation as a v
 - **Agentic pipeline:** OCR with verification → **a source check** (fix the reading by chatting, before anything is translated) → **whole-document analysis** (brief and key terms fixed up front) → **questions before translating**, explained in plain English with English options and a recommendation, so they can be answered without knowing the source language → translation page by page with carried context → review ⇄ refine by a second model → consistency polish.
 - **Projects:** a style guide, a termbase with forbidden variants and a translation memory (101% / 100% / fuzzy) with concordance search.
 - **Segment editor:** a CAT-style grid with human-only statuses, keyboard shortcuts, a TM panel, term highlighting, comments, locks and versions.
-- **Chat and tasks:** a chat editor (also explains source passages in plain English) and one-click tasks (rewrite, alternatives, consistency fixer) on any segment or a selected passage. AI-suggested follow-up prompts, Tab completion in the chat box, an English title and summary for each document, and notes for the client. Agents only ever *propose*; you accept or reject, in the chat or right in the segment grid.
+- **Chat and tasks:** a chat editor (also explains source passages in plain English) and one-click tasks (rewrite, alternatives, consistency fixer) on any segment or a selected passage. AI-suggested follow-up prompts, Tab completion in the chat box, an English title and summary for each document, and a translation summary for the client. Agents only ever *propose*; you accept or reject, in the chat or right in the segment grid.
 - **Quality:** automatic QA checks, find & replace, and MQM-based LQA scoring with a review queue.
-- **Output:** a Word document (DOCX, reflowed: headings, lists, tables, figures, running header and footer with page-number fields) and Markdown (a zip with the figures when there are any); for Office uploads the translated file itself; and notes for the client (`.md`).
+- **Output:** a Word document (DOCX, reflowed: headings, lists, tables, figures, running header and footer with page-number fields) and Markdown (a zip with the figures when there are any); for Office uploads the translated file itself; and the translation summary (`.md`).
 - **Operations:** a step bar for runs, a run queue, retries on rate limits, a token chip, and models set in two YAML files: any OpenAI-compatible server for each step (custom headers and request fields, headers passed on from the API request, errors logged with the server's message).
 
 Sample documents (German and Chinese PDFs and scans, plus a one-page report in 21 more languages, from Spanish to Thai, Arabic and Japanese) are described in [samples/SAMPLES.md](samples/SAMPLES.md); a hands-on test script is in [docs/TESTING.md](docs/TESTING.md).
@@ -27,7 +27,7 @@ Next.js UI ── REST + SSE ──► FastAPI ──► ADK Runners ──► s
    document, quality,         │                                                                               └─(done)──→ polish → finalize
    history, source & notes    ├─ ops Workflow (tasks: rewrite, alternatives, consistency, LQA)
                               ├─ editor LlmAgent (each chat turn; tools stage a proposal)
-                              └─ assist (one-off calls from the API: suggested prompts, Tab completions, client notes)
+                              └─ assist (one-off calls from the API: suggested prompts, Tab completions, the translation summary)
 ```
 
 | Node / agent | What it does |
@@ -45,7 +45,7 @@ Next.js UI ── REST + SSE ──► FastAPI ──► ADK Runners ──► s
 | `polish` | The consistency fixer on the AI draft: one translation per repeated sentence (a person's confirmed translation wins) and the termbase applied, directly (on a finished document the same fixer only proposes). |
 | `finalize` | Saves the reviewed version and marks the document ready; the UI shows next-step buttons. |
 | `ops` | Tasks started from the UI (`POST …/tasks`): `dispatch` routes to `rewrite` (an instruction, or n alternatives per segment), `consistency` (groups found without a model; a person's confirmed translation wins with no model call) or `assess` (LQA). Rewrites and fixes are staged as a proposal. |
-| assist | `agents/assist.py`, called from `api/routes/assist.py` (not a run, so it never blocks one): **suggestions** (three follow-up prompts from the chat so far, the QA, open questions and comments; cached per event), **completions** (the rest of what you're typing, ≤ 12 words) on the `suggest` and `complete` steps, and **client notes** on the `notes` step, written from a digest of the document's facts (`document/notes.py`). Their tokens are kept in `projects.db` (`assist_usage`) and shown in the token chip. The `analyse` step also writes the document's English **title** and two-line **summary** (`doc:title`, `doc:abstract`). |
+| assist | `agents/assist.py`, called from `api/routes/assist.py` (not a run, so it never blocks one): **suggestions** (three follow-up prompts from the chat so far, the QA, open questions and comments; cached per event), **completions** (the rest of what you're typing, ≤ 12 words) on the `suggest` and `complete` steps, and the **translation summary** on the `notes` step, written from a digest of the document's facts (`document/notes.py`). Their tokens are kept in `projects.db` (`assist_usage`) and shown in the token chip. The `analyse` step also writes the document's English **title** and two-line **summary** (`doc:title`, `doc:abstract`). |
 | `editor` | Chat agent with tools: `search_segments`, `get_segments`, `update_segment`, `propose_alternatives`, `replace_in_translation` (case-insensitive and case-preserving), `set_glossary_term`, `run_qa_checks`, `add_comment`, `resolve_question`, `ask_user_about_term`, `fix_source_segment` (one segment, after the source check), `inspect_page_layout` (runs PP-DocLayout on a source page and compares the result with that page's segments), `look_at_page` (the editor sees a page image itself — to judge what's wrong; text is read by the OCR model). During the source check: `get_page_source` (a page's source as OCR markdown), `propose_page_source` (the editor rewrites the page's structure itself) and `reread_page` (the vision model reads the page image again, with an instruction taken from what you said); these two stage a **page fix** per page, which you accept or reject (after the source check, `reread_page` just returns the OCR model's reading, and `fix_source_segment` corrects single segments with it). New source text must come from a reading of the page or from your message: a fix with words that are neither in the document as read nor in what you wrote is refused, and the editor has the page read again instead. Edit tools **stage** changes in `doc:proposal` instead of applying them. Reads return the proposed text, so follow-up turns can refine a pending proposal. `POST …/proposal/accept` applies it as a new version; `…/reject` discards it. |
 
 **Where things are stored:**
@@ -190,7 +190,7 @@ steps:
   lqa: {model: gemini-flash, effort: low}     # a third, independent scorer
   suggest: {model: claude-haiku, effort: instant}   # suggested follow-ups
   complete: {model: claude-haiku, effort: instant}  # Tab completions
-  notes: {model: claude-haiku, effort: low}         # client notes
+  notes: {model: claude-haiku, effort: low}         # translation summary
 ```
 
 `models.example.yaml` also lists a dozen more models on OpenRouter (Claude Sonnet, GPT-6, GLM, Kimi, DeepSeek, Gemini, Mistral, Grok, a Qwen), each restricted to providers with **zero data retention** by `extra_body: {provider: {zdr: true}}`: OpenRouter fails the call rather than send it to one that keeps data. The default `qwen/qwen3.8-flash` has no ZDR endpoint (Qwen3.8 27B does).
@@ -209,7 +209,7 @@ steps:
 | `lqa` | Independent quality scoring (MQM) | |
 | `suggest` | The suggested follow-up prompts in the chat | |
 | `complete` | Tab completions in the chat box (keep it fast) | |
-| `notes` | The notes for the client | |
+| `notes` | The translation summary for the client | |
 
 The steps that look at page images (`ocr`, `ocr_check`, `editor`) need a vision model: mark it `vision: true` in `models.yaml`, or the backend refuses to start.
 
@@ -292,13 +292,13 @@ The tests read their models from `tests/config/`, which points every step at a p
 | `GET` | `/api/sessions/{id}/pages/{n}` | rendered page image |
 | `GET` | `/api/sessions/{id}/figures/{name}` | cropped figure image |
 | `GET` | `/api/sessions/{id}/export?format=docx\|md&version=&field=` | download a version: `docx` is the Word document (reflowed); `md` is Markdown, a zip when the document has figures |
-| `GET` | `/api/sessions/{id}/export/formats` | the download formats (`notes`: the client notes, once written) |
+| `GET` | `/api/sessions/{id}/export/formats` | the download formats (`notes`: the translation summary, once written) |
 | `GET` | `/api/models` | the models people can choose: id, display name, vendor (for the logo), where it runs (OpenRouter / Ollama / this computer / own server), vision, thinking, its default level — never a URL, host, key or header |
 | `GET` / `PUT` | `/api/settings` | the defaults for new documents: `{models: {step: {model, effort}}, dictionary, assist}`, plus what "Default" stands for per step and model (`defaults`) and the pipeline diagram (`flow`) |
 | `PATCH` | `/api/sessions/{id}/settings` | one document's models and dictionary, from its next run (409 while it runs) |
 | `POST` | `/api/sessions/{id}/assist/suggestions` | up to three follow-up prompts `{label, prompt}` for a ready document (cached until something happens) |
 | `POST` | `/api/sessions/{id}/assist/complete` | `{text}` → `{completion}`: the rest of a chat message being typed |
-| `POST` | `/api/sessions/{id}/assist/notes` | write the notes for the client (stored with the document when it isn't running) |
+| `POST` | `/api/sessions/{id}/assist/notes` | write the translation summary for the client (stored with the document when it isn't running) |
 | `GET` / `POST` | `/api/projects` | list / create `{name, source_lang, instructions, auto_confirm_context, lqa_threshold}` (the target is always English) |
 | `GET` / `PATCH` / `DELETE` | `/api/projects/{pid}` | with counts of documents, terms and TM units; `PATCH` takes the same fields as create; deleting removes the termbase and TM and keeps the documents |
 | `GET` / `POST` | `/api/projects/{pid}/terms` | list / add a term (an existing source is merged) |

@@ -139,7 +139,7 @@ function SettingsForm({
             models={models}
             settings={settings}
             base={settings.configured}
-            baseLabel="pipeline.yaml"
+            baseLabel="the default"
           />
         </TabsContent>
         <TabsContent value="references" className="space-y-4">
@@ -198,7 +198,7 @@ function SettingsForm({
               }}
               title="Back to config/pipeline.yaml's models"
             >
-              Reset to pipeline.yaml
+              Reset to default
             </Button>
             <Button variant="outline" size="sm" onClick={onClose}>
               {dirty ? "Cancel" : "Close"}

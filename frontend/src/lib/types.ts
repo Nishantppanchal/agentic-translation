@@ -359,10 +359,10 @@ export interface DocumentState {
   unit?: "part" | "slide" | "sheet" | null; // Word / PowerPoint / Excel: what a "page" is
   page_labels?: string[] | null; // "Part 1", "Slide 3", a sheet's name — by page number
   office?: OfficeInfo | null;
-  client_notes?: ClientNotesState | null; // the notes for the client, once written
+  client_notes?: ClientNotesState | null; // the translation summary, once written
 }
 
-/** Notes for the client (Markdown), the version they were written for, and when. */
+/** The translation summary for the client (Markdown), the version they were written for, and when. */
 export interface ClientNotesState {
   text: string;
   version: number | null;
@@ -470,7 +470,7 @@ export type StreamEvent =
   | { type: "error"; message: string };
 
 export interface ExportFormat {
-  id: "docx" | "md" | "office" | "notes"; // notes: the notes for the client (once generated)
+  id: "docx" | "md" | "office" | "notes"; // notes: the translation summary (once written)
   label: string;
   group: string;
   ext: string;

@@ -519,7 +519,7 @@ grammar requires: plural, case, article) and change nothing else.
 
 
 # --------------------------------------------------------------------------- #
-# AI assist (agents/assist.py): suggested prompts, Tab completions, notes for the client
+# AI assist (agents/assist.py): suggested prompts, Tab completions, the translation summary
 # --------------------------------------------------------------------------- #
 
 ASSIST_SYSTEM = "You help a translator working on one document in a translation workbench. Be brief and concrete."
@@ -572,12 +572,12 @@ start with a space. Don't repeat what is typed. If you can't tell how it goes on
 Reply with only: <completion>the next words</completion>"""
 
 NOTES = """\
-Write notes for the client to go with this translation ({source_lang} → English), from the translator. Use only
+Write a translation summary for the client to go with this translation ({source_lang} → English), from the translator. Use only
 the facts below; never invent decisions, numbers or problems.
 
 {digest}
 
-Format: Markdown. A first line "# Notes on the translation of {name}", then these sections as "## " headings, in
+Format: Markdown. A first line "# Translation summary: {name}", then these sections as "## " headings, in
 this order, leaving out any section with nothing to say: Summary (what the document is and what was done, two or
 three sentences), Terminology decisions (term → English, and who decided: the client's answer, the project
 termbase, the translation memory, the dictionary, or the translator's choice), Assumptions (choices made without the

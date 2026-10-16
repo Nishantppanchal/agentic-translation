@@ -30,7 +30,7 @@ STEP_OF_AGENT = {
 
 def summarize(events, assist: list[dict] | None = None) -> dict:
     """Tokens per pipeline step and model, plus totals. `assist`: the document's AI-assist calls (suggestions,
-    completions, client notes — `ProjectStore.assist_usage`), which leave no session event."""
+    completions, translation summaries — `ProjectStore.assist_usage`), which leave no session event."""
     rows: dict[tuple[str, str, str | None], dict] = {}
     for ev in events:
         usage = getattr(ev, "usage_metadata", None)

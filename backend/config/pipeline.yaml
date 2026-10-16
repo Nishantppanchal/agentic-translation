@@ -28,6 +28,6 @@ steps:
   # The AI assist features (each its own model and level; Settings → Models can change them too):
   suggest: {model: claude-haiku, effort: instant}   # the suggested follow-up prompts in the chat
   complete: {model: claude-haiku, effort: instant}  # Tab completions in the chat box (keep it fast)
-  notes: {model: claude-haiku, effort: low}         # the notes for the client
+  notes: {model: claude-haiku, effort: low}         # the translation summary for the client
   # The others run on the steps above: the document's title and summary on `analyse` (the same call), Explain and
   # Ask on a selection on `editor` (the chat), and Rewrite / Other options on `rewrite`.

@@ -92,7 +92,7 @@ NODES: tuple[dict[str, Any], ...] = (
     {"id": "lqa", "step": "lqa", "label": "Quality score", "row": 3, "col": 2},
     {"id": "suggest", "step": "suggest", "label": "Suggested prompts", "row": 4, "col": 0},
     {"id": "complete", "step": "complete", "label": "Tab completion", "row": 4, "col": 1},
-    {"id": "notes", "step": "notes", "label": "Client notes", "row": 4, "col": 2},
+    {"id": "notes", "step": "notes", "label": "Translation summary", "row": 4, "col": 2},
 )
 # (from, to, label): a label says when that way is taken (the review loops with refinement until no issues are left).
 EDGES: tuple[tuple[str, str, str], ...] = (

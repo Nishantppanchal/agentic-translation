@@ -303,6 +303,45 @@ def _ancestor(el, tag: str):
     return None
 
 
+def _grid(tr) -> list[tuple[object, int, int]]:
+    """A table row's cells with their grid column (1-based) and how many columns each spans."""
+    trpr = tr.find(q(W, "trPr"))
+    before = trpr.find(q(W, "gridBefore")) if trpr is not None else None
+    col = 1 + int(before.get(q(W, "val")) or 0) if before is not None else 1
+    out = []
+    for tc in (c for c in tr if local(c) == "tc"):
+        span = tc.find(f"{q(W, 'tcPr')}/{q(W, 'gridSpan')}")
+        n = int(span.get(q(W, "val")) or 1) if span is not None else 1
+        out.append((tc, col, n))
+        col += n
+    return out
+
+
+def _merged_below(tc) -> bool:
+    """A cell that continues the merged cell above it (its text, if any, belongs to that one)."""
+    v = tc.find(f"{q(W, 'tcPr')}/{q(W, 'vMerge')}")
+    return v is not None and v.get(q(W, "val")) != "restart"
+
+
+def _cell(p, story: Story, tables: dict) -> dict | None:
+    """Where a paragraph sits in its table: {table, row, col, rows, cols} (grid columns, merged cells spanned), so
+    the reading view can show the table as a table."""
+    tc = _ancestor(p, "tc")
+    tbl = _ancestor(tc, "tbl") if tc is not None else None
+    tr = tc.getparent() if tc is not None else None
+    if tbl is None or tr is None:
+        return None
+    rows = [r for r in tbl if local(r) == "tr"]
+    r = rows.index(tr)
+    col, cols = next((c, n) for cell, c, n in _grid(tr) if cell is tc)
+    down = 1
+    for below in rows[r + 1:]:  # a vertical merge: the cells below that continue it
+        if not any(c == col and _merged_below(cell) for cell, c, _ in _grid(below)):
+            break
+        down += 1
+    return {"table": f"{story.part.partname}#t{tables.get(tbl, 0)}", "row": r + 1, "col": col, "rows": down, "cols": cols}
+
+
 def _where(p, story: Story, tables: dict) -> tuple[str, str]:
     """(kind override or "", where) for a paragraph."""
     if story.name in ("footnote", "endnote"):
@@ -361,7 +400,10 @@ def extract(data: bytes, finder: pictures.Finder | None = None) -> tuple[list[Un
                 kind, level = styles.kind(p)
                 kind = override or kind
                 source = prefix(kind, level) + enc.text
-                out.append(segment(0, 0, kind, source, markup.plain(para.pieces), where, f"{story.part.partname}#{index}"))
+                seg = segment(0, 0, kind, source, markup.plain(para.pieces), where, f"{story.part.partname}#{index}")
+                if kind == "cell" and (cell := _cell(p, story, tables)):
+                    seg["cell"] = cell
+                out.append(seg)
             if finder is None:
                 continue
             for k, (container, pic) in enumerate(pictures.word_pictures(p, in_fallback)):

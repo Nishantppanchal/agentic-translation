@@ -23,6 +23,7 @@ from ..agents.tasks import ops_workflow
 from ..config import TARGET_LANG, get_settings
 from ..document import comments, source_check
 from ..models import routing
+from ..office.common import table_cell
 from ..ocr import second
 from ..document import state as st
 from .runs import Emit, RunManager
@@ -85,7 +86,8 @@ def document_view(session: Session) -> dict[str, Any]:
     s = session.state
     placed, orphans = comments.place(s)
     return {
-        "segments": [{**st.normalize(x), "comments": placed.get(x["id"], [])} for x in st.get_segments(s)],
+        "segments": [{**st.normalize(x), "comments": placed.get(x["id"], []), **({"cell": c} if (c := table_cell(x)) else {})}
+                     for x in st.get_segments(s)],
         "orphan_comments": orphans,
         "human_dirty": s.get("doc:human_dirty") or [],
         "glossary": s.get("doc:glossary") or {},

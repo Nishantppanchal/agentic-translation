@@ -158,6 +158,54 @@ def test_lost_markers_are_reported_and_the_object_is_kept():
 # --------------------------------------------------------------------------- #
 
 
+def test_table_cells_know_their_place_so_the_reading_view_shows_a_table():
+    """Each cell paragraph is its own segment (it goes back into its own cell); `cell` says where it sits, merged
+    cells spanning: grid columns in Word, the table's own cells in PowerPoint."""
+    from pptx.util import Inches
+
+    doc = Document()
+    table = doc.add_table(rows=3, cols=3)
+    table.cell(0, 0).merge(table.cell(0, 1))  # a header across two columns
+    table.cell(1, 0).merge(table.cell(2, 0))  # a label down two rows
+    for (r, c), text in {(0, 0): "Messung", (0, 2): "Bewertung", (1, 0): "Erdung", (1, 1): "0,06 Ohm",
+                         (1, 2): "in Ordnung", (2, 1): "0,14 Ohm", (2, 2): "Nachbesserung"}.items():
+        table.cell(r, c).text = text
+    table.cell(1, 2).add_paragraph("geprüft am 12. Mai")  # two paragraphs in one cell
+    buf = io.BytesIO()
+    doc.save(buf)
+    segs, _ = office.extract(buf.getvalue(), "docx")
+    place = {s["source"]: s["cell"] for s in segs if s.get("cell")}
+    assert len({c["table"] for c in place.values()}) == 1
+    pos = {k: (v["row"], v["col"], v["rows"], v["cols"]) for k, v in place.items()}
+    assert pos["Messung"] == (1, 1, 1, 2) and pos["Bewertung"] == (1, 3, 1, 1)
+    assert pos["Erdung"] == (2, 1, 2, 1) and pos["0,14 Ohm"] == (3, 2, 1, 1)
+    assert pos["in Ordnung"] == pos["geprüft am 12. Mai"] == (2, 3, 1, 1)
+    assert all(s["kind"] == "cell" for s in segs if s.get("cell"))
+
+    prs = Presentation()
+    slide = prs.slides.add_slide(prs.slide_layouts[6])
+    t = slide.shapes.add_table(2, 3, Inches(1), Inches(1), Inches(6), Inches(1)).table
+    t.cell(0, 0).merge(t.cell(0, 1))
+    t.cell(0, 0).text, t.cell(0, 2).text = "Frist", "Status"
+    t.cell(1, 0).text, t.cell(1, 1).text, t.cell(1, 2).text = "30.04.2026", "Erdung", "offen"
+    buf = io.BytesIO()
+    prs.save(buf)
+    segs, _ = office.extract(buf.getvalue(), "pptx")
+    pos = {s["source"]: (s["cell"]["row"], s["cell"]["col"], s["cell"]["rows"], s["cell"]["cols"]) for s in segs if s.get("cell")}
+    assert pos == {"Frist": (1, 1, 1, 2), "Status": (1, 3, 1, 1), "30.04.2026": (2, 1, 1, 1), "Erdung": (2, 2, 1, 1),
+                   "offen": (2, 3, 1, 1)}
+
+
+def test_documents_read_before_cells_had_a_place_get_one_from_where_they_are():
+    from translator.office.common import table_cell
+
+    assert table_cell({"where": "Table 2 · R3C1"}) == {"table": "t2", "row": 3, "col": 1, "rows": 1, "cols": 1}
+    assert table_cell({"where": "Slide 4 · Table R1C2"}) == {"table": "s4", "row": 1, "col": 2, "rows": 1, "cols": 1}
+    assert table_cell({"where": "Body"}) is None and table_cell({"where": "Sheet1!B3 · column “Nr.”"}) is None
+    kept = {"table": "x", "row": 1, "col": 1, "rows": 2, "cols": 1}
+    assert table_cell({"where": "Table 1 · R1C1", "cell": kept}) == kept
+
+
 def test_markup_escapes_literal_markdown_and_marks_differences_only():
     base = Piece(text="a * b [x] ", style="")
     bold = Piece(text="fett", style="b", bold=True, payload="B")

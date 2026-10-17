@@ -20,6 +20,7 @@ import { LayoutView } from "./layout/LayoutView";
 import { Markdown } from "./Markdown";
 import { QualityView } from "./QualityView";
 import { RichDiff } from "./RichDiff";
+import { CellTable } from "./CellTable";
 import { AltLine, FigureBlock, PageBreak, pairAltText, SegmentShell, type CommentsUi, type ShellActions } from "./SegmentShell";
 import { SelectionToolbar } from "./SelectionToolbar";
 import { ChecksView, SourceView } from "./SourceViews";
@@ -225,17 +226,46 @@ export function ArtifactPanel({
     document.getElementById(`seg-${highlight}`)?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [highlight, tab]);
 
-  const withPageBreaks = (render: (s: Segment) => React.ReactNode) => {
+  /** The segments in order, with page breaks; a Word or PowerPoint table's cells (one segment per paragraph) are
+   * put back into their table (`cell`), each paragraph still rendered on its own. */
+  const withPageBreaks = (render: (s: Segment) => React.ReactNode, cell: (s: Segment) => React.ReactNode) => {
     const out: React.ReactNode[] = [];
     let page: number | null = null;
-    for (const s of segments) {
-      if (paired.has(s.id)) continue;
+    const shown = segments.filter((s) => !paired.has(s.id));
+    for (let i = 0; i < shown.length; i++) {
+      const s = shown[i];
       if (page !== null && s.page !== page) out.push(<PageBreak key={`pb-${s.page}`} page={s.page} label={doc.page_labels?.[s.page - 1]} />);
       page = s.page;
-      out.push(render(s));
+      if (!s.cell) {
+        out.push(render(s));
+        continue;
+      }
+      // A run of cells (a table nested in another comes after it): one table each.
+      const tables = new Map<string, Segment[]>();
+      for (; i < shown.length && shown[i].cell && shown[i].page === page; i++) {
+        const c = shown[i];
+        tables.set(c.cell!.table, [...(tables.get(c.cell!.table) ?? []), c]);
+      }
+      i--;
+      for (const [table, cells] of tables) out.push(<CellTable key={`${table}-${cells[0].id}`} cells={cells} render={cell} />);
     }
     return out;
   };
+
+  /** A segment's text in the Reading view: the translation, or the source with why it isn't translated yet. */
+  const readingText = (s: Segment) =>
+    s.target ? (
+      <Markdown text={s.target} />
+    ) : checking ? (
+      <Markdown text={s.source} />
+    ) : session.status === "awaiting_answers" ? (
+      <div className="flex items-baseline gap-1.5 text-muted-foreground">
+        <span className="shrink-0 text-[10px]">not translated yet</span>
+        <Markdown text={s.source} className="min-w-0 text-sm" />
+      </div>
+    ) : (
+      <div className="animate-pulse text-sm text-muted-foreground italic">translating {s.id}…</div>
+    );
 
   const scrollRef = useRef<HTMLDivElement>(null);
   const empty = segments.length === 0;
@@ -346,34 +376,32 @@ export function ArtifactPanel({
 
               {tab === "translation" && (
                 <div className="mx-auto max-w-3xl">
-                  {withPageBreaks((s) => (
-                    <SegmentShell key={s.id} seg={s} highlighted={highlight === s.id} actions={actions}>
-                      {s.kind === "header" || s.kind === "footer" ? (
-                        <div className="text-xs text-muted-foreground">
-                          <span className="mr-1.5 text-[10px] tracking-wide uppercase">{s.kind}</span>
-                          {s.target ?? s.source}
-                        </div>
-                      ) : s.kind === "figure" ? (
-                        <FigureBlock sessionId={session.id} seg={s} legend={s.target ?? s.source} alt={altOf.get(s.id)} />
-                      ) : s.kind === "alt" ? (
-                        <div className="py-1 text-xs text-muted-foreground">
-                          {s.where && <span className="mr-2">{s.where.replace(/ · alt text$/, "")}</span>}
-                          <AltLine seg={s} />
-                        </div>
-                      ) : s.target ? (
-                        <Markdown text={s.target} />
-                      ) : checking ? (
-                        <Markdown text={s.source} />
-                      ) : session.status === "awaiting_answers" ? (
-                        <div className="flex items-baseline gap-1.5 text-muted-foreground">
-                          <span className="shrink-0 text-[10px]">not translated yet</span>
-                          <Markdown text={s.source} className="min-w-0 text-sm" />
-                        </div>
-                      ) : (
-                        <div className="animate-pulse text-sm text-muted-foreground italic">translating {s.id}…</div>
-                      )}
-                    </SegmentShell>
-                  ))}
+                  {withPageBreaks(
+                    (s) => (
+                      <SegmentShell key={s.id} seg={s} highlighted={highlight === s.id} actions={actions}>
+                        {s.kind === "header" || s.kind === "footer" ? (
+                          <div className="text-xs text-muted-foreground">
+                            <span className="mr-1.5 text-[10px] tracking-wide uppercase">{s.kind}</span>
+                            {s.target ?? s.source}
+                          </div>
+                        ) : s.kind === "figure" ? (
+                          <FigureBlock sessionId={session.id} seg={s} legend={s.target ?? s.source} alt={altOf.get(s.id)} />
+                        ) : s.kind === "alt" ? (
+                          <div className="py-1 text-xs text-muted-foreground">
+                            {s.where && <span className="mr-2">{s.where.replace(/ · alt text$/, "")}</span>}
+                            <AltLine seg={s} />
+                          </div>
+                        ) : (
+                          readingText(s)
+                        )}
+                      </SegmentShell>
+                    ),
+                    (s) => (
+                      <SegmentShell key={s.id} seg={s} highlighted={highlight === s.id} actions={actions} compact>
+                        {readingText(s)}
+                      </SegmentShell>
+                    ),
+                  )}
                 </div>
               )}
 
@@ -383,41 +411,50 @@ export function ArtifactPanel({
                     <span>{session.source_lang || "Source"}</span>
                     <span>English</span>
                   </div>
-                  {withPageBreaks((s) => (
-                    <SegmentShell key={s.id} seg={s} highlighted={highlight === s.id} actions={actions}>
-                      {s.kind === "figure" ? (
-                        <div className="py-1">
-                          <FigureBlock sessionId={session.id} seg={s} legend={null} />
-                          {(s.source || altOf.has(s.id)) && (
-                            <div className="grid grid-cols-2 gap-6 text-xs whitespace-pre-line">
-                              <div className="space-y-1 text-muted-foreground">
-                                {altOf.has(s.id) && <AltLine seg={altOf.get(s.id)!} side="source" />}
-                                {s.source && <div>{s.source}</div>}
+                  {withPageBreaks(
+                    (s) => (
+                      <SegmentShell key={s.id} seg={s} highlighted={highlight === s.id} actions={actions}>
+                        {s.kind === "figure" ? (
+                          <div className="py-1">
+                            <FigureBlock sessionId={session.id} seg={s} legend={null} />
+                            {(s.source || altOf.has(s.id)) && (
+                              <div className="grid grid-cols-2 gap-6 text-xs whitespace-pre-line">
+                                <div className="space-y-1 text-muted-foreground">
+                                  {altOf.has(s.id) && <AltLine seg={altOf.get(s.id)!} side="source" />}
+                                  {s.source && <div>{s.source}</div>}
+                                </div>
+                                <div className="space-y-1">
+                                  {altOf.has(s.id) && (
+                                    <div className="text-muted-foreground">
+                                      <AltLine seg={altOf.get(s.id)!} />
+                                    </div>
+                                  )}
+                                  {s.source && <div>{s.target ?? "…"}</div>}
+                                </div>
                               </div>
-                              <div className="space-y-1">
-                                {altOf.has(s.id) && (
-                                  <div className="text-muted-foreground">
-                                    <AltLine seg={altOf.get(s.id)!} />
-                                  </div>
-                                )}
-                                {s.source && <div>{s.target ?? "…"}</div>}
-                              </div>
-                            </div>
-                          )}
-                        </div>
-                      ) : s.kind === "alt" ? (
-                        <div className="grid grid-cols-2 gap-6 py-1 text-xs text-muted-foreground">
-                          <AltLine seg={s} side="source" />
-                          <AltLine seg={s} />
-                        </div>
-                      ) : (
-                        <div className="grid grid-cols-2 gap-6 py-1">
-                          <Markdown text={s.source} className="text-muted-foreground" />
-                          {s.target ? <Markdown text={s.target} /> : <div className="text-sm text-muted-foreground italic">…</div>}
-                        </div>
-                      )}
-                    </SegmentShell>
-                  ))}
+                            )}
+                          </div>
+                        ) : s.kind === "alt" ? (
+                          <div className="grid grid-cols-2 gap-6 py-1 text-xs text-muted-foreground">
+                            <AltLine seg={s} side="source" />
+                            <AltLine seg={s} />
+                          </div>
+                        ) : (
+                          <div className="grid grid-cols-2 gap-6 py-1">
+                            <Markdown text={s.source} className="text-muted-foreground" />
+                            {s.target ? <Markdown text={s.target} /> : <div className="text-sm text-muted-foreground italic">…</div>}
+                          </div>
+                        )}
+                      </SegmentShell>
+                    ),
+                    // in a table: the original above the English, in the same cell
+                    (s) => (
+                      <SegmentShell key={s.id} seg={s} highlighted={highlight === s.id} actions={actions} compact>
+                        <Markdown text={s.source} className="text-xs text-muted-foreground" />
+                        {s.target ? <Markdown text={s.target} /> : <div className="text-sm text-muted-foreground italic">…</div>}
+                      </SegmentShell>
+                    ),
+                  )}
                 </>
               )}
 

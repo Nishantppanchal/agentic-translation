@@ -85,6 +85,21 @@ def segment(page: int, n: int, kind: str, source: str, plain_text: str, where: s
             "translatable": translatable, "where": where, "loc": loc}
 
 
+_WHERE_CELL = re.compile(r"^(?:Slide (\d+) · )?Table (?:(\d+) · )?R(\d+)C(\d+)$")
+
+
+def table_cell(seg: dict) -> dict | None:
+    """Where a Word or PowerPoint table cell sits ({table, row, col, rows, cols}): recorded when the file is read;
+    for documents read before that, from where it says it is (no merged cells then)."""
+    if seg.get("cell"):
+        return seg["cell"]
+    m = _WHERE_CELL.match(seg.get("where") or "")
+    if not m:
+        return None
+    slide, table, row, col = m.groups()
+    return {"table": f"s{slide}" if slide else f"t{table}", "row": int(row), "col": int(col), "rows": 1, "cols": 1}
+
+
 def number(units: list[Unit]) -> list[dict]:
     """Give the units' segments their page and id (p<unit>.<n>)."""
     out = []

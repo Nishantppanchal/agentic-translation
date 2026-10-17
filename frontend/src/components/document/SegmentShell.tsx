@@ -36,12 +36,14 @@ export function SegmentShell({
   highlighted,
   actions,
   rewrite = true,
+  compact = false,
   children,
 }: {
   seg: Segment;
   highlighted: boolean;
   actions: ShellActions;
   rewrite?: boolean; // offer Rewrite ▾ (not in the source view)
+  compact?: boolean; // in a table cell: no margins reaching out of it
   children: React.ReactNode;
 }) {
   const { comments, onReference } = actions;
@@ -51,7 +53,7 @@ export function SegmentShell({
     <div
       id={`seg-${seg.id}`}
       data-seg={seg.id}
-      className={`group relative -mx-3 rounded-lg px-3 py-0.5 transition-colors duration-300 ${
+      className={`group relative transition-colors duration-300 ${compact ? "rounded-sm px-1.5 py-0.5" : "-mx-3 rounded-lg px-3 py-0.5"} ${
         highlighted ? "bg-primary-soft" : "hover:bg-muted/60"
       } ${open ? "shadow-[inset_2px_0_0_var(--primary)]" : ""}`}
     >

@@ -142,9 +142,10 @@ def _shapes(shapes):
             yield shape
 
 
-def text_frames(prs) -> list[tuple[int, str, object, list[tuple[object, str, object]]]]:
-    """[(slide number, part name, part, [(txBody, where, shape or None)])] in reading order: shapes, tables, then
-    the notes (a shape is given for text that may need to shrink: not table cells or notes)."""
+def text_frames(prs) -> list[tuple[int, str, object, list[tuple[object, str, object, dict | None]]]]:
+    """[(slide number, part name, part, [(txBody, where, shape or None, cell or None)])] in reading order: shapes,
+    tables, then the notes (a shape is given for text that may need to shrink: not table cells or notes; a table
+    cell's place: {table, row, col, rows, cols}, for showing the table as a table)."""
     out = []
     for number, slide in enumerate(prs.slides, start=1):
         bodies = []
@@ -153,17 +154,19 @@ def text_frames(prs) -> list[tuple[int, str, object, list[tuple[object, str, obj
             if shape.is_placeholder and shape.placeholder_format.type in _TITLES:
                 name = "Title"
             if shape.has_text_frame:
-                bodies.append((shape.text_frame._txBody, f"Slide {number} · {name}", shape))
+                bodies.append((shape.text_frame._txBody, f"Slide {number} · {name}", shape, None))
             if getattr(shape, "has_table", False) and shape.has_table:
+                table = f"{slide.part.partname}#t{shape.shape_id}"
                 for r, row in enumerate(shape.table.rows, start=1):
                     for c, cell in enumerate(row.cells, start=1):
                         if not cell.is_spanned:
-                            bodies.append((cell.text_frame._txBody, f"Slide {number} · Table R{r}C{c}", None))
+                            place = {"table": table, "row": r, "col": c, "rows": cell.span_height, "cols": cell.span_width}
+                            bodies.append((cell.text_frame._txBody, f"Slide {number} · Table R{r}C{c}", None, place))
         out.append((number, str(slide.part.partname), slide.part, bodies))
         if slide.has_notes_slide and slide.notes_slide.notes_text_frame is not None:
             notes = slide.notes_slide
             out.append((number, str(notes.part.partname), notes.part,
-                        [(notes.notes_text_frame._txBody, f"Slide {number} · Notes", None)]))
+                        [(notes.notes_text_frame._txBody, f"Slide {number} · Notes", None, None)]))
     return out
 
 
@@ -211,14 +214,17 @@ def extract(data: bytes, finder: pictures.Finder | None = None) -> tuple[list[Un
     for number, partname, part, bodies in text_frames(prs):
         unit = units.setdefault(number, Unit(f"Slide {number}"))
         index = 0
-        for body, where, _shape in bodies:
+        for body, where, _shape, cell in bodies:
             for p in body.iter(q(A, "p")):
                 pieces, _, _ = read(p, part)
                 enc = markup.encode(pieces)
                 if enc.text.strip():
                     kind = "note" if where.endswith("Notes") else "heading" if "· Title" in where else "paragraph"
                     source = prefix(kind) + enc.text
-                    unit.segments.append(segment(0, 0, kind, source, markup.plain(pieces), where, f"{partname}#{index}"))
+                    seg = segment(0, 0, kind, source, markup.plain(pieces), where, f"{partname}#{index}")
+                    if cell:
+                        seg["cell"] = cell
+                    unit.segments.append(seg)
                 index += 1
         if finder is not None and (slide := slides.get(partname)) is not None:  # the slide's pictures, before its notes
             for k, shape in enumerate(slide_pictures(slide), start=1):
@@ -285,7 +291,7 @@ def write(data: bytes, segments: list[dict], marks: bool = False) -> tuple[bytes
     report = Report()
     for _number, partname, part, bodies in text_frames(prs):
         index = 0
-        for body, where, shape in bodies:
+        for body, where, shape, _cell in bodies:
             grew = False
             room = _room(body, shape, where.endswith("· Title")) if shape is not None else None
             for p in body.iter(q(A, "p")):

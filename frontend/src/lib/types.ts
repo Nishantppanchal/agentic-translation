@@ -126,6 +126,7 @@ export interface Segment {
   page: number;
   kind: "heading" | "paragraph" | "list" | "table" | "code" | "figure" | "header" | "footer" | "cell" | "note" | "alt"; // alt: a picture's alt text (Office)
   where?: string; // Word / PowerPoint / Excel: where in the file ("Slide 3 · Title", "Sheet1!B4 · column …")
+  cell?: { table: string; row: number; col: number; rows: number; cols: number }; // a Word / PowerPoint table cell (merged: rows, cols)
   loc?: string; // Word / PowerPoint / Excel: the paragraph or cell in the file (for writing back)
   source: string;
   target: string | null;

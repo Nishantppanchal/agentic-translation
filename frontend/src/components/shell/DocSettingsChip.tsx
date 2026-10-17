@@ -56,12 +56,12 @@ export function DocSettingsChip({
               <Brain size={13} className="text-muted-foreground" /> This document&apos;s models
             </div>
             <div className="space-y-1.5">
-              {groupSummaries(settings.models, app, catalog.models).map(({ group, choice: c, model: m }) => (
+              {groupSummaries(settings.models, app, catalog.models).map(({ group, choice: c, model: m, label }) => (
                 <div key={group.id} className="flex items-center justify-between gap-3 text-xs">
                   <span className="text-muted-foreground">{group.label}</span>
                   <span className="flex min-w-0 items-center gap-1.5">
                     {m ? <ModelLogo model={m} size={12} /> : <Brain size={12} className="shrink-0 text-muted-foreground" />}
-                    <span className="truncate">{choiceLabel(c, catalog.models, app, group.steps[0], { showDefault: true })}</span>
+                    <span className="truncate">{c === "mixed" ? label : choiceLabel(c, catalog.models, app, group.steps[0], { showDefault: true })}</span>
                   </span>
                 </div>
               ))}

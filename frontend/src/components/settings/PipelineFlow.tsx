@@ -9,9 +9,11 @@ import type { AppSettingsView, ModelChoices, ModelInfo, PipelineFlowSpec, StepCh
 import { defaultEffort, EFFORT_LABEL, EffortToggle, effectiveEffort, ModelSelect } from "./ModelChoices";
 import { ModelLogo } from "./ModelLogo";
 
-// The diagram is laid out by hand: every box at its (row, col) from the flow spec, the row names in a column on the
-// left, and each arrow one of three shapes — straight along a row, down through the gap between two rows, or a loop
-// under a row back to an earlier box (Review → Refinement). No arrow passes behind a box.
+// The diagram is laid out by hand: every box at its (row, col) from the flow spec (a box with a span covers that many
+// rows, centred), the row names in a column on the left, and each arrow one of three shapes — forward to the next
+// column (bending in the gap between them when the two boxes aren't level: two readings joining the check), down
+// through the gap between two rows, or a loop under a row back to an earlier box (Review → Refinement). No arrow
+// passes behind a box.
 const W = 168; // a box's width
 const H = 58; // and height
 const GAP_X = 52; // between columns (room for an arrow's label)
@@ -20,19 +22,21 @@ const NAMES = 112; // the column of row names
 const LOOP = 20; // how far a loop runs under its row
 
 type Point = { x: number; y: number };
-type Box = { id: string; row: number; col: number };
+type Box = { id: string; row: number; col: number; span: number };
 
 const left = (b: Box) => NAMES + b.col * (W + GAP_X);
-const top = (b: Box) => b.row * (H + GAP_Y);
+const top = (b: Box) => b.row * (H + GAP_Y) + ((b.span - 1) * (H + GAP_Y)) / 2;
 const middle = (b: Box) => ({ x: left(b) + W / 2, y: top(b) + H / 2 });
 
 /** The arrow from one box to another, as an orthogonal polyline, and where its label goes. */
 function route(s: Box, t: Box): { points: Point[]; at: Point; above: boolean } {
-  if (s.row === t.row && t.col > s.col) {
-    const y = middle(s).y;
-    const a = { x: left(s) + W, y };
-    const b = { x: left(t), y };
-    return { points: [a, b], at: { x: (a.x + b.x) / 2, y }, above: true };
+  const overlap = s.row <= t.row + t.span - 1 && t.row <= s.row + s.span - 1; // they share a row
+  if (overlap && t.col > s.col) {
+    const a = { x: left(s) + W, y: middle(s).y };
+    const b = { x: left(t), y: middle(t).y };
+    if (a.y === b.y) return { points: [a, b], at: { x: (a.x + b.x) / 2, y: a.y }, above: true };
+    const x = a.x + GAP_X / 2; // not level (one of two readings into the check): bend in the gap between them
+    return { points: [a, { x, y: a.y }, { x, y: b.y }, b], at: { x, y: (a.y + b.y) / 2 }, above: true };
   }
   if (s.row === t.row) {
     // back along the row: under the boxes
@@ -186,6 +190,7 @@ export function PipelineFlow({
   highlight,
   changed,
   pulse,
+  off = [],
   onChange,
 }: {
   spec: PipelineFlowSpec;
@@ -195,6 +200,7 @@ export function PipelineFlow({
   highlight: StepId[] | null;
   changed: Set<StepId>;
   pulse: { steps: StepId[]; at: number } | null;
+  off?: StepId[]; // steps switched off (the second reading): dimmed
   onChange: (step: StepId, choice: StepChoice) => void;
 }) {
   const [open, setOpen] = useState<StepId | null>(null);
@@ -206,7 +212,7 @@ export function PipelineFlow({
   const linked = useMemo(() => new Set(spec.edges.flatMap(([a, b]) => [a, b])), [spec.edges]);
   const drawn = spec.nodes.filter((n) => linked.has(n.id));
   const rows = [...new Set(drawn.map((n) => n.row))].sort((a, b) => a - b);
-  const boxes = new Map(drawn.map((n) => [n.id, { id: n.id, row: rows.indexOf(n.row), col: n.col }]));
+  const boxes = new Map(drawn.map((n) => [n.id, { id: n.id, row: rows.indexOf(n.row), col: n.col, span: n.span ?? 1 }]));
   const cols = Math.max(0, ...drawn.map((n) => n.col)) + 1;
   const loopsUnderLast = spec.edges.some(([a, b]) => {
     const s = boxes.get(a);
@@ -241,14 +247,15 @@ export function PipelineFlow({
         />
       </div>
     );
+    const isOff = off.includes(step);
     return {
       step,
-      label,
+      label: isOff ? `${label} · off` : label,
       model,
       level: level ? EFFORT_LABEL[level.effort] : null,
       isDefault: !!level?.isDefault,
       lit: !!lit?.has(step),
-      dim: !!lit && !lit.has(step),
+      dim: (!!lit && !lit.has(step)) || isOff,
       changed: changed.has(step),
       pulse: pulse?.steps.includes(step) ? pulse.at : null,
       open: open === step,
@@ -275,15 +282,20 @@ export function PipelineFlow({
     <div className="space-y-4 rounded-xl border border-border bg-background/60 p-3" aria-label="The pipeline: each step and the model it uses">
       <div ref={ref} style={{ height: height * scale }}>
         <div className="relative origin-top-left" style={{ width, height, transform: `scale(${scale})` }}>
-          {rows.map((row, i) => (
-            <div
-              key={row}
-              className="absolute flex items-center pr-4 text-[10px] leading-tight font-semibold tracking-wider text-muted-foreground/80 uppercase"
-              style={{ left: 0, top: i * (H + GAP_Y), width: NAMES, height: H }}
-            >
-              {spec.rows[row]}
-            </div>
-          ))}
+          {rows.map((row, i) => {
+            if (!spec.rows[row]) return null; // named by the row above
+            let covers = 1; // this row, and the unnamed ones after it
+            while (i + covers < rows.length && !spec.rows[rows[i + covers]]) covers++;
+            return (
+              <div
+                key={row}
+                className="absolute flex items-center pr-4 text-[10px] leading-tight font-semibold tracking-wider text-muted-foreground/80 uppercase"
+                style={{ left: 0, top: i * (H + GAP_Y), width: NAMES, height: covers * H + (covers - 1) * GAP_Y }}
+              >
+                {spec.rows[row]}
+              </div>
+            );
+          })}
           <svg className="pointer-events-none absolute inset-0 overflow-visible" width={width} height={height} aria-hidden>
             <defs>
               {(["idle", "active"] as const).map((k) => (

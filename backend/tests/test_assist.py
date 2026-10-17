@@ -124,7 +124,7 @@ def test_suggestions_follow_the_document_and_are_cached(api):
     assert again["cached"] is True and len(FakeVllm.requests) == 1  # same last event: no new call
     usage = summarize([], projects.get_store().assist_usage(session.id))
     [row] = usage["rows"]
-    assert (row["step"], row["model"], row["effort"], row["calls"], row["prompt_tokens"]) == ("Suggestions", "quick", "instant", 1, 7)
+    assert (row["step"], row["model"], row["effort"], row["calls"], row["prompt_tokens"]) == ("Suggested prompts", "quick", "instant", 1, 7)
 
 
 @pytest.mark.structured
@@ -232,7 +232,7 @@ def test_assist_usage_is_merged_into_the_documents_usage():
     store.record_assist_usage("s1", "suggest", "quick", "instant", 10, 5, 0)
     store.record_assist_usage("s1", "notes", "quick", None, 100, 50, 20)
     rows = {(r["step"], r["effort"]): r for r in summarize([], store.assist_usage("s1"))["rows"]}
-    assert rows[("Suggestions", "instant")]["calls"] == 2 and rows[("Suggestions", "instant")]["tokens"] == 30
+    assert rows[("Suggested prompts", "instant")]["calls"] == 2 and rows[("Suggested prompts", "instant")]["tokens"] == 30
     assert rows[("Translation summary", None)]["reasoning_tokens"] == 20 and store.assist_usage("s2") == []
 
 

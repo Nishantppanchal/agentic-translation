@@ -40,35 +40,52 @@ Effort = Literal["instant", "low", "medium", "high"]
 EFFORTS: tuple[Effort, ...] = get_args(Effort)
 DEFAULT_EFFORT: Effort = "medium"
 STEP_LABELS: dict[Step, str] = {
-    "ocr": "OCR",  # reads each page image, the text inside pictures, and pages read again in the source check
-    "ocr_second": "Second reading",  # reads scanned pages and pictures too, at the same time: best another company's
-    "ocr_check": "OCR check",  # settles where the two readings differ; checks the reading when there's only one
+    "ocr": "First reading",  # reads each page image, the text inside pictures, and pages read again in the source check
+    "ocr_second": "Second reading",
+    "ocr_check": "Check the readings",
     "analyse": "Analysis",
     "translate": "Translation",
     "review": "Review",
     "refine": "Refinement",
     "polish": "Consistency",  # the polish step before Ready, and the consistency task
-    "rewrite": "Rewrite",  # tasks: rewrite with an instruction, alternatives
-    "editor": "Chat editor",
-    "lqa": "LQA",
-    "suggest": "Suggestions",  # the suggested follow-up prompts in the chat
+    "rewrite": "Rewrites",  # tasks: rewrite with an instruction, alternatives
+    "editor": "Chat",
+    "lqa": "Quality score",
+    "suggest": "Suggested prompts",  # the suggested follow-up prompts in the chat
     "complete": "Tab completion",  # the rest of a chat message being typed (keep it fast)
     "notes": "Translation summary",  # the summary for the client: decisions, assumptions, open queries
 }
+# What each step does, in a line (Settings shows it under the step's name).
+STEP_HELP: dict[Step, str] = {
+    "ocr": "Reads each page and the text in pictures",
+    "ocr_second": "Reads them too, at the same time: best another company's model",
+    "ocr_check": "Settles where the two readings differ: best a third company's model",
+    "analyse": "The brief, key terms and your questions, before translating",
+    "translate": "The translation, page by page",
+    "refine": "Fixes what the review found",
+    "polish": "One translation per repeated sentence, before Ready",
+    "rewrite": "More formal, simpler, other options… when you ask",
+    "review": "Reviews the translation: best a different model than Translation",
+    "lqa": "The independent quality score (MQM)",
+    "editor": "The chat; it also fixes the reading in the source check",
+    "suggest": "Suggested next prompts in the chat",
+    "complete": "Tab to finish what you're typing: keep it fast",
+    "notes": "The translation summary for the client",
+}
 
 
-# The steps as people choose models for them (Settings): one model per group, or per step under Advanced.
+# The AI assist steps' models are set in pipeline.yaml only: they don't change a translation, so nobody picks them in
+# the app (a choice saved by an older version, app-wide or for a document, is ignored).
+CONFIG_ONLY_STEPS: tuple[Step, ...] = ("suggest", "complete", "notes")
+
+# The steps as people choose models for them (Settings): sections in the order the pipeline runs, one row per step;
+# "Set all" gives a section one model — except Reading, whose readers and judge are meant to be different models.
 STEP_GROUPS: tuple[dict[str, Any], ...] = (
-    {"id": "reading", "label": "Reading", "help": "Reads each page (OCR) and checks the reading", "steps": ("ocr", "ocr_check")},
-    # Its own group: one model for the whole Reading group must never make both readers the same model.
-    {"id": "second", "label": "Second reading", "help": "Another model reads scanned pages and pictures at the same "
-     "time; where the two differ, the OCR check model says which is printed", "steps": ("ocr_second",)},
-    {"id": "translating", "label": "Translating", "help": "Analysis, translation, fixes and rewrites",
-     "steps": ("analyse", "translate", "refine", "polish", "rewrite")},
-    {"id": "reviewing", "label": "Reviewing", "help": "The AI review and the quality score (LQA)", "steps": ("review", "lqa")},
-    {"id": "chat", "label": "Chat", "help": "The chat editor (it looks at pages too)", "steps": ("editor",)},
-    {"id": "assist", "label": "AI assist", "help": "Suggested prompts, Tab completions and the translation summary",
-     "steps": ("suggest", "complete", "notes")},
+    {"id": "reading", "label": "Reading (PDFs and images)", "help": "Two models read each page side by side; a third "
+     "settles where they differ", "steps": ("ocr", "ocr_second", "ocr_check"), "distinct": True},
+    {"id": "translating", "label": "Translating", "help": "", "steps": ("analyse", "translate", "refine", "polish", "rewrite")},
+    {"id": "reviewing", "label": "Reviewing", "help": "", "steps": ("review", "lqa")},
+    {"id": "chat", "label": "Chat", "help": "", "steps": ("editor",)},
 )
 
 

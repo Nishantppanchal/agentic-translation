@@ -5,7 +5,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import type { AppSettingsView, DictionaryStatus, ModelChoices, ModelInfo, SecondReaderStatus } from "@/lib/types";
 import { Modal } from "./Modal";
-import { DictionarySwitch, ModelChoicesEditor, SecondReadingSwitch } from "./ModelChoices";
+import { DictionarySwitch, ModelChoicesEditor } from "./ModelChoices";
 
 /** A document's own choices: its models, the dictionary, and the second reading of its scans. */
 export type DocChoices = { models: ModelChoices; dictionary: boolean; second: boolean };
@@ -108,7 +108,7 @@ function ChoicesForm({
         settings={settings}
         base={settings.models}
         baseLabel="the defaults in Settings"
-        below={{ second: <SecondReadingSwitch status={second} on={twice} onChange={setTwice} /> }}
+        second={{ status: second, on: twice, onChange: setTwice }}
       />
       <DictionarySwitch status={dictionary} on={dict} onChange={setDict} />
       <div className="sticky -bottom-4 -mx-5 -mb-4 flex items-center gap-2 border-t border-border bg-card/95 px-5 py-3 backdrop-blur">

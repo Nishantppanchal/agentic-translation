@@ -1,6 +1,6 @@
 "use client";
 
-import { BookOpen, Brain, Loader2, Palette, Sparkles } from "lucide-react";
+import { BookOpen, Brain, Loader2, Palette, Sparkles, Workflow } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
@@ -10,7 +10,7 @@ import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 import { api } from "@/lib/api";
 import type { AppSettingsView, ModelChoices, ModelInfo, StepChoice, StepId } from "@/lib/types";
 import { Modal } from "./Modal";
-import { DictionarySwitch, ModelChoicesEditor, SecondReadingSwitch, sameChoice, useModelCatalog } from "./ModelChoices";
+import { DictionarySwitch, ModelChoicesEditor, PipelineEditor, sameChoice, useModelCatalog } from "./ModelChoices";
 import { ThemeControl } from "./ThemeControl";
 
 /** App settings: the models and references new documents start with, the AI assist, and the theme. Closing with
@@ -116,10 +116,14 @@ function SettingsForm({
 
   return (
     <div className="flex min-h-0 flex-col">
-      <Tabs defaultValue="models" className="gap-4">
+      {/* one height for every tab, so the dialog doesn't jump when switching to a short one */}
+      <Tabs defaultValue="models" className="min-h-[min(600px,calc(100vh-220px))] gap-4">
         <TabsList>
           <TabsTrigger value="models">
             <Brain /> Models
+          </TabsTrigger>
+          <TabsTrigger value="pipeline">
+            <Workflow /> Pipeline
           </TabsTrigger>
           <TabsTrigger value="references">
             <BookOpen /> References
@@ -131,10 +135,9 @@ function SettingsForm({
             <Palette /> Appearance
           </TabsTrigger>
         </TabsList>
-        <TabsContent value="models" className="space-y-2">
+        <TabsContent value="models" className="space-y-4">
           <p className="text-sm text-muted-foreground">
-            The models new documents start with. Each document keeps its own choice (change it from the document&apos;s header, or the
-            chat model from the chat box). Hover a row to see the steps it changes; click a step to change only that one.
+            The models new documents start with. Each document can change its own, from its header.
           </p>
           <ModelChoicesEditor
             value={choices}
@@ -143,7 +146,18 @@ function SettingsForm({
             settings={settings}
             base={settings.configured}
             baseLabel="the default"
-            below={{ second: <SecondReadingSwitch status={settings.second_reader} on={second} onChange={change(setSecond)} /> }}
+            second={{ status: settings.second_reader, on: second, onChange: change(setSecond) }}
+          />
+        </TabsContent>
+        <TabsContent value="pipeline" className="space-y-3">
+          <p className="text-sm text-muted-foreground">How a document moves through the agents. Click a step to change its model.</p>
+          <PipelineEditor
+            value={choices}
+            onChange={change(setChoices)}
+            models={models}
+            settings={settings}
+            base={settings.configured}
+            off={second && settings.second_reader.available ? [] : ["ocr_second"]}
           />
         </TabsContent>
         <TabsContent value="references" className="space-y-4">
@@ -153,14 +167,14 @@ function SettingsForm({
             then the AI&apos;s own choice. A dictionary that disagrees with the AI becomes a question for you.
           </p>
         </TabsContent>
-        <TabsContent value="assist" className="space-y-4">
+        <TabsContent value="assist" className="space-y-5">
           <label className="flex items-start gap-3">
             <Switch checked={assist} onCheckedChange={change(setAssist)} className="mt-0.5" />
             <span className="text-sm">
               <span className="font-medium">Suggestions in the chat</span>
               <span className="block text-xs text-muted-foreground">
-                Suggested next prompts after each answer, and Tab to complete what you&apos;re typing. Each uses a small call to the
-                Assist model (Models tab).
+                Suggested next prompts after each answer, and Tab to complete what you&apos;re typing. Each is a small call to a quick
+                model.
               </span>
             </span>
           </label>

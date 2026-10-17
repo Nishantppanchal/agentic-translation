@@ -460,30 +460,31 @@ Downloads with non-ASCII names keep them.
 ## 11. Models and settings
 
 - **Choosing models in the app.** The YAML files below set the defaults; people choose in the app:
-  - **Settings** (the gear at the bottom of the sidebar), with four tabs: **Models**, **References**, **AI assist** and **Appearance**.
-    - **The pipeline diagram:** at the top of *Models*. It shows every step as it runs:
-      - Reading (PDFs and images), then Translating, Reviewing (Review ⇄ Refinement until no issues are left, then Consistency), On request once it's ready, and AI assist.
+  - **Settings** (the gear at the bottom of the sidebar), with five tabs: **Models**, **Pipeline**, **References**, **AI assist** and **Appearance**.
+    - **Models:** one list in sections as the pipeline runs (**Reading (PDFs and images)**, **Translating**, **Reviewing**, **Chat**), one row per step: its name, a line on what it does, its model and its reasoning level.
+      - **Set all…** at the top of a section gives every step in it one model. Reading has none: its two readers and the check are meant to be three different models.
+      - **Second reading** has its switch on its row; off, the row says *each page is read once, then checked*.
+      - **Warnings on the row:** the second reading on the same model as the first, or *Check the readings* on one of the two readers (it would side with its own reading).
+      - A changed row has a dot, and its reset button (or **Reset to default**) takes it back to the default in `pipeline.yaml`.
+    - **Pipeline:** the same choices as a diagram, every step as it runs:
+      - Reading (the first and second readings side by side, then the check), then Translating, Reviewing (Review ⇄ Refinement until no issues are left, then Consistency), and On request once it's ready.
       - Your turns ("You check the source", "You answer questions") and what feeds the steps (the translation memory, Word/PowerPoint/Excel files read directly).
-      - Each step shows its model (with the company's logo) and its reasoning level.
-    - **Changing models:**
-      - Hovering a group row (**Reading**, **Translating**, **Reviewing**, **Chat**, **AI assist**) lights up the steps it changes.
-      - Clicking a step in the diagram changes just that step; *Advanced* lists each step too.
-      - A changed step has a dot and a ring, and a row's reset button (and **Reset to default**) takes it back to the default in `pipeline.yaml`.
+      - Each step shows its model (with the company's logo) and its reasoning level; click one to change it. A changed step has a dot and a ring; a second reading that is off is dimmed.
     - **The model picker:** shows each model's name and logo, where it runs (OpenRouter, Ollama, this computer, an own server), and whether it **reads images** and **thinks**. Models that can't read images are greyed out for the steps that look at pages.
     - Settings are saved in `projects.db`. Only the models in `models.yaml` are offered, and their URLs, hosts and keys never reach the browser.
-  - **Reasoning level** (for models marked `thinking: true`): *Instant*, *Low*, *Medium* or *High*. A dot marks the default, and the line under it says what the default is and where it comes from (e.g. "Default: Low (pipeline.yaml)").
+  - **Reasoning level** (for models marked `thinking: true`): *Instant*, *Low*, *Medium* or *High*. Where nobody chose, it shows the level the default stands for (*Low · default*), and the dropdown says where that comes from (e.g. *Default (Low), from pipeline.yaml*).
     - **The default:** a thinking model always runs at a real level, chosen in this order:
       1. the one you choose;
       2. the step's `effort` in `pipeline.yaml`;
       3. the model's own `effort` in `models.yaml`;
       4. Medium.
     - **On the wire:** it is sent as the standard `reasoning_effort` (Instant = `"none"`); vLLM turns it into `enable_thinking`, and OpenRouter passes it to the provider. With thinking on, the default temperature isn't sent. A server that refuses the field gets the call again without it.
-    - **Models that don't reason** say so.
-  - **One document:** the upload panel shows a chip per group (e.g. *Translating: Claude Haiku 5.5 · Low*) and the dictionary. A click opens the same editor for this document only. Each document keeps the choice it was uploaded with.
+    - **Models that don't reason** show *No levels*.
+  - **One document:** the upload panel shows a chip per section (e.g. *Translating: Claude Haiku 5.5 · Low*; Reading, with three models, *GLM 5.3 Flash + 2 more*), the second reading and the dictionary. A click opens the same editor for this document only. Each document keeps the choice it was uploaded with.
     - **Changing it later:** the models chip in the document's top bar shows the choice (every group on hover). A click changes it for the document's next run: a chat message, a task or a retry, but not while the agents are working. The change is noted in the chat.
     - **The chat model** can also be changed right in the chat box (the model name under the input), from your next message.
   - **Dictionary on/off:** under *References* in Settings (for new documents) and in a document's settings. Without a dictionary service (`DICTIONARY_URL`) it is greyed out with the reason.
-  - **AI assist:** one switch for the suggested prompts and Tab completions in the chat (see [§6](#6-chat-editor-and-proposals)).
+  - **AI assist:** one switch for the suggested prompts and Tab completions in the chat (see [§6](#6-chat-editor-and-proposals)). Their models (and the translation summary's) are set in `pipeline.yaml` only: they don't change a translation, so the app doesn't offer them.
 - **Token chip** (document header): tokens per pipeline step, model and reasoning level (and how many of them were spent thinking), computed from the run's saved events (tokens only, no prices).
 - **Models** are set in two YAML files in `backend/config/` (details and examples in the README's [Models](../README.md#models)):
   - **`models.yaml`** lists the models (copy it from `models.example.yaml`; it is git-ignored, so keys and internal server addresses are never committed). Each model has an `id`, the `model_name` the server knows it by, a `url` (any OpenAI-compatible server: vLLM, SGLang, OpenRouter, Ollama, LM Studio…) and an `api_key`, plus optional `headers`, `extra_body`, `timeout`, `retries`, `temperature`, `structured_output`, `vision`, `thinking` (a reasoning model: offers reasoning levels), `effort` (its default level), `label` (the name shown; otherwise made from `model_name`) and `vendor` (whose model, for its logo; otherwise guessed from `model_name`). `defaults` apply to every model; a model's own values win.

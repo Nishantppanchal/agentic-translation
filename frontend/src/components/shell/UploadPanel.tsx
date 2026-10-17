@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowRight, BookOpen, Brain, FileImage, FileSpreadsheet, FileText, FileUp, Loader2, Presentation, X } from "lucide-react";
+import { ArrowRight, BookOpen, Brain, FileImage, FileSpreadsheet, FileText, FileUp, Loader2, Presentation, ScanText, X } from "lucide-react";
 import { AnimatePresence, motion } from "motion/react";
 import { cn } from "cn";
 import { useRef, useState } from "react";
@@ -83,6 +83,7 @@ export function UploadPanel({
   };
 
   const dictOn = !!effective?.dictionary && !!catalog.settings?.dictionary.available;
+  const secondOn = !!effective?.second && !!catalog.settings?.second_reader.available;
 
   return (
     <div className="scroll-thin flex h-full justify-center overflow-y-auto p-8">
@@ -225,10 +226,7 @@ export function UploadPanel({
             </div>
             {effective && catalog.settings ? (
               <div className="flex flex-wrap gap-1.5">
-                {groupSummaries(effective.models, catalog.settings, catalog.models).map(({ group, model, label }) => {
-                  // the second reading is a model, or off (for this document, or on the server)
-                  const off = group.id === "second" && !(effective.second && catalog.settings?.second_reader.available);
-                  return (
+                {groupSummaries(effective.models, catalog.settings, catalog.models).map(({ group, model, label }) => (
                   <button
                     key={group.id}
                     onClick={() => setChoosing(true)}
@@ -236,12 +234,19 @@ export function UploadPanel({
                     title={group.help}
                   >
                     {/* the company's logo; a group whose steps use different models: the generic one */}
-                    {model && !off ? <ModelLogo model={model} size={13} /> : <Brain size={13} className="shrink-0 text-muted-foreground" />}
+                    {model ? <ModelLogo model={model} size={13} /> : <Brain size={13} className="shrink-0 text-muted-foreground" />}
                     <span className="text-muted-foreground">{group.label}:</span>
-                    <span className="truncate">{off ? "off" : label}</span>
+                    <span className="truncate">{label}</span>
                   </button>
-                  );
-                })}
+                ))}
+                <button
+                  onClick={() => setChoosing(true)}
+                  className="flex h-7 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 text-xs shadow-xs transition-colors hover:border-primary/40"
+                  title="A second model reads scanned pages and pictures too"
+                >
+                  <ScanText size={13} className={secondOn ? "text-primary" : "text-muted-foreground"} />
+                  <span className="text-muted-foreground">Second reading:</span> {secondOn ? "on" : "off"}
+                </button>
                 <button
                   onClick={() => setChoosing(true)}
                   className="flex h-7 items-center gap-1.5 rounded-full border border-border bg-card px-2.5 text-xs shadow-xs transition-colors hover:border-primary/40"

@@ -15,7 +15,17 @@ from ...document import versions
 from ...integrations import dictionary
 from ...models import catalog, routing
 from ...models import config as model_config
-from ...models.config import EFFORTS, STEP_GROUPS, STEP_LABELS, STEPS, VISION_STEPS, ChoiceError, Effort, Step
+from ...models.config import (
+    CONFIG_ONLY_STEPS,
+    EFFORTS,
+    STEP_GROUPS,
+    STEP_HELP,
+    STEP_LABELS,
+    VISION_STEPS,
+    ChoiceError,
+    Effort,
+    Step,
+)
 from ...ocr import second
 from ..services import editable_session, session_service
 
@@ -42,6 +52,13 @@ def check_models(models: dict[str, Any]) -> dict[Step, dict]:
         if choice is None:
             continue
         model, effort = (choice.model, choice.effort) if isinstance(choice, ChoiceIn) else (choice.get("model", ""), choice.get("effort"))
+        if step in CONFIG_ONLY_STEPS:  # pipeline.yaml's: sending it back unchanged is fine, changing it isn't
+            if {"model": model, "effort": effort} != routing.choices(None)[step]:
+                errors.append({"loc": ["body", "models", step], "type": "value_error",
+                               "msg": f"The model for {STEP_LABELS[step]} is set in config/pipeline.yaml, not in the app"})
+            else:
+                out[step] = {"model": model, "effort": effort}
+            continue
         try:
             cfg.check_choice(step, model, effort)
         except ChoiceError as exc:
@@ -64,18 +81,20 @@ def check_second_reader(on: bool | None) -> None:
 
 
 def _steps() -> list[dict]:
-    group_of = {step: g["id"] for g in STEP_GROUPS for step in g["steps"]}
-    return [{"step": step, "label": STEP_LABELS[step], "group": group_of[step], "vision": step in VISION_STEPS} for step in STEPS]
+    """The steps people choose models for, in the order they appear (the AI assist ones are pipeline.yaml's)."""
+    return [{"step": step, "label": STEP_LABELS[step], "help": STEP_HELP[step], "group": g["id"],
+             "vision": step in VISION_STEPS} for g in STEP_GROUPS for step in g["steps"]]
 
 
 def _groups() -> list[dict]:
-    return [{**g, "steps": list(g["steps"]), "vision": all(s in VISION_STEPS for s in g["steps"])} for g in STEP_GROUPS]
+    return [{**g, "steps": list(g["steps"]), "vision": all(s in VISION_STEPS for s in g["steps"]),
+             "distinct": bool(g.get("distinct"))} for g in STEP_GROUPS]
 
 
 def _defaults(cfg: model_config.ModelConfig) -> dict[str, dict[str, dict]]:
     """{step: {model id: {"effort", "from"}}}: the level "Default" stands for, for each thinking model on each step."""
     out: dict[str, dict[str, dict]] = {}
-    for step in STEPS:
+    for step in (step for g in STEP_GROUPS for step in g["steps"]):
         for m in cfg.models.values():
             effort, origin = cfg.default_effort(step, m.id)
             if effort is not None:

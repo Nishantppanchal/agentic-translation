@@ -12,7 +12,7 @@ from collections.abc import Mapping
 from typing import Any
 
 from . import config as model_config
-from .config import STEPS, ChoiceError, Step, StepModel
+from .config import CONFIG_ONLY_STEPS, STEPS, ChoiceError, Step, StepModel
 from .llm import EndpointModel, build_model
 
 log = logging.getLogger(__name__)
@@ -34,8 +34,8 @@ def choices(state: Mapping[str, Any] | None = None) -> dict[Step, dict]:
         layers.append(state.get(DOC_MODELS) or {})
     for layer in layers:
         for step, choice in layer.items():
-            if step not in out or not isinstance(choice, Mapping):
-                continue
+            if step not in out or step in CONFIG_ONLY_STEPS or not isinstance(choice, Mapping):
+                continue  # (the AI assist steps: pipeline.yaml's model, always)
             try:
                 cfg.check_choice(step, choice.get("model", ""), choice.get("effort"))
             except ChoiceError as exc:
@@ -64,7 +64,7 @@ def snapshot(overrides: Mapping[str, Any] | None = None) -> dict[Step, dict]:
     out = choices(None)
     cfg = model_config.current()
     for step, choice in (overrides or {}).items():
-        if step in STEPS and choice:
+        if step in STEPS and step not in CONFIG_ONLY_STEPS and choice:
             cfg.check_choice(step, choice["model"], choice.get("effort"))  # the API validated it already
             out[step] = {"model": choice["model"], "effort": choice.get("effort")}
     return out

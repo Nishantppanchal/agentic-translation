@@ -541,6 +541,7 @@ export interface StepGroup {
   help: string;
   steps: StepId[];
   vision: boolean; // every step in it looks at pages
+  distinct?: boolean; // its steps are meant to be different models (Reading): no "Set all"
 }
 
 /** GET /api/settings: the defaults for new documents. */
@@ -550,7 +551,7 @@ export interface AppSettingsView {
   overridden: StepId[];
   dictionary: DictionaryStatus;
   second_reader: SecondReaderStatus;
-  steps: { step: StepId; label: string; group: string; vision: boolean }[];
+  steps: { step: StepId; label: string; help: string; group: string; vision: boolean }[];
   groups: StepGroup[];
   efforts: Effort[];
   // What "Default" stands for: per step, per thinking model, the level and where it comes from.
@@ -562,7 +563,9 @@ export interface AppSettingsView {
 /** The pipeline as a diagram (GET /api/settings → flow). */
 export interface PipelineFlowSpec {
   rows: string[];
-  nodes: { id: string; kind: "step" | "you" | "context"; step?: StepId; label: string; row: number; col: number }[];
+  // span: the rows a box covers, centred (the two readings run side by side into the check); a row named "" is the
+  // one above's too
+  nodes: { id: string; kind: "step" | "you" | "context"; step?: StepId; label: string; row: number; col: number; span?: number }[];
   edges: [string, string, string?][]; // from, to, and when that way is taken ("issues found")
 }
 

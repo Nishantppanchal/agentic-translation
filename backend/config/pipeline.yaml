@@ -29,7 +29,7 @@ steps:
   # rewrite:                 # tasks: rewrite with an instruction, alternatives
   # editor:                  # the chat (needs images and tool calling)
   lqa: {model: gemini-flash, effort: low}     # independent quality scoring (MQM): a third company
-  # The AI assist features (each its own model and level; Settings → Models can change them too):
+  # The AI assist features (each its own model and level; set here only — the app doesn't offer them):
   suggest: {model: claude-haiku, effort: instant}   # the suggested follow-up prompts in the chat
   complete: {model: claude-haiku, effort: instant}  # Tab completions in the chat box (keep it fast)
   notes: {model: claude-haiku, effort: low}         # the translation summary for the client

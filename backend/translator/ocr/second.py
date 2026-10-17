@@ -37,8 +37,8 @@ def warnings(choices: Mapping[str, Mapping[str, Any]]) -> list[str]:
         out.append("The second reading uses the same model as the first: they will tend to misread the same way. "
                    "Choose another company's model for Second reading.")
     if check and check in (first, second):
-        out.append("The OCR check settles where the two readings differ, and it is one of the two readers: it will tend "
-                   "to side with its own reading. Choose a third model for OCR check.")
+        out.append("Check the readings settles where the two readings differ, and it is one of the two readers: it will "
+                   "tend to side with its own reading. Choose a third model for Check the readings.")
     return out
 
 

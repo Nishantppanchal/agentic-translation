@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from . import projects
 from .models import config as model_config
-from .models.config import ChoiceError, Effort, Step
+from .models.config import CONFIG_ONLY_STEPS, ChoiceError, Effort, Step
 
 log = logging.getLogger(__name__)
 
@@ -38,6 +38,8 @@ def valid_models(models: dict) -> dict[Step, StepChoice]:
     out: dict[Step, StepChoice] = {}
     cfg = model_config.current()
     for step, raw in (models or {}).items():
+        if step in CONFIG_ONLY_STEPS:
+            continue  # set in pipeline.yaml only
         try:
             choice = raw if isinstance(raw, StepChoice) else StepChoice.model_validate(raw)
             cfg.check_choice(step, choice.model, choice.effort)

@@ -209,7 +209,7 @@ steps:
 | `rewrite` | Tasks: rewrite with an instruction, alternatives | |
 | `editor` | The chat (it also makes the source check's page fixes, and looks at page images) | vision, tool calling |
 | `lqa` | Independent quality scoring (MQM) | |
-| `suggest` | The suggested follow-up prompts in the chat | |
+| `suggest` | The suggested follow-up prompts in the chat (this and the next two: set here only, not in the app) | |
 | `complete` | Tab completions in the chat box (keep it fast) | |
 | `notes` | The translation summary for the client | |
 

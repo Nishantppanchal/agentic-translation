@@ -117,14 +117,14 @@ def test_models_are_described_for_people():
 
 def test_the_pipeline_diagram_has_every_step():
     from translator.models.catalog import flow
-    from translator.models.config import STEPS
+    from translator.models.config import CONFIG_ONLY_STEPS, STEPS
 
     f = flow()
     ids = {n["id"] for n in f["nodes"]}
-    assert sorted(n["step"] for n in f["nodes"] if n.get("step")) == sorted(STEPS)
+    assert sorted(n["step"] for n in f["nodes"] if n.get("step")) == sorted(set(STEPS) - set(CONFIG_ONLY_STEPS))
     assert all(a in ids and b in ids for a, b, _label in f["edges"])
     linked = {x for a, b, _label in f["edges"] for x in (a, b)}
-    assert {n["step"] for n in f["nodes"] if n.get("step") and n["id"] not in linked} == {"editor", "rewrite", "lqa", "suggest", "complete", "notes"}
+    assert {n["step"] for n in f["nodes"] if n.get("step") and n["id"] not in linked} == {"editor", "rewrite", "lqa"}
     assert len({(n["row"], n["col"]) for n in f["nodes"]}) == len(f["nodes"])  # no two nodes on one spot
 
 
@@ -139,6 +139,15 @@ def test_pipeline_then_settings_then_the_document(use_models):
     snap = routing.snapshot({"review": {"model": "deep", "effort": "low"}})
     assert snap["translate"] == {"model": "deep", "effort": "medium"} and snap["review"] == {"model": "deep", "effort": "low"}
     assert snap["ocr"] == {"model": "fast", "effort": None}
+
+
+def test_the_ai_assist_models_are_pipeline_yamls_only(use_models):
+    use_models(_two(), {"default": "fast"})
+    old = {"suggest": {"model": "deep", "effort": "high"}}  # saved by an older version
+    state = {routing.DOC_MODELS: old}
+    assert routing.resolve("suggest", state).id == "fast"
+    assert routing.snapshot(old)["suggest"] == {"model": "fast", "effort": None}
+    assert app_settings.valid_models(old) == {}
 
 
 def test_a_documents_choice_reaches_the_server(use_models, fake_vllm):
@@ -197,8 +206,13 @@ def test_settings_are_validated_saved_and_reset(api):
     client, _ = api
     view = client.get("/api/settings").json()
     assert view["models"]["translate"] == {"model": "fast", "effort": None} and view["dictionary"]["available"] is False
-    assert [g["id"] for g in view["groups"]] == ["reading", "second", "translating", "reviewing", "chat", "assist"]
-    assert next(g for g in view["groups"] if g["id"] == "assist")["steps"] == ["suggest", "complete", "notes"]
+    assert [g["id"] for g in view["groups"]] == ["reading", "translating", "reviewing", "chat"]
+    assert next(g for g in view["groups"] if g["id"] == "reading")["distinct"] is True  # no "Set all": meant to differ
+    assert all(s["help"] for s in view["steps"])
+    assert "suggest" not in {s["step"] for s in view["steps"]}  # the AI assist models: pipeline.yaml's only
+    suggest = view["models"]["suggest"]
+    assert client.put("/api/settings", json={"models": {"suggest": {**suggest, "model": "nope"}}}).status_code == 422
+    assert client.put("/api/settings", json={"models": {"suggest": suggest}}).status_code == 200  # sent back as it was
     assert view["defaults"]["translate"] == {"deep": {"effort": "medium", "from": "built-in"},
                                              "deep-vl": {"effort": "medium", "from": "built-in"}}
     assert "fast" not in view["defaults"]["translate"] and view["flow"]["rows"]
@@ -215,7 +229,8 @@ def test_a_documents_settings_change_from_its_next_run(api, monkeypatch):
     client, sessions = api
     s = asyncio.run(sessions.create_session(app_name=services.APP_NAME, user_id=services.USER, state={
         "doc:status": "ready", routing.DOC_MODELS: routing.snapshot()}))
-    r = client.patch(f"/api/sessions/{s.id}/settings", json={"models": {"review": {"model": "deep", "effort": "low"}}})
+    every = {**routing.snapshot(), "review": {"model": "deep", "effort": "low"}}  # the dialog sends every step back
+    r = client.patch(f"/api/sessions/{s.id}/settings", json={"models": every})
     assert r.status_code == 200 and r.json()["models"]["review"] == {"model": "deep", "effort": "low"}
     s = asyncio.run(sessions.get_session(app_name=services.APP_NAME, user_id=services.USER, session_id=s.id))
     assert s.state[routing.DOC_MODELS]["review"]["model"] == "deep"
@@ -257,7 +272,7 @@ def test_the_second_reading_is_a_setting_for_new_documents_and_each_one(api, mon
     assert view["second_reader"]["available"] is True and view["second_reader"]["enabled"] is True
     assert len(view["second_reader"]["warnings"]) == 2  # every step is "fast" here: one model reads twice and judges
     view = client.put("/api/settings", json={"models": {"ocr_second": {"model": "deep-vl", "effort": "low"}}}).json()
-    assert len(view["second_reader"]["warnings"]) == 1 and "OCR check" in view["second_reader"]["warnings"][0]
+    assert len(view["second_reader"]["warnings"]) == 1 and "Check the readings" in view["second_reader"]["warnings"][0]
     assert client.put("/api/settings", json={"second_reader": False}).json()["second_reader"]["enabled"] is False
     assert second.enabled() is False
     s = asyncio.run(sessions.create_session(app_name=services.APP_NAME, user_id=services.USER, state={

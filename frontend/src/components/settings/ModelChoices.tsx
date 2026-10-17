@@ -1,10 +1,9 @@
 "use client";
 
-import { BookOpen, ChevronRight, Eye, Lightbulb, RotateCcw, ScanText, TriangleAlert } from "lucide-react";
+import { BookOpen, Eye, Lightbulb, RotateCcw, TriangleAlert } from "lucide-react";
 import { cn } from "cn";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 import { Switch } from "@/components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "@/components/ui/toggle-group";
@@ -18,7 +17,6 @@ import type {
   ModelInfo,
   SecondReaderStatus,
   StepChoice,
-  StepGroup,
   StepId,
 } from "@/lib/types";
 import { ModelLogo, ServerBadge } from "./ModelLogo";
@@ -110,7 +108,9 @@ export function groupSummaries(choices: ModelChoices, settings: AppSettingsView,
     const levels = [
       ...new Set(g.steps.map((s) => (choices[s] ? effectiveEffort(settings, models, s, choices[s]) : null)).map((l) => (l ? EFFORT_LABEL[l.effort] : null))),
     ].filter(Boolean);
-    const label = ids.length > 1 ? "Mixed models" : `${model?.label ?? ids[0]}${levels.length ? ` · ${levels.join(" / ")}` : ""}`;
+    const first = models?.find((m) => m.id === ids[0])?.label ?? ids[0];
+    const label =
+      ids.length > 1 ? `${first} + ${ids.length - 1} more` : `${model?.label ?? ids[0]}${levels.length ? ` · ${levels.join(" / ")}` : ""}`;
     return { group: g, choice: groupChoice(choices, g.steps), model, label };
   });
 }
@@ -129,6 +129,8 @@ export function ModelSelect({
   label,
   className,
   size = "default",
+  disabled = false,
+  placeholder,
 }: {
   value: string | "mixed";
   models: ModelInfo[];
@@ -137,12 +139,14 @@ export function ModelSelect({
   label: string;
   className?: string;
   size?: "sm" | "default";
+  disabled?: boolean;
+  placeholder?: string; // shown with no model chosen ("Set all…")
 }) {
   const current = models.find((m) => m.id === value);
   return (
-    <Select value={value === "mixed" ? undefined : value} onValueChange={onChange}>
+    <Select value={value === "mixed" ? "" : value} onValueChange={onChange} disabled={disabled}>
       <SelectTrigger aria-label={label} size={size} className={cn("min-w-0 bg-card", className)}>
-        <SelectValue placeholder={value === "mixed" ? "Mixed (see each step)" : `Unavailable: ${value}`}>
+        <SelectValue placeholder={placeholder ?? (value === "mixed" ? "Mixed" : `Unavailable: ${value}`)}>
           {current && (
             <span className="flex min-w-0 items-center gap-2">
               <ModelLogo model={current} size={15} />
@@ -263,13 +267,92 @@ export function EffortToggle({
   );
 }
 
+/** The level as a compact dropdown (the list in Settings): Default (and what it stands for), or a level to pin. */
+export function EffortSelect({
+  value,
+  model,
+  fallback,
+  onChange,
+  label,
+  disabled = false,
+}: {
+  value: Effort | null;
+  model: ModelInfo | undefined;
+  fallback: { effort: Effort; from: string } | null; // what Default stands for
+  onChange: (e: Effort | null) => void;
+  label: string;
+  disabled?: boolean;
+}) {
+  if (!model?.thinking) {
+    return (
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <span className="flex h-8 w-32 shrink-0 items-center px-2.5 text-xs text-muted-foreground" tabIndex={0}>
+            No levels
+          </span>
+        </TooltipTrigger>
+        <TooltipContent>This model doesn&apos;t reason, so it has no reasoning level.</TooltipContent>
+      </Tooltip>
+    );
+  }
+  const DEFAULT = "default";
+  return (
+    <Select value={value ?? DEFAULT} onValueChange={(v) => onChange(v === DEFAULT ? null : (v as Effort))} disabled={disabled}>
+      <SelectTrigger size="sm" aria-label={label} className="h-8 w-32 shrink-0 bg-card">
+        <SelectValue>
+          {value ? (
+            EFFORT_LABEL[value]
+          ) : (
+            <span>
+              {fallback ? EFFORT_LABEL[fallback.effort] : "Default"} <span className="text-muted-foreground">· default</span>
+            </span>
+          )}
+        </SelectValue>
+      </SelectTrigger>
+      <SelectContent>
+        <SelectItem value={DEFAULT}>
+          <span>
+            <span className="block">Default{fallback ? ` (${EFFORT_LABEL[fallback.effort]})` : ""}</span>
+            {fallback && <span className="block text-xs text-muted-foreground">from {fallback.from}</span>}
+          </span>
+        </SelectItem>
+        {EFFORTS.map((e) => (
+          <SelectItem key={e} value={e}>
+            <span>
+              <span className="block">{EFFORT_LABEL[e]}</span>
+              <span className="block text-xs text-muted-foreground">{EFFORT_HELP[e]}</span>
+            </span>
+          </SelectItem>
+        ))}
+      </SelectContent>
+    </Select>
+  );
+}
+
 // --------------------------------------------------------------------------- //
-// The editor: diagram, one row per group, and each step under Advanced
+// The editor: one list, in sections as the pipeline runs, one row per step
 // --------------------------------------------------------------------------- //
 
-/** Model and reasoning level per group of steps (with the pipeline diagram showing what each changes), and per
- * step under "Advanced" or by clicking a step in the diagram. `base`: what a row counts as changed from (and
- * resets to) — pipeline.yaml in Settings, the app's defaults for one document. */
+/** What's wrong with the choices as they stand (shown on the step's row while choosing): the readers and their
+ * judge should be different models, and so should the reviewer and the translator. */
+function rowWarnings(c: ModelChoices, secondOn: boolean): Partial<Record<StepId, string>> {
+  const out: Partial<Record<StepId, string>> = {};
+  if (secondOn && c.ocr_second && c.ocr_second.model === c.ocr?.model)
+    out.ocr_second = "The same model as the first reading: the two would tend to misread alike. Pick another company's.";
+  if (c.ocr_check && (c.ocr_check.model === c.ocr?.model || (secondOn && c.ocr_check.model === c.ocr_second?.model)))
+    out.ocr_check = "One of the readers: it would tend to side with its own reading. Pick a third model.";
+  if (c.review && c.review.model === c.translate?.model)
+    out.review = "The same model as Translation: a different one catches more.";
+  return out;
+}
+
+/** The second reading's switch, as its row needs it. */
+export type SecondSwitch = { status: SecondReaderStatus; on: boolean; onChange: (on: boolean) => void };
+
+/** Models (and reasoning levels) step by step, in sections as the pipeline runs: each step's name and what it does,
+ * its model and level, and a reset when it differs from `base` (pipeline.yaml in Settings, the app's defaults for
+ * one document). "Set all" gives a section one model (not Reading: its readers and judge are meant to differ).
+ * `second`: the second reading's switch, on its row. */
 export function ModelChoicesEditor({
   value,
   onChange,
@@ -277,7 +360,7 @@ export function ModelChoicesEditor({
   settings,
   base,
   baseLabel,
-  below,
+  second,
 }: {
   value: ModelChoices;
   onChange: (next: ModelChoices) => void;
@@ -285,71 +368,83 @@ export function ModelChoicesEditor({
   settings: AppSettingsView;
   base: ModelChoices;
   baseLabel: string;
-  below?: Partial<Record<string, React.ReactNode>>; // more under a group's row, by group id (e.g. the second reading's switch)
+  second?: SecondSwitch;
 }) {
   const byId = useMemo(() => new Map(models.map((m) => [m.id, m])), [models]);
-  const [hover, setHover] = useState<StepId[] | null>(null);
-  const [pulse, setPulse] = useState<{ steps: StepId[]; at: number } | null>(null);
+  const info = useMemo(() => new Map(settings.steps.map((s) => [s.step, s])), [settings.steps]);
   const set = (steps: StepId[], update: (old: StepChoice) => StepChoice) => {
     const next = { ...value };
     for (const s of steps) next[s] = update(value[s]);
     onChange(next);
-    setPulse((p) => ({ steps, at: (p?.at ?? 0) + 1 }));
   };
   // A model that doesn't think has no level; a thinking one keeps the level it had (or follows the default).
   const pickModel = (steps: StepId[], id: string) =>
     set(steps, (old) => ({ model: id, effort: byId.get(id)?.thinking && byId.get(old.model)?.thinking ? old.effort : null }));
-  const pickEffort = (steps: StepId[], effort: Effort | null) => set(steps, (old) => ({ ...old, effort }));
-  const reset = (steps: StepId[]) => {
-    const next = { ...value };
-    for (const s of steps) if (base[s]) next[s] = base[s];
-    onChange(next);
-    setPulse((p) => ({ steps, at: (p?.at ?? 0) + 1 }));
-  };
-  const changed = new Set((Object.keys(value) as StepId[]).filter((s) => !sameChoice(value[s], base[s])));
-  const stepLabel = new Map(settings.steps.map((s) => [s.step, s.label]));
-  const differs = (s: StepId, g: StepGroup) => !sameChoice(value[s], value[g.steps[0]]);
+  const secondOn = second ? second.on && second.status.available : true;
+  const warnings = rowWarnings(value, secondOn);
 
-  const row = (key: string, label: string, help: string | null, steps: StepId[], vision: boolean, extra?: React.ReactNode) => {
-    // The model and the level are shown as "mixed" separately: steps on one model at different levels are one model.
-    const modelId = steps.every((s) => value[s].model === value[steps[0]].model) ? value[steps[0]].model : "mixed";
-    const effort = steps.every((s) => (value[s].effort ?? null) === (value[steps[0]].effort ?? null)) ? (value[steps[0]].effort ?? null) : "mixed";
-    const model = modelId === "mixed" ? undefined : byId.get(modelId);
-    const thinking = model ?? steps.map((s) => byId.get(value[s].model)).find((m) => m?.thinking);
-    const fallback = modelId === "mixed" ? null : defaultEffort(settings, models, steps[0], modelId);
-    const isChanged = steps.some((s) => changed.has(s));
+  const row = (step: StepId) => {
+    const choice = value[step];
+    if (!choice) return null;
+    const s = info.get(step);
+    const model = byId.get(choice.model);
+    const changed = !sameChoice(choice, base[step]);
+    const off = step === "ocr_second" && !!second && !secondOn;
+    const label = s?.label ?? step;
     return (
-      <div
-        key={key}
-        className="group/row flex items-start gap-3 rounded-lg px-2 py-2 transition-colors hover:bg-accent/60 focus-within:bg-accent/60"
-        onMouseEnter={() => setHover(steps)}
-        onMouseLeave={() => setHover(null)}
-        onFocus={() => setHover(steps)}
-        onBlur={() => setHover(null)}
-      >
-        <div className="w-40 shrink-0 pt-1.5">
+      <div key={step} className="flex items-center gap-3 px-3 py-2.5">
+        <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-sm font-medium">
             {label}
-            {isChanged && <span className="size-1.5 rounded-full bg-primary" title={`Changed from ${baseLabel}`} />}
-            {extra}
+            {changed && <span className="size-1.5 rounded-full bg-primary" title={`Changed from ${baseLabel}`} />}
           </div>
-          {help && <div className="text-[11px] leading-snug text-muted-foreground">{help}</div>}
+          <p className="truncate text-xs text-muted-foreground">
+            {step === "ocr_second" && second && !second.status.available
+              ? second.status.reason
+              : off
+                ? "Off: each page is read once, then checked"
+                : s?.help}
+          </p>
+          {!off && warnings[step] && (
+            <p className="mt-1 flex items-start gap-1.5 text-xs text-warn-fg">
+              <TriangleAlert size={12} className="mt-0.5 shrink-0" /> {warnings[step]}
+            </p>
+          )}
         </div>
-        <ModelSelect value={modelId} models={models} visionOnly={vision} onChange={(id) => pickModel(steps, id)} label={`${label} model`} className="h-8 flex-1" size="sm" />
-        <EffortToggle
-          value={effort}
-          model={thinking}
-          fallback={fallback}
-          onChange={(e) => pickEffort(steps.filter((s) => byId.get(value[s].model)?.thinking), e)}
+        {step === "ocr_second" && second && (
+          <Switch
+            checked={secondOn}
+            disabled={!second.status.available}
+            onCheckedChange={second.onChange}
+            aria-label="Second reading on"
+            className="shrink-0"
+          />
+        )}
+        <ModelSelect
+          value={choice.model}
+          models={models}
+          visionOnly={!!s?.vision}
+          onChange={(id) => pickModel([step], id)}
+          label={`${label} model`}
+          className="h-8 w-56 shrink-0"
+          size="sm"
+          disabled={off}
+        />
+        <EffortSelect
+          value={choice.effort}
+          model={model}
+          fallback={defaultEffort(settings, models, step, choice.model)}
+          onChange={(effort) => set([step], (old) => ({ ...old, effort }))}
           label={`${label} reasoning level`}
+          disabled={off}
         />
         <Tooltip>
           <TooltipTrigger asChild>
             <button
               type="button"
-              onClick={() => reset(steps)}
-              disabled={!isChanged}
-              className="mt-1 rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:invisible"
+              onClick={() => base[step] && set([step], () => base[step])}
+              disabled={!changed}
+              className="rounded-md p-1.5 text-muted-foreground hover:bg-accent hover:text-foreground disabled:invisible"
               aria-label={`Reset ${label} to ${baseLabel}`}
             >
               <RotateCcw size={14} />
@@ -362,81 +457,67 @@ export function ModelChoicesEditor({
   };
 
   return (
-    <div className="space-y-3">
-      <PipelineFlow
-        spec={settings.flow}
-        choices={value}
-        models={models}
-        settings={settings}
-        highlight={hover}
-        changed={changed}
-        pulse={pulse}
-        onChange={(step, choice) => set([step], () => choice)}
-      />
-      <div className="-mx-2">
-        {settings.groups.map((g) => (
-          <Fragment key={g.id}>
-            {row(g.id, g.label, g.help, g.steps, g.vision)}
-            {below?.[g.id] && <div className="px-2 pb-2">{below[g.id]}</div>}
-          </Fragment>
-        ))}
-      </div>
-      <Collapsible>
-        <CollapsibleTrigger className="group/adv flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground">
-          <ChevronRight size={12} className="transition-transform group-data-[state=open]/adv:rotate-90" /> Advanced: a model for each step
-          <span className="ml-1">(or click a step in the diagram)</span>
-        </CollapsibleTrigger>
-        <CollapsibleContent className="mt-1 border-l border-border pl-2">
-          {settings.groups.flatMap((g) =>
-            g.steps.map((s) =>
-              row(
-                s,
-                stepLabel.get(s) ?? s,
-                null,
-                [s],
-                settings.steps.find((x) => x.step === s)?.vision ?? false,
-                g.steps.length > 1 && differs(s, g) ? (
-                  <Badge variant="outline" className="h-4 px-1 text-[9px] font-normal">
-                    differs from {g.label}
-                  </Badge>
-                ) : null,
-              ),
-            ),
-          )}
-        </CollapsibleContent>
-      </Collapsible>
-      <p className="text-[11px] text-muted-foreground">
-        Reading and Chat need models that read images. Reasoning levels are for models marked <code>thinking: true</code> in
-        models.yaml; each step&apos;s default level comes from pipeline.yaml, then the model&apos;s own <code>effort</code>, then Medium.
-      </p>
+    <div className="space-y-5">
+      {settings.groups.map((g) => (
+        <section key={g.id} aria-label={g.label}>
+          <div className="mb-1.5 flex items-end justify-between gap-3 px-1">
+            <div className="min-w-0">
+              <h3 className="text-[11px] font-semibold tracking-wider text-muted-foreground uppercase">{g.label}</h3>
+              {g.help && <p className="text-xs text-muted-foreground">{g.help}</p>}
+            </div>
+            {!g.distinct && g.steps.length > 1 && (
+              <ModelSelect
+                value="mixed"
+                placeholder="Set all…"
+                models={models}
+                visionOnly={g.vision}
+                onChange={(id) => pickModel(g.steps, id)}
+                label={`One model for every ${g.label} step`}
+                className="h-7 w-auto shrink-0 gap-1 border-0 bg-transparent px-2 text-xs text-primary shadow-none hover:bg-accent"
+                size="sm"
+              />
+            )}
+          </div>
+          <div className="divide-y divide-border rounded-lg border border-border bg-card shadow-xs">{g.steps.map(row)}</div>
+        </section>
+      ))}
     </div>
   );
 }
 
-/** A second reading of scanned pages and pictures by another model (unless the server turned it off). */
-export function SecondReadingSwitch({ status, on, onChange }: { status: SecondReaderStatus; on: boolean; onChange: (on: boolean) => void }) {
+/** The pipeline as a diagram, for its own tab: click a step to change its model (the same choices as the list). */
+export function PipelineEditor({
+  value,
+  onChange,
+  models,
+  settings,
+  base,
+  off = [],
+}: {
+  value: ModelChoices;
+  onChange: (next: ModelChoices) => void;
+  models: ModelInfo[];
+  settings: AppSettingsView;
+  base: ModelChoices;
+  off?: StepId[]; // steps switched off (the second reading)
+}) {
+  const [pulse, setPulse] = useState<{ steps: StepId[]; at: number } | null>(null);
+  const changed = new Set((Object.keys(value) as StepId[]).filter((s) => !sameChoice(value[s], base[s])));
   return (
-    <div className="space-y-2">
-      <label className="flex items-start gap-3">
-        <Switch checked={on && status.available} disabled={!status.available} onCheckedChange={onChange} className="mt-0.5" />
-        <span className="text-sm">
-          <span className="flex items-center gap-1.5 font-medium">
-            <ScanText size={14} className="text-muted-foreground" /> Second reading
-          </span>
-          <span className="block text-xs text-muted-foreground">
-            {status.available
-              ? "Another model reads scanned pages and pictures at the same time. Where the two differ, the OCR check model says which is printed; what it can't settle is listed for you."
-              : status.reason}
-          </span>
-        </span>
-      </label>
-      {on &&
-        status.warnings.map((w) => (
-          <p key={w} className="flex items-start gap-1.5 rounded-md bg-warn px-2.5 py-1.5 text-xs text-warn-fg">
-            <TriangleAlert size={13} className="mt-0.5 shrink-0" /> {w}
-          </p>
-        ))}
-    </div>
+    <PipelineFlow
+      spec={settings.flow}
+      choices={value}
+      models={models}
+      settings={settings}
+      highlight={null}
+      changed={changed}
+      pulse={pulse}
+      off={off}
+      onChange={(step, choice) => {
+        onChange({ ...value, [step]: choice });
+        setPulse((p) => ({ steps: [step], at: (p?.at ?? 0) + 1 }));
+      }}
+    />
   );
 }
 

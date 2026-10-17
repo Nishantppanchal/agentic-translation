@@ -10,6 +10,10 @@ export const cellText = (md: string) =>
     .replace(/(\*\*\*|\*\*|\*)(?=\S)(.+?)(?<=\S)\1/g, "$2")
     .replace(/\\([\\*_[\]])/g, "$1");
 
+/** The rows, top to bottom (wrapped text can make a row taller on one side). */
+export const rowAnchors = (pane: HTMLElement) =>
+  Array.from(pane.querySelectorAll<HTMLElement>("tr[data-row]"), (r) => [r.dataset.row ?? "", r] as const);
+
 const col = (letters: string) => [...letters].reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0);
 function parseRange(range: string): [number, number, number, number] | null {
   const m = /^([A-Z]+)(\d+):([A-Z]+)(\d+)$/.exec(range);
@@ -24,7 +28,6 @@ export function SheetPane({
   highlight,
   onPick,
   scrollRef,
-  onScroll,
 }: {
   sheet: SheetGrid["sheets"][number];
   segments: Map<string, Segment>;
@@ -32,7 +35,6 @@ export function SheetPane({
   highlight: string | null;
   onPick?: (segId: string) => void;
   scrollRef?: React.Ref<HTMLDivElement>;
-  onScroll?: () => void;
 }) {
   const spans = new Map<string, [number, number]>();
   const covered = new Set<string>();
@@ -44,8 +46,9 @@ export function SheetPane({
     for (let i = r1; i <= r2; i++) for (let j = c1; j <= c2; j++) if (i !== r1 || j !== c1) covered.add(`${i}:${j}`);
   }
   return (
-    <div ref={scrollRef} onScroll={onScroll} className="scroll-thin h-full overflow-auto rounded-lg border border-border bg-white text-[12px] text-[#1f1d1a]">
-      <table className="border-collapse" style={{ tableLayout: "fixed" }}>
+    <div ref={scrollRef} className="scroll-thin h-full overflow-auto rounded-lg border border-border bg-white text-[12px] text-[#1f1d1a]">
+      {/* the file's column widths on both sides (a fixed layout needs the table's width, or content sizes the columns) */}
+      <table className="border-collapse" style={{ tableLayout: "fixed", width: 34 + sheet.widths.reduce((a, w) => a + w, 0) }}>
         <colgroup>
           <col style={{ width: 34 }} />
           {sheet.widths.map((w, i) => (

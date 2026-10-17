@@ -1,18 +1,19 @@
 "use client";
 
-import { AlertTriangle, Link2, Link2Off, RefreshCw } from "lucide-react";
+import { AlertTriangle, RefreshCw } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
-import { Toggle } from "@/components/ui/toggle";
 import { api } from "@/lib/api";
 import type { DocumentState, OfficeWriteReport, Segment, SheetGrid } from "@/lib/types";
-import { DocxPane, type PaneHandle } from "./DocxPane";
-import { PptxPane, type SlidesHandle } from "./PptxPane";
-import { cellText, SheetPane } from "./SheetPane";
+import { docxAnchors, DocxPane, type PaneHandle } from "./DocxPane";
+import { PptxPane, slideAnchors, type SlidesHandle } from "./PptxPane";
+import { cellText, rowAnchors, SheetPane } from "./SheetPane";
+import { useScrollSync } from "./useScrollSync";
 
 /** A Word, PowerPoint or Excel upload as it looks: the original next to the translated file (as of the version
- * picked in the header). The translated side is the real file the download gives. */
+ * picked in the header). The translated side is the real file the download gives. The two sides always scroll
+ * together (useScrollSync), matched slide by slide, segment by segment or row by row. */
 export function LayoutView({
   sessionId,
   doc,
@@ -31,7 +32,6 @@ export function LayoutView({
   onPick: (segId: string) => void; // open a segment (from a click in the translated file)
 }) {
   const fmt = doc.office?.format;
-  const [sync, setSync] = useState(true);
   const [refresh, setRefresh] = useState(0);
   const [report, setReport] = useState<OfficeWriteReport | null>(null);
   const [showReport, setShowReport] = useState(false);
@@ -56,16 +56,6 @@ export function LayoutView({
   return (
     <div className="flex h-full min-h-[480px] flex-col">
       <div className="mb-3 flex flex-wrap items-center gap-2 text-xs">
-        <Toggle
-          size="sm"
-          variant="outline"
-          pressed={sync}
-          onPressedChange={setSync}
-          className="h-7 text-xs data-[state=on]:border-primary/50 data-[state=on]:bg-primary-soft data-[state=on]:text-primary"
-          aria-label="Scroll both sides together"
-        >
-          {sync ? <Link2 /> : <Link2Off />} Sync scroll
-        </Toggle>
         <Button variant="outline" size="sm" className="h-7 text-xs" onClick={() => setRefresh((n) => n + 1)}>
           <RefreshCw /> Refresh
         </Button>
@@ -98,13 +88,11 @@ export function LayoutView({
         )}
         {latest === 0 && <span className="text-muted-foreground">The translation appears here as each version is saved.</span>}
       </div>
-      {fmt === "docx" && (
-        <DocxSides sessionId={sessionId} version={version} targetKey={targetKey} sync={sync} highlight={highlight} onPick={onPick} />
-      )}
+      {fmt === "docx" && <DocxSides sessionId={sessionId} version={version} targetKey={targetKey} highlight={highlight} onPick={onPick} />}
       {fmt === "pptx" && (
-        <PptxSides sessionId={sessionId} version={version} targetKey={targetKey} sync={sync} segments={segments} highlight={highlight} bySeg={bySeg} />
+        <PptxSides sessionId={sessionId} version={version} targetKey={targetKey} segments={segments} highlight={highlight} bySeg={bySeg} />
       )}
-      {fmt === "xlsx" && <SheetSides sessionId={sessionId} bySeg={bySeg} highlight={highlight} sync={sync} onPick={onPick} />}
+      {fmt === "xlsx" && <SheetSides sessionId={sessionId} bySeg={bySeg} highlight={highlight} onPick={onPick} />}
     </div>
   );
 }
@@ -154,48 +142,35 @@ function DocxSides({
   sessionId,
   version,
   targetKey,
-  sync,
   highlight,
   onPick,
 }: {
   sessionId: string;
   version: number | undefined;
   targetKey: string;
-  sync: boolean;
   highlight: string | null;
   onPick: (id: string) => void;
 }) {
   const left = useRef<PaneHandle>(null);
   const right = useRef<PaneHandle>(null);
-  const echo = useRef(false);
-  const follow = (fromLeft: boolean) => {
-    const [from, to] = fromLeft ? [left.current, right.current] : [right.current, left.current];
-    if (!sync || echo.current) {
-      echo.current = false;
-      return;
-    }
-    const seg = from?.topSegment();
-    if (seg) {
-      echo.current = true;
-      to?.scrollToSegment(seg);
-    }
-  };
+  const sync = useScrollSync(docxAnchors);
   useEffect(() => {
     if (!highlight) return;
+    sync.hold(); // each side finds the segment itself
     left.current?.locate(highlight);
     right.current?.locate(highlight);
-  }, [highlight]);
+  }, [highlight, sync]);
   return (
     <div className="flex min-h-0 flex-1 gap-3">
       <Side label="Original">
-        <DocxPane ref={left} url={api.officeFileUrl(sessionId, "source", undefined, true)} refreshKey="source" onScroll={() => follow(true)} />
+        <DocxPane ref={left} url={api.officeFileUrl(sessionId, "source", undefined, true)} refreshKey="source" scrollRef={sync.left} />
       </Side>
       <Side label={`Translation${version ? ` v${version}` : ""}`}>
         <DocxPane
           ref={right}
           url={api.officeFileUrl(sessionId, "target", version, true)}
           refreshKey={targetKey}
-          onScroll={() => follow(false)}
+          scrollRef={sync.right}
           onPick={onPick}
         />
       </Side>
@@ -207,7 +182,6 @@ function PptxSides({
   sessionId,
   version,
   targetKey,
-  sync,
   segments,
   highlight,
   bySeg,
@@ -215,33 +189,30 @@ function PptxSides({
   sessionId: string;
   version: number | undefined;
   targetKey: string;
-  sync: boolean;
   segments: Segment[];
   highlight: string | null;
   bySeg: Map<string, Segment>;
 }) {
   const left = useRef<SlidesHandle>(null);
   const right = useRef<SlidesHandle>(null);
-  const [slide, setSlide] = useState(0);
+  const [slide, setSlide] = useState(0); // for the notes below (both sides are on the same slide)
   const notes = segments.filter((s) => s.kind === "note" && s.page === slide + 1);
+  const sync = useScrollSync(slideAnchors);
   useEffect(() => {
     const seg = highlight ? bySeg.get(highlight) : undefined;
     if (!seg) return;
+    sync.hold(); // each side finds the text on its slide itself
     left.current?.find(seg.page - 1, cellText(seg.source));
     if (seg.target) right.current?.find(seg.page - 1, cellText(seg.target));
-  }, [highlight, bySeg]);
-  const moved = (fromLeft: boolean, i: number) => {
-    setSlide(i);
-    if (sync) (fromLeft ? right.current : left.current)?.goTo(i);
-  };
+  }, [highlight, bySeg, sync]);
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
       <div className="flex min-h-0 flex-1 gap-3">
         <Side label="Original">
-          <PptxPane ref={left} url={api.officeFileUrl(sessionId, "source")} refreshKey="source" onSlide={(i) => moved(true, i)} />
+          <PptxPane ref={left} url={api.officeFileUrl(sessionId, "source")} refreshKey="source" scrollRef={sync.left} onSlide={setSlide} />
         </Side>
         <Side label={`Translation${version ? ` v${version}` : ""}`}>
-          <PptxPane ref={right} url={api.officeFileUrl(sessionId, "target", version)} refreshKey={targetKey} onSlide={(i) => moved(false, i)} />
+          <PptxPane ref={right} url={api.officeFileUrl(sessionId, "target", version)} refreshKey={targetKey} scrollRef={sync.right} />
         </Side>
       </div>
       {notes.length > 0 && (
@@ -270,21 +241,17 @@ function SheetSides({
   sessionId,
   bySeg,
   highlight,
-  sync,
   onPick,
 }: {
   sessionId: string;
   bySeg: Map<string, Segment>;
   highlight: string | null;
-  sync: boolean;
   onPick: (id: string) => void;
 }) {
   const [grid, setGrid] = useState<SheetGrid | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [picked, setSheet] = useState(0);
-  const left = useRef<HTMLDivElement>(null);
-  const right = useRef<HTMLDivElement>(null);
-  const echo = useRef(false);
+  const sync = useScrollSync(rowAnchors);
   useEffect(() => {
     let cancelled = false;
     api
@@ -300,24 +267,13 @@ function SheetSides({
   const sheet = sheetOfHighlight >= 0 ? sheetOfHighlight : picked;
   useEffect(() => {
     if (!highlight) return;
+    sync.hold(); // each side shows the cell itself
     requestAnimationFrame(() =>
-      [left, right].forEach((r) => r.current?.querySelector(`[data-seg="${CSS.escape(highlight)}"]`)?.scrollIntoView({ block: "center", inline: "center" })),
+      sync.panes.forEach((pane) => pane?.querySelector(`[data-seg="${CSS.escape(highlight)}"]`)?.scrollIntoView({ block: "center", inline: "center" })),
     );
-  }, [highlight, sheet]);
+  }, [highlight, sheet, sync]);
   if (error) return <p className="text-xs text-del-fg">Couldn&apos;t load the sheets: {error}</p>;
   if (!grid) return <p className="text-xs text-muted-foreground">Loading the sheets…</p>;
-  const follow = (fromLeft: boolean) => {
-    const [from, to] = fromLeft ? [left.current, right.current] : [right.current, left.current];
-    if (!sync || echo.current) {
-      echo.current = false;
-      return;
-    }
-    if (from && to) {
-      echo.current = true;
-      to.scrollTop = from.scrollTop;
-      to.scrollLeft = from.scrollLeft;
-    }
-  };
   const current = grid.sheets[sheet];
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-2">
@@ -336,10 +292,10 @@ function SheetSides({
       {current && (
         <div className="flex min-h-0 flex-1 gap-3">
           <Side label="Original">
-            <SheetPane sheet={current} segments={bySeg} side="source" highlight={highlight} scrollRef={left} onScroll={() => follow(true)} />
+            <SheetPane sheet={current} segments={bySeg} side="source" highlight={highlight} scrollRef={sync.left} />
           </Side>
           <Side label="Translation">
-            <SheetPane sheet={current} segments={bySeg} side="target" highlight={highlight} scrollRef={right} onScroll={() => follow(false)} onPick={onPick} />
+            <SheetPane sheet={current} segments={bySeg} side="target" highlight={highlight} scrollRef={sync.right} onPick={onPick} />
           </Side>
         </div>
       )}

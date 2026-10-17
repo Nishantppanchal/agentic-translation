@@ -70,7 +70,8 @@ def summary(session: Session) -> dict[str, Any]:
         "status": s.get("doc:status", "uploaded"),
         "pages": s.get("doc:pages", 0),
         "updated_at": session.last_update_time,
-        "progress": s.get("doc:progress") if runs.is_running(session.id) else None,
+        # while paused for answers too: the step bar shows which step is asking (the analysis or the review)
+        "progress": s.get("doc:progress") if runs.is_running(session.id) or s.get("doc:status") == "awaiting_answers" else None,
         "open_questions": len(st.open_questions(s)),
         "running": runs.is_running(session.id),
         "counts": st.status_counts(s),

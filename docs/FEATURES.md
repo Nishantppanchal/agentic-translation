@@ -254,7 +254,8 @@ Because the analysis has read the whole document first, a term explained on page
   - a recommendation you **just accepted** becomes **proposed**: later documents get it as a suggestion ("suggested, not confirmed"), QA doesn't flag other renderings, the analysis may ask about it again where a document makes it ambiguous, and **Approve** in the Termbase tab (or editing it) makes it a rule. A proposed term never overrides an approved one;
   - a **skipped** question keeps the recommendation for this document only.
 - **Late questions:** if the translator still flags a term it can't resolve (at most 3 per page), the pipeline pauses once more after the draft and re-translates the affected segments. Terms the analysis decided are never asked twice.
-- **Questions after the run:** terms the reviewer or the chat editor finds unclear appear as non-blocking cards in the same format, with **Apply** (the editor proposes the edits) and **Keep current**.
+- **Questions during the review:** if the reviewer finds a term unclear, the review stops before refining and asks (*N terms to decide before the next review round*; the step bar shows **Review** waiting). Your answers go into the glossary and are applied in the same refine pass as the review's fixes, on every segment that uses the term; the next round reviews that wording and doesn't ask again. **Skip — let the AI decide** keeps the reviewer's recommendation (applied by the polish).
+- **Questions after the run:** terms the chat editor finds unclear (or the reviewer, in a round too late to refine) appear as non-blocking cards in the same format, with **Apply** (the editor proposes the edits) and **Keep current**.
 - The Source & notes tab lists the brief and the key terms with their meanings, how each was decided (*as in the TM*, *dictionary agrees*, *asked*, *dictionary disagrees*), the dictionary senses and the TM sentences behind them — a glossary for someone who doesn't read the source language. Pauses survive a server restart.
 - **Late questions** get the dictionary's senses too (one lookup before the pause).
 
@@ -264,7 +265,7 @@ Because the analysis has read the whole document first, a term explained on page
   - **Forced issues:** deterministic QA errors (a missing number, a forbidden term) and flags are always added as must-fix issues, whatever the reviewer says.
 - **Refine:** a refiner agent fixes the reported issues. Round 1 fixes everything raised. Round 2 re-reviews only what changed and chases only major issues. The loop stops early when nothing changes.
 - **100% TM matches are protected:** they are a person's approved wording for the same sentence, so the refiner only changes them for a major or critical issue, never for style.
-- **Reviewer questions** only appear when the reviewer recommends something different from the current translation; if the refiner applies the recommendation anyway, the question is closed ("applied in review").
+- **Reviewer questions** only appear when the reviewer recommends something different from the current translation. They pause the loop before the refine pass (see *Questions during the review* under [Analysis and questions](#analysis-and-questions-decided-before-translating)), so the answer is applied before the next round. A question raised after the last refine pass waits for the person after the run, and is closed ("applied in review") if the refiner applied the recommendation anyway.
 - **AI verdict:** each segment gets an **AI ✓** (passed) or issues badge. This is never a human status.
 
 ### Polish

@@ -1,7 +1,8 @@
 """Ingest pipeline as an ADK Workflow graph.
 
     START → route_source ─(ocr)────→ ocr → read_pages → assemble → check_source ─┬→ memory → analyse → ask → translate → clarify → review ─┬─(refine)→ refine → review
-                         └(extract)→ extract → read_pictures → finish_extract ────┘                                                         └─(done)──→ polish → finalize
+                         └(extract)→ extract → read_pictures → finish_extract ────┘                                                         ├─(ask)───→ review_questions → refine (or polish)
+                                                                                                                                             └─(done)──→ polish → finalize
 
 * `route_source` PDFs, images and text files go to `ocr`; Word, PowerPoint and Excel files to `extract`, which
               reads their text from the file (office/) — no OCR and no source check.
@@ -26,7 +27,10 @@
               translation) and the running termbase; the translator records new term choices and
               may still flag a term it can't resolve.
 * `clarify`   pauses again only for such late terms; answers re-translate the affected segments.
-* `review`    fans out per page: reviewer agent lists issues; routes to refine or done.
+* `review`    fans out per page: reviewer agent lists issues (and may ask about terms); routes to refine or done
+              — or, when it asks, to `review_questions` first.
+* `review_questions` human-in-the-loop: pauses for the reviewer's questions; the answers go into the glossary
+              and become fixes, so the refine pass applies them with the review's own before the next round.
 * `refine`    fans out per page with issues: refiner agent rewrites flagged segments.
 * `polish`    one translation per repeated sentence and the termbase applied (`tasks.consistency_fixes`).
 * `finalize`  saves the reviewed version and marks the document ready.
@@ -47,7 +51,7 @@ from .steps.extract import extract, finish_extract, read_pictures, route_source
 from .steps.finish import finalize, polish
 from .steps.memory import memory
 from .steps.read import assemble, check_source, ocr, read_pages
-from .steps.review import refine, review
+from .steps.review import refine, review, review_questions
 from .steps.translate import clarify, translate
 
 PIPELINE_NAME = "ingest"
@@ -60,7 +64,8 @@ ingest_workflow = Workflow(
         (route_source, {"ocr": ocr, "extract": extract}),
         (ocr, read_pages, assemble, check_source, memory, analyse, ask, translate, clarify, review),
         (extract, read_pictures, finish_extract, memory),
-        (review, {"refine": refine, "done": polish}),
+        (review, {"refine": refine, "ask": review_questions, "done": polish}),
+        (review_questions, {"refine": refine, "done": polish}),
         (refine, review),
         (polish, finalize),
     ],

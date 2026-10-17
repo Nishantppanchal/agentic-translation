@@ -16,7 +16,6 @@ from ...document import state as st
 from ...document.pages import (
     page_batches,
 )
-from ...integrations import dictionary
 from ...models import structured
 from ...models.replies import (
     parse_keeps,
@@ -28,7 +27,7 @@ from ...quality import qa
 from .. import prompts
 from ..common import doc_langs, progress_state, reply_text, run_bounded, save_version, say, scope, user_message
 from ..workers import translator
-from .questions import pause_for, record_answers, segments_mentioning
+from .questions import pause_for, record_answers, segments_mentioning, with_dictionary
 
 CLARIFY_INTERRUPT = "clarify"
 
@@ -275,24 +274,9 @@ async def clarify(ctx: Context, node_input: Any):
     answers = (ctx.resume_inputs or {}).get(CLARIFY_INTERRUPT)
     if answers is None:
         # The dictionary on the translator's late terms (the analysis's were looked up already), in one call.
-        missing = [q for q in open_qs if not q.get("dictionary")]
-        if missing and references.dictionary_on(ctx.state):
-            source_lang, _ = doc_langs(ctx.state)
-            hits = await dictionary.lookup([q["term"] for q in missing], source_lang)
-            questions = [dict(q) for q in ctx.state.get("doc:questions") or []]
-            ids = {q["id"] for q in missing}
-            for q in questions:
-                if q["id"] in ids and (entries := hits.get(q["term"])):
-                    q["dictionary"] = entries
-                    references.add_dictionary_options(q)
-            results = [{"query": q["term"], "entries": [references.dictionary_entry(e) for e in q["dictionary"][:3]]}
-                       for q in questions if q["id"] in ids and q.get("dictionary")]
-            yield references.lookup_event(
-                references.lookup_payload("dictionary", "Dictionary senses for the terms the translator asks about", results,
-                                          queries=len(missing)),
-                f"Dictionary: {len(results)} of {len(missing)} term{'s' if len(missing) != 1 else ''} found",
-                state={"doc:questions": questions})
-            open_qs = st.open_questions({"doc:questions": questions})  # (ADK State is not a Mapping to spread)
+        event, open_qs = await with_dictionary(ctx, open_qs, "Dictionary senses for the terms the translator asks about")
+        if event:
+            yield event
         n = len(open_qs)
         text = (f"Before the review pass I need your help with {n} term{'s' if n != 1 else ''} I wasn't sure about. "
                 "Each card explains the term and preselects my recommendation; skip to keep my guesses.")

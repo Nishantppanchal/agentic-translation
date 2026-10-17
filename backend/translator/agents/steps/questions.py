@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import logging
 
+from google.adk import Context, Event
 from google.adk.events import RequestInput
 
-from ... import projects
+from ... import projects, references
 from ...document import state as st
-from ..common import progress_state, say
+from ...integrations import dictionary
+from ..common import doc_langs, progress_state, say
 
 log = logging.getLogger(__name__)
 
@@ -42,9 +44,34 @@ def record_answers(state, open_qs: list[dict], answers: dict) -> tuple[list[dict
     return questions, glossary, answered, kept
 
 
-async def pause_for(interrupt: str, open_qs: list[dict], text: str):
-    """Ask once (the chat shows the question cards) and stop until the person answers."""
-    yield say(text, kind="assistant", state=progress_state("clarify", 0, 0, "Waiting for your answers", "awaiting_answers"))
+async def with_dictionary(ctx: Context, open_qs: list[dict], purpose: str) -> tuple[Event | None, list[dict]]:
+    """The dictionary's senses for questions that don't have them yet, in one call (when a dictionary is set up):
+    → (the lookup event to show, the open questions with their entries)."""
+    missing = [q for q in open_qs if not q.get("dictionary")]
+    if not missing or not references.dictionary_on(ctx.state):
+        return None, open_qs
+    source_lang, _ = doc_langs(ctx.state)
+    hits = await dictionary.lookup([q["term"] for q in missing], source_lang)
+    questions = [dict(q) for q in ctx.state.get("doc:questions") or []]
+    ids = {q["id"] for q in missing}
+    for q in questions:
+        if q["id"] in ids and (entries := hits.get(q["term"])):
+            q["dictionary"] = entries
+            references.add_dictionary_options(q)
+    results = [{"query": q["term"], "entries": [references.dictionary_entry(e) for e in q["dictionary"][:3]]}
+               for q in questions if q["id"] in ids and q.get("dictionary")]
+    event = references.lookup_event(
+        references.lookup_payload("dictionary", purpose, results, queries=len(missing)),
+        f"Dictionary: {len(results)} of {len(missing)} term{'s' if len(missing) != 1 else ''} found",
+        state={"doc:questions": questions})
+    asked = {q["id"] for q in open_qs}
+    return event, [q for q in st.open_questions({"doc:questions": questions}) if q["id"] in asked]
+
+
+async def pause_for(interrupt: str, open_qs: list[dict], text: str, stage: str = "clarify"):
+    """Ask once (the chat shows the question cards) and stop until the person answers. `stage`: where the step
+    bar shows the pause (the analysis's and the translator's questions: "clarify"; the reviewer's: "review")."""
+    yield say(text, kind="assistant", state=progress_state(stage, 0, 0, "Waiting for your answers", "awaiting_answers"))
     yield RequestInput(interrupt_id=interrupt, message="Decide terms", payload={"question_ids": [q["id"] for q in open_qs]})
 
 

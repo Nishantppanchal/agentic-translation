@@ -24,7 +24,11 @@ export function ClarifyForm({
   const [busy, setBusy] = useState(false);
   const choiceOf = (q: Question) => choices[q.id] ?? recommendedChoice(q);
   const changed = questions.filter((q) => !isRecommended(q, choiceOf(q))).length;
-  const beforeTranslating = questions.some((q) => q.origin === "analysis");
+  const when = questions.some((q) => q.origin === "analysis")
+    ? "before I translate"
+    : questions.some((q) => q.origin === "reviewer")
+      ? "before the next review round"
+      : "before the review";
 
   const submit = async (skipAll: boolean) => {
     setBusy(true);
@@ -39,7 +43,7 @@ export function ClarifyForm({
     <div className="rounded-xl border border-warn-fg/25 bg-warn/45 p-4 text-sm">
       <div className="flex items-center gap-2 font-medium text-warn-fg">
         <HelpCircle size={16} />
-        {questions.length} term{questions.length === 1 ? "" : "s"} to decide {beforeTranslating ? "before I translate" : "before the review"}
+        {questions.length} term{questions.length === 1 ? "" : "s"} to decide {when}
       </div>
       <p className="mt-1 text-xs text-muted-foreground">
         Each term is explained in plain English, with the sentence it appears in. My recommendation is preselected — if

@@ -166,7 +166,12 @@ What the model gets wrong differs between runs; the lists below are what a live 
 **4.4 Skip.** On any document that asks, click **Skip — let the AI decide**.
 - [ ] Translation continues. The term isn't in the glossary or the project termbase, but the recommendation is used consistently.
 
-**4.5 Questions after the run.** If a finished document shows *How should this term be translated?* cards (raised by the reviewer):
+**4.5 Questions during the review.** If the reviewer finds a term unclear while the document is in review:
+- [ ] The run stops before refining: the step bar shows **Review** waiting, the chat says *The review raised N terms…*, and the cards say *N terms to decide before the next review round*. No segment has changed yet.
+- [ ] Choose a different option than the recommendation and continue: the chat says *Applying 1 answer to N segments…*, then *Refiner revised…* and *Review round 2*. Every segment that uses the term now has your choice, and round 2 doesn't ask about it again.
+- [ ] Reload while it waits: the step bar still shows **Review** waiting.
+
+**4.6 Questions after the run.** If a finished document shows *How should this term be translated?* cards (raised by the chat editor, or the reviewer's last round):
 - [ ] Each one recommends something **different** from the current translation. Cards that only confirm the translation should not appear.
 - [ ] **Apply** → the chat editor proposes the edits (a proposal card). **Keep current** dismisses the card.
 

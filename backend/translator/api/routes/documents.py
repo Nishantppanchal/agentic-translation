@@ -205,6 +205,7 @@ async def retry_ingest(session_id: str) -> dict[str, bool]:
             "doc:review_report": [],
             "doc:review_round": 0,
             "doc:review_pending": None,
+            "doc:review_ask": None,
             "doc:refined": [],
             "doc:dirty": [],
         },

@@ -364,8 +364,9 @@ def test_reviewer_does_not_re_ask_decided_terms(calls, monkeypatch):
         [q] = st.open_questions(s.state)
         await _run(runner, session.id, _answer(pending_interrupt(s.events), {q["id"]: {"target": "cable tray"}}))
         s = await _get(sessions, session.id)
-        assert s.state["doc:status"] == "ready"
-        # Only the new term is asked: the analysis's key term and the glossary term are settled.
+        # The review waits for its question; only the new term is asked: the analysis's key term and the glossary
+        # term are settled.
+        assert s.state["doc:status"] == "awaiting_answers" and s.state["doc:progress"]["stage"] == "review"
         assert [(q["term"], q["origin"]) for q in st.open_questions(s.state)] == [("geerdet", "reviewer")]
 
     asyncio.run(main())
@@ -421,15 +422,27 @@ def test_tm_exact_matches_are_only_refined_for_major_issues():
 
 
 @pytest.mark.analysis
-def test_reviewer_questions_the_refiner_already_applied_are_closed(calls, monkeypatch):
-    """The reviewer asks "use 'bonded to earth'?" and reports the issue; the refiner applies it. By the end the
-    question asks nothing any more: it is closed instead of shown to the person."""
-    monkeypatch.setattr(workers.reviewer, "before_model_callback", lambda cc, req: _reply(
-        '<issue seg="p1.2" severity="minor" category="terminology">earthed → bonded to earth</issue>\n'
-        '<term source="geerdet" guess="bonded to earth" alt="earthed" segs="p1.2">earthed or bonded?</term>'
-        if "not earthed" in _prompt(req) else "<none/>"))
-    monkeypatch.setattr(workers.refiner, "before_model_callback",
-                        lambda *_: _reply('<seg id="p1.2">The cable tray is not bonded to earth.</seg>'))
+def test_the_review_waits_for_its_questions_and_applies_the_answers_before_the_next_round(calls, monkeypatch):
+    """The reviewer asks about "geerdet": nothing is refined until the person answers; their choice (not the
+    reviewer's recommendation) is applied with the review's fixes, and round 2 reviews that wording without asking
+    again."""
+    reviews, refines = [], []
+
+    def review(cc, req):
+        reviews.append(prompt := _prompt(req))
+        if "p1.2" not in prompt:
+            return _reply("<none/>")
+        return _reply('<issue seg="p1.2" severity="minor" category="style">"is not" reads better as "isn\'t"</issue>\n'
+                      '<term source="geerdet" guess="bonded to earth" alt="earthed" segs="p1.2">earthed or bonded?</term>')
+
+    def refine(cc, req):
+        refines.append(prompt := _prompt(req))
+        chosen = re.search(r"translate “geerdet” as “([^”]+)”", prompt)
+        return _reply(f'<seg id="p1.2">The cable tray isn\'t {chosen.group(1) if chosen else "earthed"}.</seg>')
+
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", review)
+    monkeypatch.setattr(workers.refiner, "before_model_callback", refine)
+    monkeypatch.setattr(consistency_fixer, "before_model_callback", lambda *_: _reply(""))
 
     async def main():
         sessions, _, runner, session = await _setup(_pdf("Abnahmeprotokoll", "Ergebnis"))
@@ -438,13 +451,61 @@ def test_reviewer_questions_the_refiner_already_applied_are_closed(calls, monkey
         [q] = st.open_questions(s.state)
         await _run(runner, session.id, _answer(pending_interrupt(s.events), {q["id"]: {"target": "cable tray"}}))
         s = await _get(sessions, session.id)
+        assert s.state["doc:status"] == "awaiting_answers" and s.state["doc:progress"]["stage"] == "review"
+        assert pending_interrupt(s.events) == "review_questions_r1"
+        assert refines == []  # nothing changes before the person decides
+        [q] = st.open_questions(s.state)
+        assert (q["term"], q["origin"]) == ("geerdet", "reviewer")
+
+        await _run(runner, session.id, _answer("review_questions_r1", {q["id"]: {"target": "grounded"}}))
+        s = await _get(sessions, session.id)
         assert s.state["doc:status"] == "ready"
-        assert st.get_segment(s.state, "p1.2")["target"] == "The cable tray is not bonded to earth."
-        closed = next(q for q in s.state["doc:questions"] if q["term"] == "geerdet")
-        assert closed["status"] == "resolved" and closed["answer"] == "applied in review"
-        assert st.open_questions(s.state) == []
+        [prompt] = refines  # one refine pass: the person's answer and the review's own fix together
+        assert "The person decided: translate “geerdet” as “grounded”" in prompt and "isn't" in prompt
+        assert st.get_segment(s.state, "p1.2")["target"] == "The cable tray isn't grounded."
+        assert s.state["doc:glossary"]["geerdet"]["target"] == "grounded"
+        assert "isn't grounded" in reviews[-1]  # round 2 reviewed the answered wording…
+        assert st.open_questions(s.state) == []  # …and didn't ask again
+        assert s.state["doc:review_ask"] is None
 
     asyncio.run(main())
+
+
+@pytest.mark.analysis
+def test_skipping_the_reviews_questions_leaves_them_to_the_ai(calls, monkeypatch):
+    monkeypatch.setattr(workers.reviewer, "before_model_callback", lambda cc, req: _reply(
+        '<term source="geerdet" guess="bonded to earth" alt="earthed" segs="p1.2">earthed or bonded?</term>'
+        if "p1.2" in _prompt(req) else "<none/>"))
+    refines = []
+    monkeypatch.setattr(workers.refiner, "before_model_callback", lambda cc, req: refines.append(1) or _reply(""))
+    monkeypatch.setattr(consistency_fixer, "before_model_callback", lambda *_: _reply(""))
+
+    async def main():
+        sessions, _, runner, session = await _setup(_pdf("Abnahmeprotokoll", "Ergebnis"))
+        await _run(runner, session.id, types.Content(role="user", parts=[types.Part(text="Translate")]))
+        s = await _get(sessions, session.id)
+        await _run(runner, session.id, _answer(pending_interrupt(s.events), {}))  # the analysis's question: skipped
+        s = await _get(sessions, session.id)
+        [q] = st.open_questions(s.state)
+        await _run(runner, session.id, _answer(pending_interrupt(s.events), {q["id"]: None}))
+        s = await _get(sessions, session.id)
+        assert s.state["doc:status"] == "ready" and refines == []  # no fixes: straight to the end
+        assert next(q for q in s.state["doc:questions"] if q["term"] == "geerdet")["status"] == "dismissed"
+        assert "geerdet" in (s.state.get("doc:termbase") or {})  # the recommendation kept, unverified
+
+    asyncio.run(main())
+
+
+def test_answers_become_fixes_where_the_translation_doesnt_say_them_yet():
+    segs = [{"id": "p1.1", "source": "Die Kabelpritsche ist geerdet.", "target": "The cable tray is grounded."},
+            {"id": "p1.2", "source": "Geerdet: ja", "target": "Earthed: yes"},
+            {"id": "p1.3", "source": "Geerdet: nein", "target": "Earthed: no", "status": "confirmed", "locked": True}]
+    q = {"id": "q2", "term": "geerdet", "status": "resolved", "answer": "grounded", "answer_target": "grounded",
+         "segment_ids": ["p1.1"]}
+    fixes = steps.review.answer_fixes([q], {"q2"}, segs)
+    assert [f["segment_id"] for f in fixes] == ["p1.2"]  # p1.1 says it already; p1.3 is locked
+    assert fixes[0]["severity"] == "major" and "“grounded”" in fixes[0]["note"]
+    assert steps.review.answer_fixes([q], {"q9"}, segs) == []  # only this round's questions
 
 
 @pytest.mark.analysis

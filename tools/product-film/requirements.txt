@@ -1,0 +1,4 @@
+numpy>=1.26
+scipy>=1.11
+pyloudnorm>=0.1.1
+imageio-ffmpeg>=0.5

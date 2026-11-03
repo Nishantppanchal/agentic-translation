@@ -1,0 +1,7 @@
+node_modules/
+.venv/
+.film/
+*.mp4
+*.wav
+example/*.html
+example/*.chapters.*

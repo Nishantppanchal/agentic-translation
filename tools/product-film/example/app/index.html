@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Harbor</title>
+<style>
+  :root { --ink:#1d1d1f; --muted:#6e6e73; --line:#e6e6ea; --accent:#0071e3; --soft:#f7f7f9; }
+  * { box-sizing:border-box; }
+  html,body { margin:0; height:100%; font:15px/1.4 -apple-system,"Helvetica Neue",Arial,sans-serif; color:var(--ink); background:#fff; }
+  #shell { display:grid; grid-template-columns:232px 1fr; height:100%; }
+  aside { background:var(--soft); border-right:1px solid var(--line); padding:22px 14px; display:flex; flex-direction:column; gap:3px; }
+  aside h1 { font-size:17px; margin:0 8px 18px; letter-spacing:-.01em; }
+  aside a { display:block; padding:8px 10px; border-radius:8px; color:#3a3a3c; text-decoration:none; transition:background .12s; }
+  aside a:hover { background:#ececf0; }
+  aside a.on { background:#e4effc; color:var(--accent); font-weight:600; }
+  aside small { margin:18px 10px 4px; color:var(--muted); font-size:12px; }
+  #content { overflow:auto; padding:30px 34px; }
+  header { display:flex; align-items:center; justify-content:space-between; margin-bottom:22px; }
+  header h2 { font-size:26px; letter-spacing:-.02em; margin:0; }
+  .add { padding:9px 15px; border:0; border-radius:9px; background:var(--accent); color:#fff; font:600 14px inherit; cursor:pointer; }
+  #board { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; }
+  .col { background:var(--soft); border-radius:14px; padding:13px; min-height:640px; display:flex; flex-direction:column; }
+  .col h3 { font-size:13px; margin:2px 4px 12px; color:var(--muted); font-weight:600; }
+  .dropzone { flex:1; display:flex; flex-direction:column; gap:10px; border-radius:10px; }
+  .card { background:#fff; border-radius:11px; padding:13px; box-shadow:0 1px 2px rgba(0,0,0,.06),0 0 0 1px rgba(0,0,0,.04); cursor:grab; transition:box-shadow .15s,transform .15s; user-select:none; }
+  .card:hover { box-shadow:0 8px 20px -8px rgba(0,0,0,.2),0 0 0 1px rgba(0,113,227,.45); transform:translateY(-1px); }
+  .card b { font-weight:600; display:block; margin-bottom:9px; letter-spacing:-.005em; }
+  .meta { display:flex; justify-content:space-between; color:var(--muted); font-size:12.5px; align-items:center; }
+  .who { width:24px; height:24px; border-radius:50%; color:#fff; display:inline-flex; align-items:center; justify-content:center; font:600 11px inherit; }
+  dialog { border:0; border-radius:16px; width:520px; padding:22px; box-shadow:0 40px 90px -20px rgba(0,0,0,.4),0 0 0 1px rgba(0,0,0,.06); }
+  dialog::backdrop { background:rgba(20,20,30,.22); }
+  #new-title { width:100%; font-size:21px; border:0; outline:0; padding:6px 2px 14px; letter-spacing:-.012em; }
+  .row { display:flex; gap:8px; align-items:center; border-top:1px solid var(--line); padding-top:14px; }
+  .pick { padding:6px 12px; border-radius:99px; border:1px solid var(--line); background:#fff; font:500 13.5px inherit; cursor:pointer; }
+  .pick.on { background:#e4effc; border-color:#b8d6f8; color:var(--accent); }
+  .row .add { margin-left:auto; }
+  #insightsView { display:none; }
+  .stats { display:grid; grid-template-columns:repeat(3,1fr); gap:16px; margin-bottom:16px; }
+  .stat, .panel { background:var(--soft); border-radius:14px; padding:18px; }
+  .stat strong { display:block; font-size:34px; letter-spacing:-.025em; }
+  .stat span { color:var(--muted); font-size:13px; }
+  #risk-card { background:#fff8ec; box-shadow:0 0 0 1px #f4dfb6; margin-bottom:16px; }
+  #risk-card h4 { margin:0 0 5px; font-size:17px; letter-spacing:-.01em; }
+  .bars { display:flex; align-items:flex-end; gap:12px; height:240px; margin-top:14px; }
+  .bars i { flex:1; background:linear-gradient(#59a7f5,#0071e3); border-radius:7px 7px 2px 2px; }
+  table { width:100%; border-collapse:collapse; margin-top:6px; }
+  td, th { text-align:left; padding:11px 4px; border-bottom:1px solid var(--line); font-size:14px; } th { color:var(--muted); font-weight:500; }
+</style>
+</head>
+<body>
+<div id="shell">
+  <aside>
+    <h1>⚓︎ Harbor</h1>
+    <a href="#board" id="nav-board" class="on">Board</a>
+    <a href="#insights" id="nav-insights">Insights</a>
+    <a href="#">Calendar</a>
+    <a href="#">People</a>
+    <small>Projects</small>
+    <a href="#">Spring launch</a>
+    <a href="#">Website refresh</a>
+    <a href="#">Mobile app</a>
+  </aside>
+  <div id="content">
+    <section id="boardView">
+      <header><h2>Spring launch</h2><button class="add" id="new">New task ⌘K</button></header>
+      <div id="board"></div>
+    </section>
+    <section id="insightsView">
+      <header><h2>Insights</h2></header>
+      <div class="stats">
+        <div class="stat"><strong>42</strong><span>Tasks shipped this month</span></div>
+        <div class="stat"><strong>3.1 d</strong><span>Average time to done</span></div>
+        <div class="stat"><strong>94%</strong><span>Delivered on time</span></div>
+      </div>
+      <div class="panel" id="risk-card"><h4>The checkout redesign may slip by two days</h4>It has been waiting on review since Tuesday. Priya has capacity tomorrow.</div>
+      <div class="panel"><b>Shipped per week</b><div class="bars"><i style="height:38%"></i><i style="height:52%"></i><i style="height:46%"></i><i style="height:64%"></i><i style="height:60%"></i><i style="height:78%"></i><i style="height:72%"></i><i style="height:92%"></i></div></div>
+      <div class="panel" style="margin-top:16px"><b>Load by person</b><table><tr><th>Person</th><th>Open</th><th>In progress</th><th>Due this week</th></tr><tr><td>Priya Raman</td><td>4</td><td>2</td><td>3</td></tr><tr><td>Tom Okafor</td><td>6</td><td>1</td><td>2</td></tr><tr><td>Mei Lin</td><td>3</td><td>3</td><td>1</td></tr><tr><td>Ana Silva</td><td>5</td><td>1</td><td>2</td></tr><tr><td>Sam Weiss</td><td>2</td><td>2</td><td>0</td></tr><tr><td>Noor Haddad</td><td>4</td><td>1</td><td>3</td></tr></table></div><div class="panel" style="margin-top:16px"><b>Shipped by project</b><table><tr><th>Project</th><th>Shipped</th><th>On time</th></tr><tr><td>Spring launch</td><td>18</td><td>94%</td></tr><tr><td>Website refresh</td><td>14</td><td>97%</td></tr><tr><td>Mobile app</td><td>10</td><td>89%</td></tr></table></div>
+    </section>
+  </div>
+</div>
+<dialog id="dlg">
+  <input id="new-title" placeholder="What needs doing?" autocomplete="off">
+  <div class="row">
+    <button class="pick" data-p="Priya">Priya</button><button class="pick" data-p="Tom">Tom</button><button class="pick" data-p="Mei">Mei</button>
+    <button class="add" id="save">Add task</button>
+  </div>
+</dialog>
+<script>
+  const people = { Priya:"#0071e3", Tom:"#30a46c", Mei:"#d6409f" };
+  const tasks = [
+    ["Draft the pricing page","todo","Tom","Apr 14"],["Interview three customers","todo","Mei","Apr 15"],["Update the press kit","todo","Priya","Apr 18"],["Audit onboarding emails","todo","Tom","Apr 21"],
+    ["Redesign the checkout","doing","Priya","Apr 11"],["Migrate billing webhooks","doing","Tom","Apr 12"],
+    ["Ship the new navigation","done","Mei","Apr 4"],["Fix the invoice export","done","Tom","Apr 2"],["Accessibility pass","done","Priya","Mar 30"],
+  ];
+  const names = { todo:"To do", doing:"In progress", done:"Done" };
+  const board = document.getElementById("board");
+  function draw() {
+    board.innerHTML = Object.keys(names).map(k => `<div class="col" id="col-${k}"><h3>${names[k]} · ${tasks.filter(t=>t[1]===k).length}</h3><div class="dropzone" data-k="${k}">${tasks.filter(t=>t[1]===k).map((t)=>`<div class="card" data-i="${tasks.indexOf(t)}"><b>${t[0]}</b><div class="meta"><span>${t[3]}</span><span class="who" style="background:${people[t[2]]}">${t[2][0]}</span></div></div>`).join("")}</div></div>`).join("");
+  }
+  draw();
+  // Dragging with the mouse, so a recording sees the card follow the pointer.
+  let held = null, ox = 0, oy = 0;
+  document.addEventListener("mousedown", (e) => { const c = e.target.closest(".card"); if (!c) return; held = c; const r = c.getBoundingClientRect(); ox = e.clientX - r.left; oy = e.clientY - r.top; Object.assign(c.style,{position:"fixed",left:r.left+"px",top:r.top+"px",width:r.width+"px",zIndex:9,transform:"rotate(1.5deg)",boxShadow:"0 24px 40px -14px rgba(0,0,0,.35)",transition:"none"}); });
+  document.addEventListener("mousemove", (e) => { if (held) { held.style.left = e.clientX-ox+"px"; held.style.top = e.clientY-oy+"px"; } });
+  document.addEventListener("mouseup", (e) => { if (!held) return; const c = held; held = null; c.style.display="none"; const z = document.elementFromPoint(e.clientX,e.clientY)?.closest(".col"); if (z) tasks[+c.dataset.i][1] = z.querySelector(".dropzone").dataset.k; draw(); });
+  const dlg = document.getElementById("dlg"), title = document.getElementById("new-title");
+  let who = "Priya";
+  const open = () => { title.value=""; dlg.showModal(); title.focus(); };
+  document.getElementById("new").onclick = open;
+  document.addEventListener("keydown", (e) => { if ((e.metaKey||e.ctrlKey) && e.key.toLowerCase()==="k") { e.preventDefault(); open(); } });
+  dlg.querySelectorAll(".pick").forEach(b => b.onclick = () => { who=b.dataset.p; dlg.querySelectorAll(".pick").forEach(x=>x.classList.toggle("on",x===b)); });
+  document.getElementById("save").onclick = () => { if (title.value) tasks.unshift([title.value,"todo",who,"Apr 19"]); dlg.close(); draw(); };
+  function route() {
+    const insights = location.hash==="#insights";
+    document.getElementById("boardView").style.display = insights?"none":"block";
+    document.getElementById("insightsView").style.display = insights?"block":"none";
+    document.getElementById("nav-board").classList.toggle("on",!insights);
+    document.getElementById("nav-insights").classList.toggle("on",insights);
+  }
+  addEventListener("hashchange",route); route();
+</script>
+</body>
+</html>
